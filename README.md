@@ -3,9 +3,11 @@
 一款專為 Android 設計的**極速、直覺、純本地離線**繁體注音輸入法。完整支援 **12 鍵（4×3 九宮格）** 與 **41 鍵標準大千注音全鍵盤**，並具備強大的**聲母簡拼（偷懶輸入）**、單字同音字置頂與智慧長句預測能力。
 
 > **致敬與語料來源**：  
-> - 核心繁體中文詞庫全量採用開源知名 [chewing/libchewing-data](https://github.com/chewing/libchewing-data)（新酷音）官方維護之真實頻率語料庫。  
-> - 12 鍵注音鍵盤佈局與手勢概念參考 [Rizumu85/fcitx5-android-t9-phone](https://github.com/Rizumu85/fcitx5-android-t9-phone)。  
-> 本專案採用純原生 Android Kotlin 開發，具備獨立的前綴樹（Trie）注音斷詞、動態規劃 (DP) 全域分詞引擎，以及專為全鍵盤設計的教育部標準音節簡打預測引擎。
+> - **核心繁體中文詞庫**：全量採用開源知名 [chewing/libchewing-data](https://github.com/chewing/libchewing-data)（新酷音）官方維護之真實頻率語料庫。  
+> - **29 類現代專業與動漫分類詞庫**：引用自開源 [polobread/KeyKey](https://github.com/polobread/KeyKey)（琦琦輸入法 / chichi77Collection，基於 MIT 授權），收錄 ACG 動漫流行語、半導體高科技、AI 資料科學、醫療生技、法律金融等領域。  
+> - **注音字音與詞頻資料**：引用自 [openvanilla/McBopomofo](https://github.com/openvanilla/McBopomofo)（小麥注音，基於 MIT 授權）。  
+> - **12 鍵九宮格手勢概念**：參考 [Rizumu85/fcitx5-android-t9-phone](https://github.com/Rizumu85/fcitx5-android-t9-phone)。  
+> 本專案採用純原生 Android Kotlin 開發，具備獨立的前綴樹（Trie）注音斷詞、動態規劃 (DP) 全域分詞引擎，以及專為全鍵盤設計的教育部標準音節簡打預測引擎。完整授權條款請參閱 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
 ---
 
@@ -90,6 +92,25 @@
   - `簡潔純白`、`黑曜極致`、`晴空亮藍`、`櫻花粉黛`、`日落暖橙`、`薄荷青翠`、`復古羊皮`
 - **多級細緻觸覺震動**：普通按鍵輕震、確認上屏雙脈衝、退格刪除清脆震，支援毫秒級（ms）強度無段微調。
 
+### 📚 9. 29 類現代專業與動漫領域分類詞庫
+- **海量收錄 29 個現代生活與專業領域**：
+  - **流行文化與娛樂**：ACG 動漫名詞與流行語、Vtuber / 遊戲、台灣流行影視與鄉民用語。
+  - **現代科學與高科技**：半導體晶圓製造、AI 人工智慧與機器學習、資料科學、雲端軟體工程、電子電機。
+  - **專業領域實用詞庫**：現代生醫藥學、臨床護理、民刑事法律法規、金融證券投資、會計財稅、台灣在地生活地名等。
+- **純本地無縫加載**：完全內建於離線 Trie 前綴樹索引中，不佔額外記憶體，無聯網隱私疑慮。
+
+### ⌨️ 10. 外接實體鍵盤全面重構 (Physical Hardware Keyboard)
+- **極致 48dp 迷你候選條**：
+  - 偵測到平板或手機連接藍牙/USB 實體鍵盤時，自動隱藏巨大的螢幕軟鍵盤，僅在螢幕底部升起高質感 48dp 迷你候選條，保留 100% 完整工作視野。
+- **經典實體鍵盤快捷操作**：
+  - **數字鍵選字**：直接點按數字鍵 `1` ~ `9` 快速選取對應號碼的候選詞。
+  - **空白鍵一鍵上屏**：預設直取首位最符合的智慧預測詞，符合電腦輸入習慣。
+  - **Enter 換行 / 注音直接送出**：直接換行或上屏輸入中的注音符號。
+  - **Shift 鍵快速切換中英文**：無需切換輸入法即可極速打字。
+
+### 📋 11. 智慧剪貼簿歷史管理
+- **保留最近 10 筆實用歷史**：自動維護最近 10 筆複製內容，自動去重並以時間倒序排列，輕觸一鍵貼上，不會無止盡佔用記憶體。
+
 ---
 
 ## 🛠️ 開發與建置
@@ -113,6 +134,14 @@
 
 ---
 
-## 📄 開源授權
+## 📄 開源授權與第三方致謝 (Third-Party Notices)
 
-本專案基於 [MIT License](LICENSE) 開源。
+本專案本體程式碼基於 [MIT License](LICENSE) 開源。
+
+本輸入法使用了以下優秀開源專案之語料與授權：
+1. **[chewing/libchewing-data](https://github.com/chewing/libchewing-data)** - 新酷音官方維護之真實頻率繁體中文語料庫（LGPL 2.1 / MIT）。
+2. **[polobread/KeyKey](https://github.com/polobread/KeyKey)** - 引用 `chichi77Collection`（琦琦輸入法作者 Chui-Ping Cheng 整理之 29 類專業與動漫分類詞庫，基於 MIT 授權）。
+3. **[openvanilla/McBopomofo](https://github.com/openvanilla/McBopomofo)** - 小麥注音官方字音與詞頻字典（MIT 授權，Copyright 2011-2026 Mengjuei Hsieh et al.）。
+4. **[Rizumu85/fcitx5-android-t9-phone](https://github.com/Rizumu85/fcitx5-android-t9-phone)** - 12 鍵注音九宮格手勢概念參考。
+
+詳細授權條款全文與各套件宣告請參閱 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。

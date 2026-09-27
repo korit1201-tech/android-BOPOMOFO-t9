@@ -98,6 +98,7 @@ class MainActivity : AppCompatActivity() {
 
         setupVibrationSettings()
         setupThemeSettings()
+        setupThirdPartyNotices()
     }
 
     private fun setupThemeSettings() {
@@ -226,6 +227,39 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "🎉 目前已是最新版本 (v${BuildConfig.VERSION_NAME})", Toast.LENGTH_SHORT).show()
                 }
             }
+        }
+    }
+
+    private fun setupThirdPartyNotices() {
+        val tvThirdParty = findViewById<TextView>(R.id.tv_third_party_link)
+        tvThirdParty?.setOnClickListener {
+            val message = """
+                本輸入法之離線詞庫與技術參考以下開源專案：
+
+                1. chewing/libchewing-data (新酷音)
+                - 繁體中文全量高頻詞庫與注音語料庫 (LGPL-2.1 / MIT)。
+
+                2. polobread/KeyKey (琦琦輸入法)
+                - 引用 chichi77Collection (MIT License, Copyright 2026 Chui-Ping Cheng)，收錄 29 類現代專業與動漫生活分類詞庫。
+
+                3. openvanilla/McBopomofo (小麥注音)
+                - 提供精準字音與詞頻資料 (MIT License, Copyright 2011-2026 Mengjuei Hsieh et al.)。
+
+                4. Rizumu85/fcitx5-android-t9-phone
+                - 啟發 12 鍵九宮格手勢交互概念。
+            """.trimIndent()
+
+            AlertDialog.Builder(this)
+                .setTitle("📜 第三方開源資料庫與授權致謝")
+                .setMessage(message)
+                .setPositiveButton("開啟 GitHub 授權聲明") { _, _ ->
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/korit1201-tech/android-BOPOMOFO-t9/blob/main/THIRD-PARTY-NOTICES.md"))
+                        startActivity(intent)
+                    } catch (_: Exception) {}
+                }
+                .setNegativeButton("關閉", null)
+                .show()
         }
     }
 
