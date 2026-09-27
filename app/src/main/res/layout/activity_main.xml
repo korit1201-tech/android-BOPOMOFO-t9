@@ -276,7 +276,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:layout_marginBottom="24dp"
             android:background="@drawable/bg_key"
             android:elevation="1dp"
             android:orientation="vertical"
@@ -295,7 +294,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:text="目前版本：v1.5.1"
+                android:text="目前版本：v2.1.0"
                 android:textColor="#424242"
                 android:textSize="14sp" />
 
@@ -333,6 +332,46 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
                 android:text="🔍 檢查 GitHub 新版本" />
+        </LinearLayout>
+
+        <!-- 區塊五：第三方開源語料與授權致謝 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="24dp"
+            android:background="@drawable/bg_key"
+            android:elevation="1dp"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📜 第三方開源語料與技術致謝"
+                android:textColor="#212121"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:lineSpacingExtra="4dp"
+                android:text="本輸入法之離線詞庫與技術參考以下優秀開源專案，特此致謝：\n\n• 新酷音輸入法 (chewing/libchewing-data)\n  官方繁體中文全量高頻詞庫與注音語料。\n\n• 琦琦輸入法 (polobread/KeyKey)\n  引用 chichi77Collection (MIT 授權, Copyright 2026 Chui-Ping Cheng)，收錄 29 類現代生活流行語、ACG 動漫、高科技、AI 與生醫法律分類詞庫。\n\n• 小麥注音 (openvanilla/McBopomofo)\n  提供精準字音、音節與注音詞頻參考 (MIT 授權)。\n\n• fcitx5-android-t9-phone (Rizumu85)\n  啟發 12 鍵注音手勢九宮格設計理念。"
+                android:textColor="#555555"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/tv_third_party_link"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="🔗 查閱完整第三方開源授權聲明 (THIRD-PARTY-NOTICES.md)"
+                android:textColor="#1976D2"
+                android:textSize="12sp"
+                android:clickable="true"
+                android:focusable="true" />
         </LinearLayout>
 
     </LinearLayout>
