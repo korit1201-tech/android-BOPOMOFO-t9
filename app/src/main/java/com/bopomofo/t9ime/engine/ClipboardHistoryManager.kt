@@ -7,7 +7,7 @@ import org.json.JSONArray
 object ClipboardHistoryManager {
     private const val PREF_NAME = "ime_clipboard_prefs"
     private const val KEY_HISTORY = "clipboard_history"
-    private const val MAX_ITEMS = 20
+    private const val MAX_ITEMS = 10
 
     private val historyList = mutableListOf<String>()
     private var isInitialized = false
@@ -16,24 +16,32 @@ object ClipboardHistoryManager {
         if (isInitialized) return
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val jsonStr = prefs.getString(KEY_HISTORY, null)
+        var needTrim = false
         if (!jsonStr.isNullOrEmpty()) {
             try {
                 val array = JSONArray(jsonStr)
                 for (i in 0 until array.length()) {
-                    historyList.add(array.getString(i))
+                    if (historyList.size < MAX_ITEMS) {
+                        historyList.add(array.getString(i))
+                    } else {
+                        needTrim = true
+                    }
                 }
             } catch (_: Exception) {}
         }
         isInitialized = true
+        if (needTrim) {
+            save(context)
+        }
     }
 
-    fun getHistory(): List<String> = historyList.toList()
+    fun getHistory(): List<String> = historyList.take(MAX_ITEMS).toList()
 
     fun addClip(context: Context, text: String) {
         if (text.isBlank() || text.length > 2000) return
         historyList.remove(text)
         historyList.add(0, text)
-        if (historyList.size > MAX_ITEMS) {
+        while (historyList.size > MAX_ITEMS) {
             historyList.removeAt(historyList.lastIndex)
         }
         save(context)
