@@ -724,6 +724,7 @@
 
     <!-- 底部功能與控制欄 (123, 括號/模式切換, 逗號, 空格/語言滑動, 句號, 模式樞紐) -->
     <LinearLayout
+        android:id="@+id/layout_bottom_bar"
         android:layout_width="match_parent"
         android:layout_height="48dp"
         android:layout_marginTop="2dp"

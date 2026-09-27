@@ -134,6 +134,8 @@ class ZhuyinInputMethodService : InputMethodService() {
     private lateinit var layoutSymbolPanel: LinearLayout
     private lateinit var layoutMainFrame: FrameLayout
     private lateinit var layoutResizeHandle: FrameLayout
+    private lateinit var layoutBottomBar: LinearLayout
+    private var isHardwareKeyboardConnected = false
     private lateinit var handwritingCanvas: com.bopomofo.t9ime.ui.HandwritingCanvasView
     private var googleRecognizer: com.bopomofo.t9ime.engine.GoogleHandwritingRecognizer? = null
 
@@ -253,6 +255,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
             applyOneHandedMode()
             updateKeyboardModeUI()
+            updateHardwareKeyboardState()
         }
     }
 
@@ -261,6 +264,30 @@ class ZhuyinInputMethodService : InputMethodService() {
         rootView?.let { root ->
             ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
             applyOneHandedMode()
+            updateHardwareKeyboardState()
+        }
+    }
+
+    private fun checkHardwareKeyboard(): Boolean {
+        val config = resources.configuration
+        return config.keyboard == android.content.res.Configuration.KEYBOARD_QWERTY &&
+                config.hardKeyboardHidden == android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO
+    }
+
+    private fun updateHardwareKeyboardState() {
+        if (!::layoutMainFrame.isInitialized || !::layoutBottomBar.isInitialized || !::layoutResizeHandle.isInitialized) return
+        isHardwareKeyboardConnected = checkHardwareKeyboard()
+        if (isHardwareKeyboardConnected) {
+            // 外接實體鍵盤接入：自動折疊為 48dp 迷你候選條，保留應用程式操作視野
+            layoutMainFrame.visibility = View.GONE
+            layoutBottomBar.visibility = View.GONE
+            layoutResizeHandle.visibility = View.GONE
+        } else {
+            // 純觸控或拔掉實體鍵盤：自動還原完整觸控按鍵
+            layoutMainFrame.visibility = View.VISIBLE
+            layoutBottomBar.visibility = View.VISIBLE
+            layoutResizeHandle.visibility = View.VISIBLE
+            updateKeyboardModeUI()
         }
     }
 
@@ -354,6 +381,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         layoutHandwriting = root.findViewById(R.id.layout_handwriting)
         layoutMainFrame = root.findViewById(R.id.layout_main_frame)
         layoutResizeHandle = root.findViewById(R.id.layout_resize_handle)
+        layoutBottomBar = root.findViewById(R.id.layout_bottom_bar)
         handwritingCanvas = root.findViewById(R.id.handwriting_canvas)
 
         // 鍵盤高度拉伸調整（支援上下拖動自由縮放大小，預設 240dp）
@@ -468,6 +496,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
 
             updateKeyboardModeUI()
+            updateHardwareKeyboardState()
         } catch (e: Exception) {
             android.util.Log.e("BopomofoIME", "onCreateInputView 初始化異常", e)
         }
@@ -1222,13 +1251,20 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
             layout.addView(emptyTv)
         } else {
-            // 頂部列：清空按鈕
+            // 頂部列：提示與清空按鈕
             val topBar = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.END
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(4, 2, 4, 6)
+            }
+            val hintTv = TextView(this).apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                text = "保留最近 10 則紀錄（長按可刪除）"
+                textSize = 12f
+                setTextColor(ContextCompat.getColor(context, R.color.kb_text_secondary))
             }
             val btnClear = Button(this).apply {
-                text = "清空剪貼簿"
+                text = "清空"
                 textSize = 12f
                 setTextColor(Color.parseColor("#E53935"))
                 setBackgroundResource(R.drawable.bg_key_action)
@@ -1238,6 +1274,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                     switchSymbolTab(SymbolTab.CLIPBOARD)
                 }
             }
+            topBar.addView(hintTv)
             topBar.addView(btnClear)
             layout.addView(topBar)
 
@@ -2416,6 +2453,19 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
     }
 
+    private fun cancelComposing() {
+        dismissHomophonePopup()
+        if (isHomophoneSelectionMode) {
+            exitHomophoneSelectionMode()
+        }
+        customComposingWord = null
+        replacedCharsMap.clear()
+        fullZhuyinBuffer.clear()
+        engine.clear()
+        currentInputConnection?.finishComposingText()
+        clearCandidateBar()
+    }
+
     private fun commitSymbol(text: String) {
         if (engine.hasComposing()) {
             engine.clear()
@@ -3048,7 +3098,22 @@ class ZhuyinInputMethodService : InputMethodService() {
             return true
         }
 
-        // 2. 組合鍵（如 Ctrl+C, Ctrl+V, Alt 等）直接放行交由系統處理
+        // 2. 實體鍵盤快捷鍵：Ctrl + Space 瞬間切換中英文（Windows / Mac 經典外接鍵盤體驗）
+        if (event.isCtrlPressed && keyCode == KeyEvent.KEYCODE_SPACE && !event.isAltPressed) {
+            isPhysicalShiftPressed = false
+            if (currentMode == KeyboardMode.ZHUYIN || currentMode == KeyboardMode.ZHUYIN_FULL) {
+                lastChineseMode = currentMode
+                currentMode = KeyboardMode.ENGLISH_QWERTY
+            } else if (currentMode == KeyboardMode.ENGLISH_QWERTY) {
+                currentMode = lastChineseMode
+            } else {
+                currentMode = KeyboardMode.ZHUYIN
+            }
+            updateKeyboardModeUI()
+            return true
+        }
+
+        // 3. 其他組合鍵（如 Ctrl+C, Ctrl+V, Alt 等）直接放行交由系統處理
         if (event.isCtrlPressed || event.isAltPressed) {
             isPhysicalShiftPressed = false
             return super.onKeyDown(keyCode, event)
@@ -3064,10 +3129,40 @@ class ZhuyinInputMethodService : InputMethodService() {
 
         // 4. 注音模式下的實體鍵盤處理
         if (currentMode == KeyboardMode.ZHUYIN || currentMode == KeyboardMode.ZHUYIN_FULL) {
+            // Shift + Space 經典快捷鍵：輸出全形空格（公文、排版極高頻）
+            if (event.isShiftPressed && keyCode == KeyEvent.KEYCODE_SPACE) {
+                isPhysicalShiftPressed = false
+                commitTextDirectly("　")
+                return true
+            }
+
             // Shift 組合鍵（如 Shift + 數字 輸出 #, $, % 等符號）：放行由系統輸出符號，避免被劫持為聲調
             if (event.isShiftPressed && keyCode != KeyEvent.KEYCODE_SHIFT_LEFT && keyCode != KeyEvent.KEYCODE_SHIFT_RIGHT) {
                 isPhysicalShiftPressed = false
                 return super.onKeyDown(keyCode, event)
+            }
+
+            // Escape 鍵：一鍵清空當前組字緩衝區
+            if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                if ((currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty()) || engine.hasComposing()) {
+                    cancelComposing()
+                    return true
+                }
+            }
+
+            // 候選字翻頁與方向滾動 (PageDown/Up, 方向鍵, Tab)
+            val hasActiveComposing = engine.hasComposing() || fullZhuyinBuffer.isNotEmpty()
+            if (hasActiveComposing) {
+                when (keyCode) {
+                    KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_TAB -> {
+                        candidateScroll?.smoothScrollBy(320, 0)
+                        return true
+                    }
+                    KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_LEFT -> {
+                        candidateScroll?.smoothScrollBy(-320, 0)
+                        return true
+                    }
+                }
             }
 
             // A. Backspace 刪除
@@ -3111,7 +3206,6 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
 
             // D. 數字鍵選字 (1~9 選候選字，支援 9 鍵與 41 鍵全鍵盤)
-            val hasActiveComposing = engine.hasComposing() || fullZhuyinBuffer.isNotEmpty()
             if (hasActiveComposing && keyCode in KeyEvent.KEYCODE_1..KeyEvent.KEYCODE_9) {
                 val selectIndex = keyCode - KeyEvent.KEYCODE_1
                 val candidates = if (currentMode == KeyboardMode.ZHUYIN_FULL) {
