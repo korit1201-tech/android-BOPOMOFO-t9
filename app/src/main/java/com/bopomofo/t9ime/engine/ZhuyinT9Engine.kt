@@ -443,8 +443,9 @@ class ZhuyinT9Engine(private val context: Context) {
             return
         }
 
-        val exactResults = trie.searchExact(currentKeys)
-        val prefixResults = trie.searchPrefix(currentKeys, maxDepth = 3)
+        val isTolerantEnabled = com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(context)
+        val exactResults = trie.searchExact(currentKeys, includeTolerant = isTolerantEnabled)
+        val prefixResults = trie.searchPrefix(currentKeys, maxDepth = 3, includeTolerant = isTolerantEnabled)
 
         // 聲調過濾
         val toneChar = if (currentToneIndex > 0) TONE_SYMBOLS[currentToneIndex] else null
@@ -493,18 +494,7 @@ class ZhuyinT9Engine(private val context: Context) {
         // 產生左側注音音節/詞彙組合列表（兼顧單字合法音節與多字詞組合，杜絕組合遺失與無字可選）
         val comboSet = LinkedHashSet<String>()
 
-        // 1. 從候選字詞列表提取所有可能的前綴注音走向（涵蓋單字 ㄐㄧㄢ 與多字詞 ㄐㄧㄓ、ㄍㄣㄓ、ㄍㄣㄗ 等）
-        for (entry in candidateList) {
-            val clean = entry.zhuyin.filter { it !in "ˇˋˊ˙" }
-            val prefix = if (clean.length >= phonemeKeyLen) clean.substring(0, phonemeKeyLen) else clean
-            if (prefix.isNotEmpty()) {
-                val label = if (toneChar != null) "$prefix$toneChar" else prefix
-                comboSet.add(label)
-            }
-            if (comboSet.size >= 8) break
-        }
-
-        // 2. 對於短按鍵 (<= 3 鍵)，補充標準音節管理器中的合法單音節
+        // 1. 【按鍵精確音節絕對置頂】：對於短按鍵 (<= 3 鍵)，優先放入標準音節管理器中的合法單音節（如 [3,6] -> ㄓㄣ, ㄗㄣ）
         if (phonemeKeyLen <= 3) {
             val exactSyllables = SyllableManager.getExactSyllables(cleanKeys)
             for (syl in exactSyllables) {
@@ -514,7 +504,33 @@ class ZhuyinT9Engine(private val context: Context) {
             }
         }
 
-        // 3. 保底：若依然為空，以各按鍵第一注音符號合成
+        // 2. 從「精確非容錯」候選字詞列表提取前綴注音走向（長詞或多字詞走向）
+        for (entry in candidateList) {
+            if (entry.isTolerant) continue
+            val clean = entry.zhuyin.filter { it !in "ˇˋˊ˙" }
+            val prefix = if (clean.length >= phonemeKeyLen) clean.substring(0, phonemeKeyLen) else clean
+            if (prefix.isNotEmpty()) {
+                val label = if (toneChar != null) "$prefix$toneChar" else prefix
+                comboSet.add(label)
+            }
+            if (comboSet.size >= 8) break
+        }
+
+        // 3. 【容錯音節候補】：若容錯開關啟用且尚有空間，才提取容錯詞的前綴音節（如 ㄓㄥ，嚴格排在精確音節之後作為候補）
+        if (isTolerantEnabled && comboSet.size < 8) {
+            for (entry in candidateList) {
+                if (!entry.isTolerant) continue
+                val clean = entry.zhuyin.filter { it !in "ˇˋˊ˙" }
+                val prefix = if (clean.length >= phonemeKeyLen) clean.substring(0, phonemeKeyLen) else clean
+                if (prefix.isNotEmpty()) {
+                    val label = if (toneChar != null) "$prefix$toneChar" else prefix
+                    comboSet.add(label)
+                }
+                if (comboSet.size >= 8) break
+            }
+        }
+
+        // 4. 保底：若依然為空，以各按鍵第一注音符號合成
         if (comboSet.isEmpty()) {
             val sb = StringBuilder()
             for (k in cleanKeys) {
@@ -550,12 +566,14 @@ class ZhuyinT9Engine(private val context: Context) {
                     val subKeys = keys.subList(j, i)
                     val node = trie.searchNode(subKeys)
                     if (node != null && node.exactEntries.isNotEmpty()) {
+                        val isTolerantEnabled = com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(context)
                         for (entry in node.exactEntries.values) {
+                            if (!isTolerantEnabled && entry.isTolerant) continue
                             val boost = userDict.getBoost(entry.word)
                             val effectiveWeight = entry.weight + boost
                             val logProb = Math.log(maxOf(effectiveWeight.toDouble(), 1.0)) - logTotal
                             val bonus = (entry.word.length - 1) * wordBonus
-                            val penalty = if (entry.isTolerant) -8.0 else 0.0
+                            val penalty = if (entry.isTolerant) -18.0 else 0.0
                             val score = dp[j] + logProb + bonus + penalty
                             if (score > dp[i]) {
                                 dp[i] = score
@@ -775,9 +793,10 @@ class ZhuyinT9Engine(private val context: Context) {
                 }
             }
 
+            val isTolerantEnabled = com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(context)
             val keys = cleanInput.mapNotNull { KeyMapping.getKeyId(it) }
             if (keys.isNotEmpty()) {
-                val trieResults = trie.searchPrefix(keys)
+                val trieResults = trie.searchPrefix(keys, includeTolerant = isTolerantEnabled)
                 val sortedTrieResults = if (toneChar != null) {
                     trieResults.sortedByDescending {
                         if (it.zhuyin.startsWith(inputZhuyin) || it.zhuyin.takeWhile { c -> c != ' ' }.contains(toneChar)) {
@@ -848,9 +867,10 @@ class ZhuyinT9Engine(private val context: Context) {
         }
 
         // 4. 全拼前綴檢索 (Trie Prefix Match, 如 ㄐㄧㄣ -> 今, 金, 今天, 金融)
+        val isTolerantEnabled = com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(context)
         val keys = cleanInput.mapNotNull { KeyMapping.getKeyId(it) }
         if (keys.isNotEmpty()) {
-            val trieResults = trie.searchPrefix(keys)
+            val trieResults = trie.searchPrefix(keys, includeTolerant = isTolerantEnabled)
             for (e in trieResults) {
                 val eClean = e.zhuyin.filter { it !in "ˇˋˊ˙" }
                 if (eClean.startsWith(cleanInput) && seenWords.add(e.word)) {

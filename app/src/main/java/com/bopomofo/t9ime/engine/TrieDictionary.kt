@@ -75,11 +75,11 @@ class TrieDictionary {
         return curr
     }
 
-    fun search(sequence: List<Int>): List<DictEntry> {
+    fun search(sequence: List<Int>, includeTolerant: Boolean = true): List<DictEntry> {
         if (sequence.isEmpty()) return emptyList()
 
-        val exactList = searchExact(sequence)
-        val prefixList = searchPrefix(sequence)
+        val exactList = searchExact(sequence, includeTolerant)
+        val prefixList = searchPrefix(sequence, maxDepth = 3, includeTolerant = includeTolerant)
 
         val combined = mutableListOf<DictEntry>()
         combined.addAll(exactList)
@@ -87,39 +87,54 @@ class TrieDictionary {
         return combined
     }
 
-    fun searchExact(sequence: List<Int>): List<DictEntry> {
+    fun searchExact(sequence: List<Int>, includeTolerant: Boolean = true): List<DictEntry> {
         if (sequence.isEmpty()) return emptyList()
         val targetNode = searchNode(sequence) ?: return emptyList()
-        // exactEntries 已在 insert 時去重，直接排序即可，無需 distinctBy
-        return targetNode.exactEntries.values
+        val entries = if (includeTolerant) {
+            targetNode.exactEntries.values
+        } else {
+            targetNode.exactEntries.values.filter { !it.isTolerant }
+        }
+        return entries
             .sortedWith(
                 compareByDescending<DictEntry> { !it.isTolerant }
                     .thenByDescending { it.weight }
             )
     }
 
-    fun searchPrefix(sequence: List<Int>, maxDepth: Int = 3): List<DictEntry> {
+    fun searchPrefix(sequence: List<Int>, maxDepth: Int = 3, includeTolerant: Boolean = true): List<DictEntry> {
         if (sequence.isEmpty()) return emptyList()
         val targetNode = searchNode(sequence) ?: return emptyList()
-        val exactWords = targetNode.exactEntries.keys  // LinkedHashMap 的 key set 即為已去重詞集合
+        val exactWords = targetNode.exactEntries.keys
         val prefixList = mutableListOf<DictEntry>()
-        collectPrefix(targetNode, prefixList, 0, maxDepth)
+        collectPrefix(targetNode, prefixList, 0, maxDepth, includeTolerant)
         return prefixList
             .distinctBy { it.word }
-            .filter { it.word !in exactWords }
+            .filter { it.word !in exactWords && (includeTolerant || !it.isTolerant) }
             .sortedWith(
                 compareByDescending<DictEntry> { !it.isTolerant }
                     .thenByDescending { it.weight }
             )
     }
 
-    private fun collectPrefix(node: TrieNode, results: MutableList<DictEntry>, depth: Int, maxDepth: Int) {
+    private fun collectPrefix(
+        node: TrieNode,
+        results: MutableList<DictEntry>,
+        depth: Int,
+        maxDepth: Int,
+        includeTolerant: Boolean
+    ) {
         if (depth > maxDepth || results.size >= 50) return
         for ((_, child) in node.children) {
             val remaining = 50 - results.size
             if (remaining <= 0) return
-            results.addAll(child.exactEntries.values.take(remaining))
-            collectPrefix(child, results, depth + 1, maxDepth)
+            val validEntries = if (includeTolerant) {
+                child.exactEntries.values
+            } else {
+                child.exactEntries.values.filter { !it.isTolerant }
+            }
+            results.addAll(validEntries.take(remaining))
+            collectPrefix(child, results, depth + 1, maxDepth, includeTolerant)
         }
     }
 }
