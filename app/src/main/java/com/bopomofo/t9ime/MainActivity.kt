@@ -97,8 +97,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         setupVibrationSettings()
+        setupTolerantInputSettings()
         setupThemeSettings()
         setupThirdPartyNotices()
+    }
+
+    private fun setupTolerantInputSettings() {
+        val switchTolerant = findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switch_tolerant_input) ?: return
+        val isEnabled = com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(this)
+        switchTolerant.isChecked = isEnabled
+        switchTolerant.setOnCheckedChangeListener { _, isChecked ->
+            com.bopomofo.t9ime.data.PreferencesRepository.setTolerantInputEnabled(this, isChecked)
+            val msg = if (isChecked) "✅ 已開啟發音容錯輸入（候選字將包含前後鼻音候補）" else "🔒 已關閉發音容錯（僅嚴格匹配輸入按鍵）"
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun setupThemeSettings() {

@@ -17,6 +17,7 @@ object PreferencesRepository {
     const val KEY_KEYBOARD_HEIGHT_DP = "pref_keyboard_height_dp"
     const val KEY_ONE_HANDED_MODE = "pref_one_handed_mode"
     const val KEY_THEME = "pref_theme"
+    const val KEY_TOLERANT_INPUT_ENABLED = "pref_tolerant_input_enabled"
 
     // 預設值
     const val DEFAULT_VIBRATION_ENABLED = true
@@ -25,6 +26,7 @@ object PreferencesRepository {
     const val DEFAULT_KEYBOARD_HEIGHT_DP = 240
     const val DEFAULT_ONE_HANDED_MODE = "full"
     const val DEFAULT_THEME = "system"
+    const val DEFAULT_TOLERANT_INPUT_ENABLED = true
 
     private fun getPrefs(context: Context): SharedPreferences? {
         return try {
@@ -115,6 +117,20 @@ object PreferencesRepository {
     fun setTheme(context: Context, themeId: String) {
         try {
             getPrefs(context)?.edit()?.putString(KEY_THEME, themeId)?.apply()
+        } catch (_: Exception) {}
+    }
+
+    fun isTolerantInputEnabled(context: Context): Boolean {
+        return try {
+            getPrefs(context)?.getBoolean(KEY_TOLERANT_INPUT_ENABLED, DEFAULT_TOLERANT_INPUT_ENABLED) ?: DEFAULT_TOLERANT_INPUT_ENABLED
+        } catch (_: Exception) {
+            DEFAULT_TOLERANT_INPUT_ENABLED
+        }
+    }
+
+    fun setTolerantInputEnabled(context: Context, enabled: Boolean) {
+        try {
+            getPrefs(context)?.edit()?.putBoolean(KEY_TOLERANT_INPUT_ENABLED, enabled)?.apply()
         } catch (_: Exception) {}
     }
 }
