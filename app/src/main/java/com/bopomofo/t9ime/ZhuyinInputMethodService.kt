@@ -282,19 +282,10 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun updateHardwareKeyboardState() {
         if (!::layoutMainFrame.isInitialized || !::layoutBottomBar.isInitialized || !::layoutResizeHandle.isInitialized) return
-        isHardwareKeyboardConnected = checkHardwareKeyboard()
-        if (isHardwareKeyboardConnected) {
-            // 外接實體鍵盤接入：自動折疊為 48dp 迷你候選條，保留應用程式操作視野
-            layoutMainFrame.visibility = View.GONE
-            layoutBottomBar.visibility = View.GONE
-            layoutResizeHandle.visibility = View.GONE
-        } else {
-            // 純觸控或拔掉實體鍵盤：自動還原完整觸控按鍵
-            layoutMainFrame.visibility = View.VISIBLE
-            layoutBottomBar.visibility = View.VISIBLE
-            layoutResizeHandle.visibility = View.VISIBLE
-            updateKeyboardModeUI()
-        }
+        layoutMainFrame.visibility = View.VISIBLE
+        layoutBottomBar.visibility = View.VISIBLE
+        layoutResizeHandle.visibility = View.VISIBLE
+        updateKeyboardModeUI()
     }
 
     /**
