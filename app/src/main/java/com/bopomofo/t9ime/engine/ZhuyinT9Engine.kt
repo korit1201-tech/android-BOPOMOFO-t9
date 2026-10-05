@@ -44,6 +44,13 @@ class ZhuyinT9Engine(private val context: Context) {
     @Volatile
     private var soundToCharMap = mutableMapOf<String, MutableList<DictEntry>>()
 
+    /**
+     * 完整注音/去聲調注音 -> 詞彙條目反向索引（支援單字與多字詞，如 ㄓㄉㄠ -> [知道]）
+     * 專供全鍵盤/實體鍵盤精準出詞與新酷音動態規劃組句使用
+     */
+    @Volatile
+    private var fullZhuyinWordMap = mutableMapOf<String, MutableList<DictEntry>>()
+
     // Bigram 語境關聯索引：prevWord -> (nextWord -> weight)
     private val bigramMap = HashMap<String, MutableMap<String, Int>>()
 
@@ -60,9 +67,9 @@ class ZhuyinT9Engine(private val context: Context) {
 
     init {
         initDefaultBigrams()
-        loadUserDictionaryEntries(trie, charZhuyinMap)
+        loadUserDictionaryEntries(trie, charZhuyinMap, fullZhuyinWordMap)
         userDict.onDictionaryChangedListener = {
-            loadUserDictionaryEntries(trie, charZhuyinMap)
+            loadUserDictionaryEntries(trie, charZhuyinMap, fullZhuyinWordMap)
             if (currentKeys.isNotEmpty()) {
                 recalculate()
             }
@@ -179,8 +186,9 @@ class ZhuyinT9Engine(private val context: Context) {
             val newCharZhuyinMap = mutableMapOf<Char, MutableList<String>>()
             val newInitialMap = mutableMapOf<String, MutableList<DictEntry>>()
             val newSoundToCharMap = mutableMapOf<String, MutableList<DictEntry>>()
-            loadDictionaryInternal(newTrie, newNextWordMap, newCharZhuyinMap, newInitialMap, newSoundToCharMap)
-            loadUserDictionaryEntries(newTrie, newCharZhuyinMap)
+            val newFullZhuyinWordMap = mutableMapOf<String, MutableList<DictEntry>>()
+            loadDictionaryInternal(newTrie, newNextWordMap, newCharZhuyinMap, newInitialMap, newSoundToCharMap, newFullZhuyinWordMap)
+            loadUserDictionaryEntries(newTrie, newCharZhuyinMap, newFullZhuyinWordMap)
 
             mainHandler.post {
                 trie = newTrie
@@ -188,6 +196,7 @@ class ZhuyinT9Engine(private val context: Context) {
                 charZhuyinMap = newCharZhuyinMap
                 initialMap = newInitialMap
                 soundToCharMap = newSoundToCharMap
+                fullZhuyinWordMap = newFullZhuyinWordMap
                 isDictionaryLoaded = true
                 if (currentKeys.isNotEmpty()) {
                     recalculate()
@@ -199,14 +208,22 @@ class ZhuyinT9Engine(private val context: Context) {
 
     private fun loadUserDictionaryEntries(
         targetTrie: TrieDictionary,
-        targetCharZhuyinMap: MutableMap<Char, MutableList<String>>
+        targetCharZhuyinMap: MutableMap<Char, MutableList<String>>,
+        targetFullZhuyinWordMap: MutableMap<String, MutableList<DictEntry>>? = null
     ) {
         val userEntries = userDict.getAllEntries()
         for (u in userEntries) {
             if (u.zhuyin.isNotEmpty()) {
                 // 使用者選過的詞給予高優先權，確保出現在候選詞中
                 val weight = 5_000_000 + minOf(u.count * 6_000_000, 100_000_000)
-                targetTrie.insert(DictEntry(u.word, u.zhuyin, weight))
+                val entry = DictEntry(u.word, u.zhuyin, weight)
+                targetTrie.insert(entry)
+                if (targetFullZhuyinWordMap != null) {
+                    val clean = u.zhuyin.filter { it !in "ˇˋˊ˙ " }
+                    val list = targetFullZhuyinWordMap.getOrPut(clean) { ArrayList(2) }
+                    list.removeAll { it.word == u.word }
+                    list.add(0, entry)
+                }
                 if (u.word.length == 1) {
                     val list = targetCharZhuyinMap.getOrPut(u.word[0]) { ArrayList(2) }
                     if (!list.contains(u.zhuyin)) {
@@ -227,7 +244,8 @@ class ZhuyinT9Engine(private val context: Context) {
         targetNextWordMap: MutableMap<String, MutableList<DictEntry>>,
         targetCharZhuyinMap: MutableMap<Char, MutableList<String>>,
         targetInitialMap: MutableMap<String, MutableList<DictEntry>>,
-        targetSoundToCharMap: MutableMap<String, MutableList<DictEntry>>
+        targetSoundToCharMap: MutableMap<String, MutableList<DictEntry>>,
+        targetFullZhuyinWordMap: MutableMap<String, MutableList<DictEntry>>
     ) {
         val nextWordTrack = mutableMapOf<String, HashSet<String>>()
         var accumulatedWeight = 0L
@@ -247,6 +265,13 @@ class ZhuyinT9Engine(private val context: Context) {
                         val entry = DictEntry(word, zhuyin, weight)
                         targetTrie.insert(entry)
                         accumulatedWeight += weight
+
+                        // 構建精準全注音/去聲調注音詞條索引 (支援單字與多字詞)
+                        val cleanZhuyinNoSpace = zhuyin.filter { it !in "ˇˋˊ˙ " }
+                        val fullList = targetFullZhuyinWordMap.getOrPut(cleanZhuyinNoSpace) { ArrayList(2) }
+                        if (fullList.none { it.word == word }) {
+                            fullList.add(entry)
+                        }
 
                         // 構建簡拼（聲母偷懶輸入）索引表 (2~6字詞)
                         val cleanZhuyin = zhuyin.filter { it !in "ˇˋˊ˙" }
@@ -306,6 +331,9 @@ class ZhuyinT9Engine(private val context: Context) {
                 list.sortByDescending { it.weight }
             }
             for ((_, list) in targetInitialMap) {
+                list.sortByDescending { it.weight }
+            }
+            for ((_, list) in targetFullZhuyinWordMap) {
                 list.sortByDescending { it.weight }
             }
         } catch (e: Exception) {
@@ -832,6 +860,27 @@ class ZhuyinT9Engine(private val context: Context) {
             }
         }
 
+        // 1.2 全拼精確詞庫匹配 (Exact Full Zhuyin Match, 如 ㄓㄉㄠ -> 知道, ㄊㄧㄢㄑㄧ -> 天氣, ㄐㄧㄣㄊㄧㄢ -> 今天)
+        val exactZhuyinWords = fullZhuyinWordMap[cleanInput]
+        if (!exactZhuyinWords.isNullOrEmpty()) {
+            val sortedExact = if (toneChar != null) {
+                exactZhuyinWords.sortedByDescending {
+                    val toneScore = if (it.zhuyin.contains(toneChar)) 20_000_000L else 0L
+                    toneScore + it.weight + userDict.getBoost(it.word)
+                }
+            } else {
+                exactZhuyinWords.sortedByDescending {
+                    it.weight + userDict.getBoost(it.word)
+                }
+            }
+            for (e in sortedExact) {
+                if (seenWords.add(e.word)) {
+                    results.add(e)
+                    if (results.size >= 40) break
+                }
+            }
+        }
+
         // 1.5 長句智慧分詞預測 (基於 DP / Viterbi 最優路徑，支援連打中文長句一口氣出字)
         val fullKeys = cleanInput.mapNotNull { KeyMapping.getKeyId(it) }
         if (fullKeys.size >= 4) {
@@ -1161,5 +1210,116 @@ class ZhuyinT9Engine(private val context: Context) {
             compareByDescending<DictEntry> { userDict.getBoost(it.word) > 0 }
                 .thenByDescending { it.weight + userDict.getBoost(it.word) }
         ).take(80)
+    }
+
+    /**
+     * 精確注音詞條查詢（去聲調）
+     */
+    fun getExactZhuyinWords(cleanZhuyin: String): List<DictEntry> {
+        val list = fullZhuyinWordMap[cleanZhuyin] ?: return emptyList()
+        return list.sortedByDescending { it.weight + userDict.getBoost(it.word) }
+    }
+
+    /**
+     * 新酷音 / PIME 標準音節序列動態規劃組句 (Viterbi 最優路徑)
+     * 支援跨音節詞庫匹配 (例如 ㄓ + ㄉㄠˋ -> 知道, ㄐㄧㄣ + ㄊㄧㄢ -> 今天)
+     * @param syllables 輸入的音節序列列表 (如 ["ㄓ", "ㄉㄠˋ"])
+     * @param pinnedWords 使用者手動選字釘住的位置與漢字 (如 mapOf(0 to "之"))
+     * @return 分詞後的漢字列表 (如 ["知道"])
+     */
+    fun findBestSentenceFromSyllables(
+        syllables: List<String>,
+        pinnedWords: Map<Int, String> = emptyMap()
+    ): List<String> {
+        val n = syllables.size
+        if (n == 0) return emptyList()
+
+        val dp = DoubleArray(n + 1) { Double.NEGATIVE_INFINITY }
+        dp[0] = 0.0
+        val bestPrev = arrayOfNulls<Pair<Int, String>>(n + 1)
+
+        val wordBonus = 15.0 // 新酷音長詞偏好獎勵
+        val logTotal = if (logTotalWeight > 0) logTotalWeight else 17.91
+
+        for (i in 1..n) {
+            val maxLen = minOf(6, i)
+            for (len in 1..maxLen) {
+                val j = i - len
+                if (dp[j] == Double.NEGATIVE_INFINITY) continue
+
+                // 檢查區間 [j, i) 內是否有被 pinned 的字
+                var pinnedConflict = false
+                var singlePinnedChar: String? = null
+                if (len == 1 && pinnedWords.containsKey(j)) {
+                    singlePinnedChar = pinnedWords[j]
+                } else {
+                    for (k in j until i) {
+                        if (pinnedWords.containsKey(k)) {
+                            pinnedConflict = true
+                            break
+                        }
+                    }
+                }
+                if (pinnedConflict) continue
+
+                // 若單字被手動釘住
+                if (singlePinnedChar != null) {
+                    val score = dp[j] + 1000.0 // 最高優先
+                    if (score > dp[i]) {
+                        dp[i] = score
+                        bestPrev[i] = Pair(j, singlePinnedChar)
+                    }
+                    continue
+                }
+
+                val subSyllables = syllables.subList(j, i)
+                val subClean = subSyllables.joinToString("") { it.filter { c -> c !in "ˇˋˊ˙ " } }
+                val subTone = subSyllables.joinToString("")
+
+                val words = fullZhuyinWordMap[subClean]
+                if (!words.isNullOrEmpty()) {
+                    for (entry in words) {
+                        if (entry.word.length != len) continue // 詞長必須與音節數一致
+                        val boost = userDict.getBoost(entry.word)
+                        val effectiveWeight = entry.weight + boost
+                        val logProb = Math.log(maxOf(effectiveWeight.toDouble(), 1.0)) - logTotal
+                        val bonus = (entry.word.length - 1) * wordBonus
+                        val toneBonus = if (entry.zhuyin.filter { it != ' ' } == subTone) 4.0 else 0.0
+                        val score = dp[j] + logProb + bonus + toneBonus
+                        if (score > dp[i]) {
+                            dp[i] = score
+                            bestPrev[i] = Pair(j, entry.word)
+                        }
+                    }
+                } else if (len == 1) {
+                    // 若字典無完全相符詞條，以單字音節索引或音節本身兜底
+                    val soundMatches = soundToCharMap[subClean]
+                    val fallbackChar = soundMatches?.firstOrNull()?.word ?: subClean
+                    val score = dp[j] - 10.0
+                    if (score > dp[i]) {
+                        dp[i] = score
+                        bestPrev[i] = Pair(j, fallbackChar)
+                    }
+                }
+            }
+        }
+
+        if (dp[n] == Double.NEGATIVE_INFINITY) {
+            // 保底返回各音節單字
+            return syllables.map { s ->
+                val clean = s.filter { it !in "ˇˋˊ˙ " }
+                soundToCharMap[clean]?.firstOrNull()?.word ?: clean
+            }
+        }
+
+        val result = mutableListOf<String>()
+        var curr = n
+        while (curr > 0) {
+            val prev = bestPrev[curr] ?: break
+            result.add(prev.second)
+            curr = prev.first
+        }
+        result.reverse()
+        return result
     }
 }
