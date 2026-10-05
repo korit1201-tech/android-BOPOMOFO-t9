@@ -129,6 +129,8 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     // 新酷音 / PIME 標準組句與光標編輯模式
     private val composingSentence = StringBuilder()
+    private val composingSyllables = mutableListOf<String>() // 已結算的音節序列 (如 ["ㄓ", "ㄉㄠˋ"])
+    private val pinnedSentenceChars = mutableMapOf<Int, String>() // 游標選字鎖定 (index -> char)
     private var sentenceCursor = 0
     private var isSentenceSelecting = false
     private val ZHUYIN_INITIALS = "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙ"
@@ -2488,6 +2490,8 @@ class ZhuyinInputMethodService : InputMethodService() {
         replacedCharsMap.clear()
         fullZhuyinBuffer.clear()
         composingSentence.clear()
+        composingSyllables.clear()
+        pinnedSentenceChars.clear()
         sentenceCursor = 0
         isSentenceSelecting = false
         engine.clear()
@@ -2658,7 +2662,11 @@ class ZhuyinInputMethodService : InputMethodService() {
         isCandidateGridOpen = false
         layoutCandidateGrid?.visibility = View.GONE
         btnCandidateExpand?.text = "▼"
-        updateKeyboardModeUI()
+        if (isHardwareKeyboardConnected) {
+            layoutMainFrame.visibility = View.GONE
+        } else {
+            updateKeyboardModeUI()
+        }
     }
 
     private fun populateCandidateGrid() {
@@ -2704,7 +2712,18 @@ class ZhuyinInputMethodService : InputMethodService() {
                     setOnClickListener {
                         triggerHapticFeedback(HapticType.COMMIT)
                         closeCandidateGrid()
-                        if (isHomophoneSelectionMode) {
+                        if (isSentenceSelecting && sentenceCursor < composingSentence.length) {
+                            val chosenChar = entry.word[0].toString()
+                            composingSentence.setCharAt(sentenceCursor, chosenChar[0])
+                            pinnedSentenceChars[sentenceCursor] = chosenChar
+                            if (sentenceCursor < composingSentence.length - 1) {
+                                sentenceCursor++
+                            } else {
+                                sentenceCursor = composingSentence.length
+                                isSentenceSelecting = false
+                            }
+                            updateComposingDisplay()
+                        } else if (isHomophoneSelectionMode) {
                             applyHomophoneReplacement(entry)
                         } else {
                             selectCandidate(entry)
@@ -3068,6 +3087,8 @@ class ZhuyinInputMethodService : InputMethodService() {
         lastComposingStart = -1
         lastComposingEnd = -1
         composingSentence.clear()
+        composingSyllables.clear()
+        pinnedSentenceChars.clear()
         sentenceCursor = 0
         isSentenceSelecting = false
 
@@ -3152,7 +3173,9 @@ class ZhuyinInputMethodService : InputMethodService() {
         KeyEvent.KEYCODE_U to 'ㄧ', KeyEvent.KEYCODE_J to 'ㄨ', KeyEvent.KEYCODE_M to 'ㄩ',
         KeyEvent.KEYCODE_8 to 'ㄚ', KeyEvent.KEYCODE_I to 'ㄛ', KeyEvent.KEYCODE_K to 'ㄜ', KeyEvent.KEYCODE_COMMA to 'ㄝ',
         KeyEvent.KEYCODE_9 to 'ㄞ', KeyEvent.KEYCODE_O to 'ㄟ', KeyEvent.KEYCODE_L to 'ㄠ', KeyEvent.KEYCODE_PERIOD to 'ㄡ',
-        KeyEvent.KEYCODE_0 to 'ㄢ', KeyEvent.KEYCODE_P to 'ㄣ', KeyEvent.KEYCODE_SEMICOLON to 'ㄤ', KeyEvent.KEYCODE_SLASH to 'ㄦ',
+        KeyEvent.KEYCODE_0 to 'ㄢ', KeyEvent.KEYCODE_P to 'ㄣ', KeyEvent.KEYCODE_SEMICOLON to 'ㄤ',
+        KeyEvent.KEYCODE_SLASH to 'ㄥ', // 大千標準：斜線 / 對應 ㄥ
+        KeyEvent.KEYCODE_MINUS to 'ㄦ', // 大千標準：減號 - 對應 ㄦ
         // 聲調鍵 (3 4 6 7)
         KeyEvent.KEYCODE_3 to 'ˇ', // 三聲
         KeyEvent.KEYCODE_4 to 'ˋ', // 四聲
@@ -3201,21 +3224,44 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
     }
 
-    private fun commitCurrentSyllableToSentence(toneChar: Char? = null) {
-        if (fullZhuyinBuffer.isEmpty()) return
-        val zy = if (toneChar != null) fullZhuyinBuffer.toString() + toneChar else fullZhuyinBuffer.toString()
-        val candidates = engine.searchFullZhuyin(zy)
-        val bestWord = candidates.firstOrNull()?.word ?: fullZhuyinBuffer.toString()
+    /**
+     * 依據已輸入之音節序列（如 ["ㄓ", "ㄉㄠˋ"]）與手動選字釘住紀錄，重新動態規劃計算最佳整句
+     */
+    private fun recalculateSentenceFromSyllables() {
+        if (composingSyllables.isEmpty()) {
+            composingSentence.clear()
+            sentenceCursor = 0
+            isSentenceSelecting = false
+            updateComposingDisplay()
+            return
+        }
 
-        val cursor = sentenceCursor.coerceIn(0, composingSentence.length)
-        composingSentence.insert(cursor, bestWord)
-        sentenceCursor = cursor + bestWord.length
-        fullZhuyinBuffer.clear()
-        isSentenceSelecting = false
+        // 調用新酷音/PIME Viterbi DP 演算法，跨音節動態選出最高權重詞組（如 ㄓ + ㄉㄠˋ -> 知道）
+        val words = engine.findBestSentenceFromSyllables(composingSyllables, pinnedSentenceChars)
+        val combined = words.joinToString("")
+        composingSentence.clear()
+        composingSentence.append(combined)
+        sentenceCursor = composingSentence.length
         updateComposingDisplay()
     }
 
+    private fun commitCurrentSyllableToSentence(toneChar: Char? = null) {
+        if (fullZhuyinBuffer.isEmpty()) return
+        val zy = if (toneChar != null) fullZhuyinBuffer.toString() + toneChar else fullZhuyinBuffer.toString()
+        composingSyllables.add(zy)
+        fullZhuyinBuffer.clear()
+        isSentenceSelecting = false
+        recalculateSentenceFromSyllables()
+    }
+
     private fun handlePhysicalBackspace(): Boolean {
+        if (isCandidateGridOpen) {
+            closeCandidateGrid()
+            if (isHardwareKeyboardConnected) {
+                layoutMainFrame.visibility = View.GONE
+            }
+        }
+
         // 1. 若有正在拼寫的注音符號，優先刪除注音符號
         if (fullZhuyinBuffer.isNotEmpty()) {
             fullZhuyinBuffer.deleteCharAt(fullZhuyinBuffer.length - 1)
@@ -3223,13 +3269,21 @@ class ZhuyinInputMethodService : InputMethodService() {
             return true
         }
 
-        // 2. 若當前沒有正在拼寫的注音，但句子中有漢字：刪除游標前方的漢字！
+        // 2. 若當前沒有正在拼寫的注音，但音節序列不為空：刪除游標前方的音節與漢字
+        if (composingSyllables.isNotEmpty()) {
+            val lastIdx = composingSyllables.size - 1
+            composingSyllables.removeAt(lastIdx)
+            pinnedSentenceChars.remove(lastIdx)
+            recalculateSentenceFromSyllables()
+            return true
+        }
+
         if (composingSentence.isNotEmpty()) {
             val cursor = sentenceCursor.coerceIn(0, composingSentence.length)
             if (cursor > 0) {
                 composingSentence.deleteCharAt(cursor - 1)
                 sentenceCursor = cursor - 1
-            } else if (composingSentence.isNotEmpty()) {
+            } else {
                 composingSentence.deleteCharAt(0)
             }
             isSentenceSelecting = false
@@ -3260,7 +3314,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun handlePhysicalDpadLeft(): Boolean {
         if (fullZhuyinBuffer.isNotEmpty()) {
-            commitCurrentSyllableToSentence()
+            commitCurrentSyllableToSentence(toneChar = null)
         }
         if (composingSentence.isNotEmpty()) {
             if (!isSentenceSelecting) {
@@ -3296,14 +3350,45 @@ class ZhuyinInputMethodService : InputMethodService() {
         return false
     }
 
+    private fun handlePhysicalDpadDown(): Boolean {
+        // 向下展開全部候選字面板（格柵多列）
+        if (currentCandidateList.isNotEmpty() && !isCandidateGridOpen) {
+            layoutMainFrame.visibility = View.VISIBLE
+            openCandidateGrid()
+            return true
+        }
+        return false
+    }
+
+    private fun handlePhysicalDpadUp(): Boolean {
+        // 向上收合全部候選字面板
+        if (isCandidateGridOpen) {
+            closeCandidateGrid()
+            if (isHardwareKeyboardConnected) {
+                layoutMainFrame.visibility = View.GONE
+            }
+            return true
+        }
+        return false
+    }
+
     private fun handlePhysicalNumberSelect(number: Int): Boolean {
         val selectIndex = number - 1
         if (isSentenceSelecting && sentenceCursor < composingSentence.length) {
             val candidates = currentCandidateList
             if (selectIndex < candidates.size) {
                 val chosen = candidates[selectIndex]
-                val newChar = chosen.word[0]
-                composingSentence.setCharAt(sentenceCursor, newChar)
+                val newChar = chosen.word[0].toString()
+                composingSentence.setCharAt(sentenceCursor, newChar[0])
+                // 手動選字鎖定：記錄此位置人工選定之字，避免後續動態規劃被覆蓋
+                pinnedSentenceChars[sentenceCursor] = newChar
+
+                if (isCandidateGridOpen) {
+                    closeCandidateGrid()
+                    if (isHardwareKeyboardConnected) {
+                        layoutMainFrame.visibility = View.GONE
+                    }
+                }
 
                 // 經典新酷音體驗：改完後游標自動向右跳一格！
                 if (sentenceCursor < composingSentence.length - 1) {
@@ -3328,9 +3413,17 @@ class ZhuyinInputMethodService : InputMethodService() {
 
         // 2. 若整句已有漢字：按空白鍵直接確認整句上屏！
         if (composingSentence.isNotEmpty()) {
+            if (isCandidateGridOpen) {
+                closeCandidateGrid()
+                if (isHardwareKeyboardConnected) {
+                    layoutMainFrame.visibility = View.GONE
+                }
+            }
             val finalWord = composingSentence.toString()
             commitProcessedWordWithUserDict(finalWord)
             composingSentence.clear()
+            composingSyllables.clear()
+            pinnedSentenceChars.clear()
             sentenceCursor = 0
             isSentenceSelecting = false
             updateComposingDisplay()
@@ -3347,9 +3440,17 @@ class ZhuyinInputMethodService : InputMethodService() {
             commitCurrentSyllableToSentence(toneChar = null)
         }
         if (composingSentence.isNotEmpty()) {
+            if (isCandidateGridOpen) {
+                closeCandidateGrid()
+                if (isHardwareKeyboardConnected) {
+                    layoutMainFrame.visibility = View.GONE
+                }
+            }
             val finalWord = composingSentence.toString()
             commitProcessedWordWithUserDict(finalWord)
             composingSentence.clear()
+            composingSyllables.clear()
+            pinnedSentenceChars.clear()
             sentenceCursor = 0
             isSentenceSelecting = false
             updateComposingDisplay()
@@ -3481,6 +3582,13 @@ class ZhuyinInputMethodService : InputMethodService() {
 
             // Escape 鍵
             if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                if (isCandidateGridOpen) {
+                    closeCandidateGrid()
+                    if (isHardwareKeyboardConnected) {
+                        layoutMainFrame.visibility = View.GONE
+                    }
+                    return true
+                }
                 if (isSentenceSelecting) {
                     sentenceCursor = composingSentence.length
                     isSentenceSelecting = false
@@ -3517,6 +3625,16 @@ class ZhuyinInputMethodService : InputMethodService() {
             // 方向鍵右 (→)
             if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
                 if (handlePhysicalDpadRight()) return true
+            }
+
+            // 方向鍵下 (↓)：展開候選字面板！
+            if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                if (handlePhysicalDpadDown()) return true
+            }
+
+            // 方向鍵上 (↑)：收合候選字面板！
+            if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+                if (handlePhysicalDpadUp()) return true
             }
 
             // 數字鍵選字：若正在改字模式，1~9 直接替換當前字
