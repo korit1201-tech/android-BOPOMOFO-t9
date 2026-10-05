@@ -127,6 +127,14 @@ class ZhuyinInputMethodService : InputMethodService() {
     private var lastComposingStart: Int = -1
     private var lastComposingEnd: Int = -1
 
+    // 新酷音 / PIME 標準組句與光標編輯模式
+    private val composingSentence = StringBuilder()
+    private var sentenceCursor = 0
+    private var isSentenceSelecting = false
+    private val ZHUYIN_INITIALS = "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙ"
+    private val ZHUYIN_FINALS = "ㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ"
+    private val ZHUYIN_TONES = "ˇˋˊ˙"
+
     private lateinit var layout12Key: LinearLayout
     private lateinit var layoutQwerty: LinearLayout
     private lateinit var layoutHandwriting: FrameLayout
@@ -266,6 +274,9 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
+        val hardConnected = newConfig.keyboard == android.content.res.Configuration.KEYBOARD_QWERTY &&
+                newConfig.hardKeyboardHidden == android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO
+        isHardwareKeyboardConnected = hardConnected
         rootView?.let { root ->
             ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
             applyOneHandedMode()
@@ -275,23 +286,37 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun checkHardwareKeyboard(): Boolean {
         val config = resources.configuration
-        return (config.keyboard == android.content.res.Configuration.KEYBOARD_QWERTY &&
-                config.hardKeyboardHidden == android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO) ||
-                isHardwareKeyboardConnected
+        return config.keyboard == android.content.res.Configuration.KEYBOARD_QWERTY &&
+                config.hardKeyboardHidden == android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO
     }
 
     private fun updateHardwareKeyboardState() {
         if (!::layoutMainFrame.isInitialized || !::layoutBottomBar.isInitialized || !::layoutResizeHandle.isInitialized) return
-        layoutMainFrame.visibility = View.VISIBLE
-        layoutBottomBar.visibility = View.VISIBLE
-        layoutResizeHandle.visibility = View.VISIBLE
-        updateKeyboardModeUI()
+        val hardConnected = checkHardwareKeyboard() || isHardwareKeyboardConnected
+        if (hardConnected) {
+            // 實體鍵盤接入：折疊大面積虛擬鍵盤與工具列，保留 48dp 迷你候選列
+            layoutMainFrame.visibility = View.GONE
+            layoutBottomBar.visibility = View.GONE
+            layoutResizeHandle.visibility = View.GONE
+        } else {
+            // 拔掉實體鍵盤或觸控：完整恢復虛擬鍵盤面板
+            layoutMainFrame.visibility = View.VISIBLE
+            layoutBottomBar.visibility = View.VISIBLE
+            layoutResizeHandle.visibility = View.VISIBLE
+            updateKeyboardModeUI()
+            updateCandidateBar(currentCandidateList)
+        }
     }
 
     /**
      * 觸發多級細緻按鍵震動反饋（依據輸入法設定的開關與強度，細分普通按鍵、確認上屏、退格刪除、模式切換等波形）
      */
     private fun triggerHapticFeedback(type: HapticType = HapticType.KEY_PRESS) {
+        // 使用者觸摸螢幕按鍵時，若當前標記為實體鍵盤狀態，立刻恢復觸控模式
+        if (isHardwareKeyboardConnected) {
+            isHardwareKeyboardConnected = false
+            updateHardwareKeyboardState()
+        }
         try {
             if (!PreferencesRepository.isVibrationEnabled(this)) return
 
@@ -2462,6 +2487,9 @@ class ZhuyinInputMethodService : InputMethodService() {
         customComposingWord = null
         replacedCharsMap.clear()
         fullZhuyinBuffer.clear()
+        composingSentence.clear()
+        sentenceCursor = 0
+        isSentenceSelecting = false
         engine.clear()
         currentInputConnection?.finishComposingText()
         clearCandidateBar()
@@ -3039,6 +3067,9 @@ class ZhuyinInputMethodService : InputMethodService() {
         homophoneCharIndex = -1
         lastComposingStart = -1
         lastComposingEnd = -1
+        composingSentence.clear()
+        sentenceCursor = 0
+        isSentenceSelecting = false
 
         engine.clear()
         fullZhuyinBuffer.clear()
@@ -3130,6 +3161,234 @@ class ZhuyinInputMethodService : InputMethodService() {
         KeyEvent.KEYCODE_7 to '˙'  // 輕聲
     )
 
+    // ==========================================
+    // 新酷音 / PIME 標準組句、游標編輯與退位刪除核心
+    // ==========================================
+
+    private fun updateComposingDisplay() {
+        if (composingSentence.isEmpty() && fullZhuyinBuffer.isEmpty()) {
+            currentInputConnection?.setComposingText("", 1)
+            currentInputConnection?.finishComposingText()
+            clearCandidateBar()
+            return
+        }
+
+        val sb = StringBuilder()
+        val cursor = sentenceCursor.coerceIn(0, composingSentence.length)
+        sb.append(composingSentence.substring(0, cursor))
+        if (fullZhuyinBuffer.isNotEmpty()) {
+            sb.append(fullZhuyinBuffer)
+        }
+        sb.append(composingSentence.substring(cursor))
+
+        val displayText = if (isSimplified) ChineseConverter.toSimplified(sb.toString()) else sb.toString()
+        val cursorOffset = cursor + fullZhuyinBuffer.length
+        currentInputConnection?.setComposingText(displayText, cursorOffset)
+
+        // 候選列更新
+        if (isSentenceSelecting && cursor < composingSentence.length) {
+            val targetChar = composingSentence[cursor]
+            val homophones = engine.getHomophonesForChar(targetChar)
+            updateCandidateBar(homophones)
+        } else if (fullZhuyinBuffer.isNotEmpty()) {
+            val candidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString())
+            updateCandidateBar(candidates)
+        } else if (composingSentence.isNotEmpty()) {
+            val candidates = engine.searchFullZhuyin(composingSentence.toString())
+            updateCandidateBar(candidates)
+        } else {
+            clearCandidateBar()
+        }
+    }
+
+    private fun commitCurrentSyllableToSentence(toneChar: Char? = null) {
+        if (fullZhuyinBuffer.isEmpty()) return
+        val zy = if (toneChar != null) fullZhuyinBuffer.toString() + toneChar else fullZhuyinBuffer.toString()
+        val candidates = engine.searchFullZhuyin(zy)
+        val bestWord = candidates.firstOrNull()?.word ?: fullZhuyinBuffer.toString()
+
+        val cursor = sentenceCursor.coerceIn(0, composingSentence.length)
+        composingSentence.insert(cursor, bestWord)
+        sentenceCursor = cursor + bestWord.length
+        fullZhuyinBuffer.clear()
+        isSentenceSelecting = false
+        updateComposingDisplay()
+    }
+
+    private fun handlePhysicalBackspace(): Boolean {
+        // 1. 若有正在拼寫的注音符號，優先刪除注音符號
+        if (fullZhuyinBuffer.isNotEmpty()) {
+            fullZhuyinBuffer.deleteCharAt(fullZhuyinBuffer.length - 1)
+            updateComposingDisplay()
+            return true
+        }
+
+        // 2. 若當前沒有正在拼寫的注音，但句子中有漢字：刪除游標前方的漢字！
+        if (composingSentence.isNotEmpty()) {
+            val cursor = sentenceCursor.coerceIn(0, composingSentence.length)
+            if (cursor > 0) {
+                composingSentence.deleteCharAt(cursor - 1)
+                sentenceCursor = cursor - 1
+            } else if (composingSentence.isNotEmpty()) {
+                composingSentence.deleteCharAt(0)
+            }
+            isSentenceSelecting = false
+            updateComposingDisplay()
+            return true
+        }
+
+        // 3. 若句子與注音都為空：直接調用系統退格，徹底刪除輸入框更前面的已上屏文字！
+        try {
+            val ic = currentInputConnection
+            if (ic != null) {
+                var deleted = false
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    deleted = ic.deleteSurroundingTextInCodePoints(1, 0)
+                }
+                if (!deleted) {
+                    deleted = ic.deleteSurroundingText(1, 0)
+                }
+                if (!deleted) {
+                    sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+                }
+            }
+        } catch (_: Exception) {
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+        }
+        return true
+    }
+
+    private fun handlePhysicalDpadLeft(): Boolean {
+        if (fullZhuyinBuffer.isNotEmpty()) {
+            commitCurrentSyllableToSentence()
+        }
+        if (composingSentence.isNotEmpty()) {
+            if (!isSentenceSelecting) {
+                // 初次按左鍵：游標跳至末字，進入選字模式
+                sentenceCursor = (composingSentence.length - 1).coerceAtLeast(0)
+                isSentenceSelecting = true
+            } else {
+                // 繼續按左鍵：游標往前移一字
+                if (sentenceCursor > 0) {
+                    sentenceCursor--
+                }
+            }
+            updateComposingDisplay()
+            return true
+        }
+        return false
+    }
+
+    private fun handlePhysicalDpadRight(): Boolean {
+        if (composingSentence.isNotEmpty() && isSentenceSelecting) {
+            if (sentenceCursor < composingSentence.length - 1) {
+                sentenceCursor++
+                updateComposingDisplay()
+                return true
+            } else {
+                // 移出末字：退出選字模式
+                sentenceCursor = composingSentence.length
+                isSentenceSelecting = false
+                updateComposingDisplay()
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun handlePhysicalNumberSelect(number: Int): Boolean {
+        val selectIndex = number - 1
+        if (isSentenceSelecting && sentenceCursor < composingSentence.length) {
+            val candidates = currentCandidateList
+            if (selectIndex < candidates.size) {
+                val chosen = candidates[selectIndex]
+                val newChar = chosen.word[0]
+                composingSentence.setCharAt(sentenceCursor, newChar)
+
+                // 經典新酷音體驗：改完後游標自動向右跳一格！
+                if (sentenceCursor < composingSentence.length - 1) {
+                    sentenceCursor++
+                } else {
+                    sentenceCursor = composingSentence.length
+                    isSentenceSelecting = false
+                }
+                updateComposingDisplay()
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun handlePhysicalSpace(): Boolean {
+        // 1. 若當前有注音符號：空白鍵為「一聲」，將當前音節結算成漢字進句子！
+        if (fullZhuyinBuffer.isNotEmpty()) {
+            commitCurrentSyllableToSentence(toneChar = null)
+            return true
+        }
+
+        // 2. 若整句已有漢字：按空白鍵直接確認整句上屏！
+        if (composingSentence.isNotEmpty()) {
+            val finalWord = composingSentence.toString()
+            commitProcessedWordWithUserDict(finalWord)
+            composingSentence.clear()
+            sentenceCursor = 0
+            isSentenceSelecting = false
+            updateComposingDisplay()
+            return true
+        }
+
+        // 3. 句子與注音都為空：輸出半形空格
+        commitTextDirectly(" ")
+        return true
+    }
+
+    private fun handlePhysicalEnter(): Boolean {
+        if (fullZhuyinBuffer.isNotEmpty()) {
+            commitCurrentSyllableToSentence(toneChar = null)
+        }
+        if (composingSentence.isNotEmpty()) {
+            val finalWord = composingSentence.toString()
+            commitProcessedWordWithUserDict(finalWord)
+            composingSentence.clear()
+            sentenceCursor = 0
+            isSentenceSelecting = false
+            updateComposingDisplay()
+            return true
+        }
+        return false
+    }
+
+    private fun handlePhysicalZhuyinKey(ch: Char): Boolean {
+        lastUserTypingTime = SystemClock.uptimeMillis()
+        dismissHomophonePopup()
+
+        // 1. 若按下的是聲調鍵 (ˇ ˋ ˊ ˙)：結算當前音節入句！
+        if (ch in ZHUYIN_TONES) {
+            if (fullZhuyinBuffer.isNotEmpty()) {
+                commitCurrentSyllableToSentence(ch)
+                return true
+            }
+            return false
+        }
+
+        // 2. 連打組詞切換：若當前已包含韻母，此時又輸入了聲母（如 ㄅㄆㄇ...），代表上一字已完成
+        if (ch in ZHUYIN_INITIALS) {
+            val hasFinal = fullZhuyinBuffer.any { it in ZHUYIN_FINALS }
+            val hasInitial = fullZhuyinBuffer.any { it in ZHUYIN_INITIALS }
+            val hasMedial = fullZhuyinBuffer.any { it in "ㄧㄨㄩ" }
+            if (hasFinal || (hasInitial && hasMedial)) {
+                // 自動以一聲結算前一字
+                commitCurrentSyllableToSentence(toneChar = null)
+            }
+        }
+
+        // 3. 將注音符號加入緩衝區
+        fullZhuyinBuffer.append(ch)
+        isSentenceSelecting = false
+        updateComposingDisplay()
+        return true
+    }
+
     private var isPhysicalShiftPressed = false
     private var isPhysicalSelecting = false
 
@@ -3202,19 +3461,10 @@ class ZhuyinInputMethodService : InputMethodService() {
                     else -> null
                 }
                 if (shiftPunctuation != null) {
-                    // 若當前有未上屏的注音，先確認上屏
-                    if (fullZhuyinBuffer.isNotEmpty()) {
-                        val candidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString())
-                        val topWord = customComposingWord ?: candidates.firstOrNull()?.word ?: fullZhuyinBuffer.toString()
-                        commitProcessedWordWithUserDict(topWord)
-                    } else if (engine.hasComposing()) {
-                        val topWord = customComposingWord ?: engine.getCandidates().firstOrNull()?.word ?: engine.getTopComposingWord()
-                        commitProcessedWordWithUserDict(topWord)
-                    }
+                    handlePhysicalEnter()
                     commitTextDirectly(shiftPunctuation)
                     return true
                 }
-                // 非標點符號的 Shift 組合（如 Shift+2 輸出 @，Shift+3 輸出 #）：放行由系統輸出符號
                 return super.onKeyDown(keyCode, event)
             }
 
@@ -3229,182 +3479,56 @@ class ZhuyinInputMethodService : InputMethodService() {
                 }
             }
 
-            // Escape 鍵：若在同音字選字模式則退出；若在格柵選字則關閉；若在組字則清空
+            // Escape 鍵
             if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
-                if (isHomophoneSelectionMode) {
-                    exitHomophoneSelectionMode()
+                if (isSentenceSelecting) {
+                    sentenceCursor = composingSentence.length
+                    isSentenceSelecting = false
+                    updateComposingDisplay()
                     return true
                 }
-                if (isPhysicalSelecting || isCandidateGridOpen) {
-                    closeCandidateGrid()
-                    isPhysicalSelecting = false
-                    return true
-                }
-                if (fullZhuyinBuffer.isNotEmpty() || engine.hasComposing()) {
+                if (fullZhuyinBuffer.isNotEmpty() || composingSentence.isNotEmpty()) {
                     cancelComposing()
                     return true
                 }
             }
 
-            val hasActiveComposing = engine.hasComposing() || fullZhuyinBuffer.isNotEmpty() || customComposingWord != null
-
-            // 候選字翻頁與方向鍵選字 / 游標回退改字 (新酷音 / PIME 行為)
-            if (hasActiveComposing) {
-                // A. 同音字選字模式下的方向鍵導航
-                if (isHomophoneSelectionMode) {
-                    when (keyCode) {
-                        KeyEvent.KEYCODE_DPAD_LEFT -> {
-                            if (homophoneCharIndex > 0) {
-                                enterHomophoneSelectionMode(homophoneCharIndex - 1)
-                            }
-                            return true
-                        }
-                        KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                            val word = getCurrentComposingText()
-                            if (homophoneCharIndex < word.length - 1) {
-                                enterHomophoneSelectionMode(homophoneCharIndex + 1)
-                            } else {
-                                exitHomophoneSelectionMode()
-                            }
-                            return true
-                        }
-                    }
-                }
-
-                // B. 一般組字狀態下，按方向鍵左 (←)：直接進入「游標回退選字改字模式」！
-                if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
-                    val currentWord = getCurrentComposingText()
-                    if (currentWord.isNotEmpty()) {
-                        enterHomophoneSelectionMode(currentWord.length - 1)
-                        return true
-                    }
-                }
-
-                // 方向鍵下：展開選字模式，此時數字鍵 1~9 才正式做為挑字鍵
-                if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
-                    if (!isCandidateGridOpen) {
-                        openCandidateGrid()
-                    }
-                    isPhysicalSelecting = true
-                    return true
-                }
-                // 方向鍵上：收起選字模式
-                if (keyCode == KeyEvent.KEYCODE_DPAD_UP && (isPhysicalSelecting || isCandidateGridOpen)) {
-                    closeCandidateGrid()
-                    isPhysicalSelecting = false
-                    return true
-                }
-                when (keyCode) {
-                    KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_TAB -> {
-                        candidateScroll?.smoothScrollBy(320, 0)
-                        return true
-                    }
-                    KeyEvent.KEYCODE_PAGE_UP -> {
-                        candidateScroll?.smoothScrollBy(-320, 0)
-                        return true
-                    }
-                }
-            }
-
-            // A. Backspace 刪除
+            // Backspace 刪除（拼音刪拼音，句子刪前字，句子空了直接刪除輸入框前面的字）
             if (keyCode == KeyEvent.KEYCODE_DEL) {
-                if (isHomophoneSelectionMode) {
-                    exitHomophoneSelectionMode()
-                    return true
-                }
-                if (isPhysicalSelecting || isCandidateGridOpen) {
-                    closeCandidateGrid()
-                    isPhysicalSelecting = false
-                    return true
-                }
-                if (fullZhuyinBuffer.isNotEmpty()) {
-                    performBackspace()
-                    return true
-                }
-                if (engine.hasComposing()) {
-                    performBackspace()
-                    return true
-                }
-                return super.onKeyDown(keyCode, event)
+                return handlePhysicalBackspace()
             }
 
-            // B. Space 空白鍵
+            // Space 空白鍵（拼音為一聲結算，整句為上屏，空為空格）
             if (keyCode == KeyEvent.KEYCODE_SPACE) {
-                if (isHomophoneSelectionMode) {
-                    val word = getCurrentComposingText()
-                    exitHomophoneSelectionMode()
-                    commitProcessedWordWithUserDict(word)
-                    return true
-                }
-                if (fullZhuyinBuffer.isNotEmpty()) {
-                    val candidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString())
-                    val topWord = customComposingWord ?: candidates.firstOrNull()?.word ?: fullZhuyinBuffer.toString()
-                    commitProcessedWordWithUserDict(topWord)
-                    isPhysicalSelecting = false
-                    if (isCandidateGridOpen) closeCandidateGrid()
-                    return true
-                }
-                if (engine.hasComposing()) {
-                    val topWord = customComposingWord ?: engine.getCandidates().firstOrNull()?.word ?: engine.getTopComposingWord()
-                    commitProcessedWordWithUserDict(topWord)
-                    isPhysicalSelecting = false
-                    if (isCandidateGridOpen) closeCandidateGrid()
-                    return true
-                } else {
-                    commitTextDirectly(" ")
-                    return true
-                }
+                return handlePhysicalSpace()
             }
 
-            // C. Enter 鍵確認直接送出當前注音/預測候選
+            // Enter 確認鍵
             if (keyCode == KeyEvent.KEYCODE_ENTER) {
-                if (isHomophoneSelectionMode) {
-                    val word = getCurrentComposingText()
-                    exitHomophoneSelectionMode()
-                    commitProcessedWordWithUserDict(word)
-                    return true
-                }
-                if (fullZhuyinBuffer.isNotEmpty() || engine.hasComposing()) {
-                    performEnterAction()
-                    isPhysicalSelecting = false
-                    if (isCandidateGridOpen) closeCandidateGrid()
-                    return true
-                }
+                if (handlePhysicalEnter()) return true
                 return super.onKeyDown(keyCode, event)
             }
 
-            // D. 數字鍵選字：在選字模式 (isPhysicalSelecting / isCandidateGridOpen) 或同音改字模式 (isHomophoneSelectionMode) 下生效
-            if (hasActiveComposing && (isPhysicalSelecting || isCandidateGridOpen || isHomophoneSelectionMode) && keyCode in KeyEvent.KEYCODE_1..KeyEvent.KEYCODE_9) {
-                val selectIndex = keyCode - KeyEvent.KEYCODE_1
-                val candidates = if (currentCandidateList.isNotEmpty()) {
-                    currentCandidateList
-                } else if (fullZhuyinBuffer.isNotEmpty()) {
-                    engine.searchFullZhuyin(fullZhuyinBuffer.toString())
-                } else {
-                    engine.getCandidates()
-                }
-                if (selectIndex < candidates.size) {
-                    val chosen = candidates[selectIndex]
-                    if (isHomophoneSelectionMode) {
-                        if (chosen.word.startsWith("✔")) {
-                            exitHomophoneSelectionMode()
-                        } else {
-                            applyHomophoneReplacement(chosen)
-                        }
-                    } else {
-                        selectCandidate(chosen)
-                        isPhysicalSelecting = false
-                        if (isCandidateGridOpen) closeCandidateGrid()
-                    }
-                    return true
-                }
+            // 方向鍵左 (←)：游標回退選前面修改！
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                if (handlePhysicalDpadLeft()) return true
             }
 
-            // E. 大千注音按鍵映射輸入（外接實體鍵盤統一導向全鍵盤注音處理，絕不走 9 鍵序列）
+            // 方向鍵右 (→)
+            if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                if (handlePhysicalDpadRight()) return true
+            }
+
+            // 數字鍵選字：若正在改字模式，1~9 直接替換當前字
+            if (isSentenceSelecting && keyCode in KeyEvent.KEYCODE_1..KeyEvent.KEYCODE_9) {
+                val num = keyCode - KeyEvent.KEYCODE_1 + 1
+                if (handlePhysicalNumberSelect(num)) return true
+            }
+
+            // 大千注音按鍵映射輸入（外接實體鍵盤統一由新酷音/大千管線處理）
             val zhuyinChar = DAQIAN_KEY_MAP[keyCode]
             if (zhuyinChar != null) {
-                handleZhuyinFullKey(zhuyinChar)
-                return true
+                return handlePhysicalZhuyinKey(zhuyinChar)
             }
         }
 
