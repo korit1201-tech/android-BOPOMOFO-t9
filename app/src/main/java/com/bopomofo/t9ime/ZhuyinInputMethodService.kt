@@ -249,6 +249,11 @@ class ZhuyinInputMethodService : InputMethodService() {
         googleRecognizer?.close()
     }
 
+    override fun onEvaluateInputViewShown(): Boolean {
+        // 無論是否連接外接實體鍵盤，一律顯示 InputView 以呈現候選字列（相容實體鍵盤 48dp 迷你候選條）
+        return true
+    }
+
     override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         rootView?.let { root ->
@@ -270,8 +275,9 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun checkHardwareKeyboard(): Boolean {
         val config = resources.configuration
-        return config.keyboard == android.content.res.Configuration.KEYBOARD_QWERTY &&
-                config.hardKeyboardHidden == android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO
+        return (config.keyboard == android.content.res.Configuration.KEYBOARD_QWERTY &&
+                config.hardKeyboardHidden == android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO) ||
+                isHardwareKeyboardConnected
     }
 
     private fun updateHardwareKeyboardState() {
@@ -2734,7 +2740,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun updateCandidateBar(candidates: List<DictEntry>) {
-        val effectiveCandidates = if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty() && !isHomophoneSelectionMode) {
+        val effectiveCandidates = if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty() && !isHomophoneSelectionMode && !isHardwareKeyboardConnected) {
             val zhuyinEntry = DictEntry("【$fullZhuyinBuffer】", fullZhuyinBuffer.toString(), 999_999_999)
             listOf(zhuyinEntry) + candidates
         } else {
@@ -2751,8 +2757,13 @@ class ZhuyinInputMethodService : InputMethodService() {
 
         for (i in 0 until count) {
             val entry = displayCandidates[i]
-            val isZhuyinHeader = currentMode == KeyboardMode.ZHUYIN_FULL && entry.word.startsWith("【") && entry.word.endsWith("】")
-            val displayWord = if (isSimplified) ChineseConverter.toSimplified(entry.word) else entry.word
+            val isZhuyinHeader = !isHardwareKeyboardConnected && currentMode == KeyboardMode.ZHUYIN_FULL && entry.word.startsWith("【") && entry.word.endsWith("】")
+            val rawWord = if (isSimplified) ChineseConverter.toSimplified(entry.word) else entry.word
+            val displayWord = if (isHardwareKeyboardConnected && !isZhuyinHeader && i < 9) {
+                "${i + 1}. $rawWord"
+            } else {
+                rawWord
+            }
 
             val tv = if (i < candidateTextViewPool.size) {
                 val existing = candidateTextViewPool[i]
@@ -2783,8 +2794,9 @@ class ZhuyinInputMethodService : InputMethodService() {
                 tv.setTypeface(null, Typeface.BOLD)
                 tv.setBackgroundResource(R.drawable.bg_key_action)
             } else {
+                val isFirstCandidate = if (isHardwareKeyboardConnected) i == 0 else (i == 0 || (currentMode == KeyboardMode.ZHUYIN_FULL && i == 1))
                 tv.setTextColor(
-                    if (i == 0 || (currentMode == KeyboardMode.ZHUYIN_FULL && i == 1)) themeColors.candidateText
+                    if (isFirstCandidate) themeColors.candidateText
                     else themeColors.textPrimary
                 )
                 tv.setTypeface(null, Typeface.NORMAL)
@@ -2844,11 +2856,13 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun getCurrentComposingText(): String {
-        return if (currentMode == KeyboardMode.ZHUYIN_FULL) {
-            customComposingWord ?: (engine.searchFullZhuyin(fullZhuyinBuffer.toString()).firstOrNull()?.word ?: fullZhuyinBuffer.toString())
-        } else {
-            customComposingWord ?: engine.getTopComposingWord()
+        if (customComposingWord != null) return customComposingWord!!
+        if (fullZhuyinBuffer.isNotEmpty() || isHardwareKeyboardConnected || currentMode == KeyboardMode.ZHUYIN_FULL) {
+            if (fullZhuyinBuffer.isNotEmpty()) {
+                return engine.searchFullZhuyin(fullZhuyinBuffer.toString()).firstOrNull()?.word ?: fullZhuyinBuffer.toString()
+            }
         }
+        return engine.getTopComposingWord()
     }
 
     /**
@@ -2926,6 +2940,12 @@ class ZhuyinInputMethodService : InputMethodService() {
             // 更新輸入框底線組字預覽（保持底線未確認狀態，讓使用者可繼續修改其他字）
             val finalPreview = if (isSimplified) ChineseConverter.toSimplified(newWord) else newWord
             currentInputConnection?.setComposingText(finalPreview, 1)
+
+            val nextIndex = homophoneCharIndex + 1
+            if (isHardwareKeyboardConnected && nextIndex < newWord.length) {
+                enterHomophoneSelectionMode(nextIndex)
+                return
+            }
         }
         exitHomophoneSelectionMode()
     }
@@ -3123,6 +3143,12 @@ class ZhuyinInputMethodService : InputMethodService() {
     private var isPhysicalSelecting = false
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        // 收到實體鍵盤事件時，確保標記為已連接並折疊面板保留操作視野
+        if (!isHardwareKeyboardConnected) {
+            isHardwareKeyboardConnected = true
+            updateHardwareKeyboardState()
+        }
+
         // 1. Shift 鍵按下標記
         if (keyCode == KeyEvent.KEYCODE_SHIFT_LEFT || keyCode == KeyEvent.KEYCODE_SHIFT_RIGHT) {
             isPhysicalShiftPressed = true
@@ -3186,9 +3212,9 @@ class ZhuyinInputMethodService : InputMethodService() {
                 }
                 if (shiftPunctuation != null) {
                     // 若當前有未上屏的注音，先確認上屏
-                    if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty()) {
+                    if (fullZhuyinBuffer.isNotEmpty()) {
                         val candidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString())
-                        val topWord = candidates.firstOrNull()?.word ?: fullZhuyinBuffer.toString()
+                        val topWord = customComposingWord ?: candidates.firstOrNull()?.word ?: fullZhuyinBuffer.toString()
                         commitProcessedWordWithUserDict(topWord)
                     } else if (engine.hasComposing()) {
                         val topWord = customComposingWord ?: engine.getCandidates().firstOrNull()?.word ?: engine.getTopComposingWord()
@@ -3212,23 +3238,57 @@ class ZhuyinInputMethodService : InputMethodService() {
                 }
             }
 
-            // Escape 鍵：若正在選字則關閉選字；若正在組字則清空緩衝區
+            // Escape 鍵：若在同音字選字模式則退出；若在格柵選字則關閉；若在組字則清空
             if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                if (isHomophoneSelectionMode) {
+                    exitHomophoneSelectionMode()
+                    return true
+                }
                 if (isPhysicalSelecting || isCandidateGridOpen) {
                     closeCandidateGrid()
                     isPhysicalSelecting = false
                     return true
                 }
-                if ((currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty()) || engine.hasComposing()) {
+                if (fullZhuyinBuffer.isNotEmpty() || engine.hasComposing()) {
                     cancelComposing()
                     return true
                 }
             }
 
-            val hasActiveComposing = engine.hasComposing() || fullZhuyinBuffer.isNotEmpty()
+            val hasActiveComposing = engine.hasComposing() || fullZhuyinBuffer.isNotEmpty() || customComposingWord != null
 
-            // 候選字翻頁與方向滾動 / 展開選字 (PageDown/Up, 方向鍵, Tab)
+            // 候選字翻頁與方向鍵選字 / 游標回退改字 (新酷音 / PIME 行為)
             if (hasActiveComposing) {
+                // A. 同音字選字模式下的方向鍵導航
+                if (isHomophoneSelectionMode) {
+                    when (keyCode) {
+                        KeyEvent.KEYCODE_DPAD_LEFT -> {
+                            if (homophoneCharIndex > 0) {
+                                enterHomophoneSelectionMode(homophoneCharIndex - 1)
+                            }
+                            return true
+                        }
+                        KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            val word = getCurrentComposingText()
+                            if (homophoneCharIndex < word.length - 1) {
+                                enterHomophoneSelectionMode(homophoneCharIndex + 1)
+                            } else {
+                                exitHomophoneSelectionMode()
+                            }
+                            return true
+                        }
+                    }
+                }
+
+                // B. 一般組字狀態下，按方向鍵左 (←)：直接進入「游標回退選字改字模式」！
+                if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                    val currentWord = getCurrentComposingText()
+                    if (currentWord.isNotEmpty()) {
+                        enterHomophoneSelectionMode(currentWord.length - 1)
+                        return true
+                    }
+                }
+
                 // 方向鍵下：展開選字模式，此時數字鍵 1~9 才正式做為挑字鍵
                 if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
                     if (!isCandidateGridOpen) {
@@ -3248,7 +3308,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                         candidateScroll?.smoothScrollBy(320, 0)
                         return true
                     }
-                    KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_DPAD_LEFT -> {
+                    KeyEvent.KEYCODE_PAGE_UP -> {
                         candidateScroll?.smoothScrollBy(-320, 0)
                         return true
                     }
@@ -3257,12 +3317,16 @@ class ZhuyinInputMethodService : InputMethodService() {
 
             // A. Backspace 刪除
             if (keyCode == KeyEvent.KEYCODE_DEL) {
+                if (isHomophoneSelectionMode) {
+                    exitHomophoneSelectionMode()
+                    return true
+                }
                 if (isPhysicalSelecting || isCandidateGridOpen) {
                     closeCandidateGrid()
                     isPhysicalSelecting = false
                     return true
                 }
-                if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty()) {
+                if (fullZhuyinBuffer.isNotEmpty()) {
                     performBackspace()
                     return true
                 }
@@ -3275,9 +3339,15 @@ class ZhuyinInputMethodService : InputMethodService() {
 
             // B. Space 空白鍵
             if (keyCode == KeyEvent.KEYCODE_SPACE) {
-                if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty()) {
+                if (isHomophoneSelectionMode) {
+                    val word = getCurrentComposingText()
+                    exitHomophoneSelectionMode()
+                    commitProcessedWordWithUserDict(word)
+                    return true
+                }
+                if (fullZhuyinBuffer.isNotEmpty()) {
                     val candidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString())
-                    val topWord = candidates.firstOrNull()?.word ?: fullZhuyinBuffer.toString()
+                    val topWord = customComposingWord ?: candidates.firstOrNull()?.word ?: fullZhuyinBuffer.toString()
                     commitProcessedWordWithUserDict(topWord)
                     isPhysicalSelecting = false
                     if (isCandidateGridOpen) closeCandidateGrid()
@@ -3297,7 +3367,13 @@ class ZhuyinInputMethodService : InputMethodService() {
 
             // C. Enter 鍵確認直接送出當前注音/預測候選
             if (keyCode == KeyEvent.KEYCODE_ENTER) {
-                if ((currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty()) || engine.hasComposing()) {
+                if (isHomophoneSelectionMode) {
+                    val word = getCurrentComposingText()
+                    exitHomophoneSelectionMode()
+                    commitProcessedWordWithUserDict(word)
+                    return true
+                }
+                if (fullZhuyinBuffer.isNotEmpty() || engine.hasComposing()) {
                     performEnterAction()
                     isPhysicalSelecting = false
                     if (isCandidateGridOpen) closeCandidateGrid()
@@ -3306,54 +3382,38 @@ class ZhuyinInputMethodService : InputMethodService() {
                 return super.onKeyDown(keyCode, event)
             }
 
-            // D. 數字鍵選字：【關鍵解衝突】僅在選字模式 (isPhysicalSelecting 或 isCandidateGridOpen) 下才生效！
-            //    組字模式 (COMPOSING) 下，數字鍵 1~9 一律是大千注音 (1:ㄅ, 2:ㄉ, 3:ˇ, 4:ˋ, 6:ˊ, 7:˙, 8:ㄚ, 9:ㄞ)
-            if (hasActiveComposing && (isPhysicalSelecting || isCandidateGridOpen) && keyCode in KeyEvent.KEYCODE_1..KeyEvent.KEYCODE_9) {
+            // D. 數字鍵選字：在選字模式 (isPhysicalSelecting / isCandidateGridOpen) 或同音改字模式 (isHomophoneSelectionMode) 下生效
+            if (hasActiveComposing && (isPhysicalSelecting || isCandidateGridOpen || isHomophoneSelectionMode) && keyCode in KeyEvent.KEYCODE_1..KeyEvent.KEYCODE_9) {
                 val selectIndex = keyCode - KeyEvent.KEYCODE_1
                 val candidates = if (currentCandidateList.isNotEmpty()) {
                     currentCandidateList
-                } else if (currentMode == KeyboardMode.ZHUYIN_FULL) {
+                } else if (fullZhuyinBuffer.isNotEmpty()) {
                     engine.searchFullZhuyin(fullZhuyinBuffer.toString())
                 } else {
                     engine.getCandidates()
                 }
                 if (selectIndex < candidates.size) {
-                    selectCandidate(candidates[selectIndex])
-                    isPhysicalSelecting = false
-                    if (isCandidateGridOpen) closeCandidateGrid()
+                    val chosen = candidates[selectIndex]
+                    if (isHomophoneSelectionMode) {
+                        if (chosen.word.startsWith("✔")) {
+                            exitHomophoneSelectionMode()
+                        } else {
+                            applyHomophoneReplacement(chosen)
+                        }
+                    } else {
+                        selectCandidate(chosen)
+                        isPhysicalSelecting = false
+                        if (isCandidateGridOpen) closeCandidateGrid()
+                    }
                     return true
                 }
             }
 
-            // E. 大千注音按鍵映射輸入（組字狀態下 1~9 會正確落入此處成為注音與聲調）
+            // E. 大千注音按鍵映射輸入（外接實體鍵盤統一導向全鍵盤注音處理，絕不走 9 鍵序列）
             val zhuyinChar = DAQIAN_KEY_MAP[keyCode]
             if (zhuyinChar != null) {
-                if (currentMode == KeyboardMode.ZHUYIN_FULL) {
-                    handleZhuyinFullKey(zhuyinChar)
-                    return true
-                } else {
-                    if (zhuyinChar in listOf('ˇ', 'ˋ', 'ˊ', '˙')) {
-                        val (_, cands) = engine.setTone(zhuyinChar)
-                        refreshUI(cands)
-                        return true
-                    } else {
-                        val keyId = com.bopomofo.t9ime.engine.KeyMapping.getKeyId(zhuyinChar)
-                        if (keyId != null) {
-                            val topCandidate = engine.getCandidates().firstOrNull()
-                            val curKeys = engine.getCurrentKeys()
-                            if (topCandidate != null && topCandidate.word.length >= 2 && curKeys.isNotEmpty()) {
-                                val testKeys = curKeys + keyId
-                                val canExtendLongerWord = engine.hasPrefixOrExact(testKeys)
-                                if (!canExtendLongerWord) {
-                                    commitProcessedWordWithUserDict(topCandidate.word, topCandidate.zhuyin)
-                                }
-                            }
-                            engine.pressKey(keyId)
-                            refreshUI(engine.getCandidates())
-                            return true
-                        }
-                    }
-                }
+                handleZhuyinFullKey(zhuyinChar)
+                return true
             }
         }
 
