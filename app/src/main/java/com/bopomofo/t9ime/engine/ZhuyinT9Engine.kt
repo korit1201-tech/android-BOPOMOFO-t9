@@ -832,6 +832,15 @@ class ZhuyinT9Engine(private val context: Context) {
             }
         }
 
+        // 1.5 長句智慧分詞預測 (基於 DP / Viterbi 最優路徑，支援連打中文長句一口氣出字)
+        val fullKeys = cleanInput.mapNotNull { KeyMapping.getKeyId(it) }
+        if (fullKeys.size >= 4) {
+            val sentenceEntry = findBestSentence(fullKeys)
+            if (sentenceEntry != null && seenWords.add(sentenceEntry.word)) {
+                results.add(0, sentenceEntry)
+            }
+        }
+
         // 2. 首碼簡拼精確匹配 (Pure Initials Match, 如 ㄐㄊ -> 今天, 家庭)
         if (cleanInput.length >= 2) {
             val matched = initialMap[cleanInput]

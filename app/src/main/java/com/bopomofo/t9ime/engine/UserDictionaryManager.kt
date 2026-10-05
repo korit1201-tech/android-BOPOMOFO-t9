@@ -142,14 +142,26 @@ class UserDictionaryManager private constructor(private val context: Context) {
     /**
      * 計算候選詞個人化增幅權重
      * 使用者選定/確認過的字詞賦予絕對優選增幅 (≥ 1,000,000)，超越字典既定權重穩居首選
+     * 支援時間衰減模型 (Recency Boost)：近期剛選過之詞享有即時優先置頂權重
      */
     fun getBoost(word: String): Int {
         val entry = synchronized(memoryDict) { memoryDict[word] } ?: return 0
-        return if (word.length == 1) {
+        val baseBoost = if (word.length == 1) {
             1_000_000 + minOf(entry.count * 100_000, 10_000_000)
         } else {
             2_000_000 + minOf(entry.count * 200_000, 20_000_000)
         }
+
+        val now = System.currentTimeMillis()
+        val diffMs = maxOf(0L, now - entry.lastUsed)
+        val recencyBonus = when {
+            diffMs < 10 * 60 * 1000L -> 3_000_000      // 10 分鐘內剛選過
+            diffMs < 24 * 3600 * 1000L -> 1_500_000    // 24 小時內
+            diffMs < 7 * 24 * 3600 * 1000L -> 500_000 // 7 天內
+            else -> 0
+        }
+
+        return baseBoost + recencyBonus
     }
 
     fun getUsageCount(word: String): Int {
