@@ -622,20 +622,6 @@ class ZhuyinInputMethodService : InputMethodService() {
                             val (_, candidates) = engine.cycleTone()
                             refreshUI(candidates)
                         } else {
-                            // 新酷音詞邊界自動提交 (Word Boundary Commit)：
-                            // 若當前已有完整多字詞候選（長度 >= 2，如「概念」、「目前」、「今天」），
-                            // 且當前按鍵序列加上新按鍵 keyNum 在字典中已無法組成更長詞彙，
-                            // 表示使用者按下此鍵是在輸入下一個字，立即自動確認提交前綴詞！
-                            val topCandidate = engine.getCandidates().firstOrNull()
-                            val curKeys = engine.getCurrentKeys()
-                            if (topCandidate != null && topCandidate.word.length >= 2 && curKeys.isNotEmpty()) {
-                                val testKeys = curKeys + keyNum
-                                val canExtendLongerWord = engine.hasPrefixOrExact(testKeys)
-                                if (!canExtendLongerWord) {
-                                    commitProcessedWordWithUserDict(topCandidate.word, topCandidate.zhuyin)
-                                }
-                            }
-
                             engine.pressKey(keyNum)
                             refreshUI(engine.getCandidates())
                         }

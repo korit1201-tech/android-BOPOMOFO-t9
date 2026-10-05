@@ -425,10 +425,14 @@ class ZhuyinT9Engine(private val context: Context) {
     private var previousTopWord: String? = null
 
     /**
-     * 工業級 Rime-Chewing 融合評分模型：
-     * 1. 現代漢語詞長優先（2字詞 5.0x > 3字詞 3.5x > 4字詞 3.0x > 單字 0.15x）
-     * 2. Rime 未完成距離平滑折扣模型 (0.85^distance)，讓高頻未完成大詞自然浮現，徹底擊潰低頻生僻完全匹配怪詞！
-     * 3. 音節延續保護 (Syllable Continuity)：若候選詞繼承了使用者前一擊的首字音節（如「今」->「今天」），給予 1.6x 延續加成！
+     * 現代音節與詞頻評分模型：
+     * 1. 嚴格區分「完全匹配 (isExact)」與「未完成前綴預測 (!isExact)」：
+     *    - 完全匹配（如單字「說」ㄕㄨㄛ 已完整打完 3 鍵）：絕不施加長度懲罰，保證精確單字與完整詞優先出字！
+     *    - 前綴預測（如「所以」ㄙㄨㄛˇㄧˇ 尚缺第 4 鍵）：採每缺一鍵 (0.65^distance) 指數折扣，嚴禁半成品詞搶佔第一順位！
+     * 2. 詞長權重：
+     *    - 完全匹配：雙字詞 2.5x、三字詞 2.2x、單字 1.5x
+     *    - 前綴預測：雙字詞 1.2x、三字詞 1.0x、單字 0.8x
+     * 3. 音節延續保護 (Syllable Continuity)：若候選詞繼承了前一擊的首字音節，給予 1.3x 延續加成。
      */
     private fun getEffectiveWeight(entry: DictEntry, inputKeyCount: Int, isExact: Boolean, prevTopWord: String? = null): Double {
         val userBoost = userDict.getBoost(entry.word)
@@ -437,25 +441,35 @@ class ZhuyinT9Engine(private val context: Context) {
         }
 
         val rawWeight = entry.weight.toDouble()
-        val lengthMultiplier = when (entry.word.length) {
-            2 -> 5.0      // 雙字詞核心加成（中文日常最高頻詞型，佔70%+）
-            3 -> 3.5      // 三字詞加成
-            4 -> 3.0      // 四字成語/專有名詞加成
-            1 -> {
-                // 單字：若輸入按鍵數達到 3 鍵以上（已經具備拼出雙字詞的能力），
-                // 降低單字優先權，避免散字擋在雙字詞前面
-                if (inputKeyCount >= 3) 0.15 else 1.0
+        val lengthMultiplier = when {
+            isExact -> {
+                when (entry.word.length) {
+                    2 -> 2.5      // 雙字詞核心加成
+                    3 -> 2.2      // 三字詞加成
+                    4 -> 2.0      // 四字成語加成
+                    1 -> 1.5      // 單字完全匹配（已完整拼完音節，給予充份基礎加成，絕不懲罰）
+                    else -> 1.8
+                }
             }
-            else -> 1.5
+            else -> {
+                // 尚未完成的預測詞 (Prefix)
+                when (entry.word.length) {
+                    2 -> 1.2
+                    3 -> 1.0
+                    4 -> 0.9
+                    1 -> 0.8
+                    else -> 0.8
+                }
+            }
         }
 
-        // Rime 距離折扣模型
+        // 距離折扣模型
         val targetKeyLen = KeyMapping.getSequence(entry.zhuyin, ignoreTones = true).size
         val distance = maxOf(0, targetKeyLen - inputKeyCount)
-        val distanceMultiplier = if (isExact) 1.8 else Math.pow(0.85, distance.toDouble())
+        val distanceMultiplier = if (isExact) 2.5 else Math.pow(0.65, distance.toDouble())
 
         // 音節延續加成
-        val continuityMultiplier = if (prevTopWord != null && prevTopWord.isNotEmpty() && entry.word.startsWith(prevTopWord)) 1.6 else 1.0
+        val continuityMultiplier = if (prevTopWord != null && prevTopWord.isNotEmpty() && entry.word.startsWith(prevTopWord)) 1.3 else 1.0
 
         val tolerantMultiplier = if (entry.isTolerant) 0.35 else 1.0
         return rawWeight * lengthMultiplier * distanceMultiplier * continuityMultiplier * tolerantMultiplier
@@ -497,6 +511,19 @@ class ZhuyinT9Engine(private val context: Context) {
         for (e in filteredExact) {
             val score = getEffectiveWeight(e, phonemeKeyLen, isExact = true, prevTopWord = prevTop)
             pool[e.word] = Pair(e, score)
+        }
+
+        // 長句智慧分詞預測（4 鍵以上長度，當能組合成高機率連詞時，納入評分池作為完整句子候選）
+        if (phonemeKeyLen >= 4) {
+            val sentenceEntry = findBestSentence(cleanKeys)
+            if (sentenceEntry != null) {
+                // 作為完全匹配全句，賦予相當於 exact match 的高置信度評分
+                val sentenceScore = sentenceEntry.weight.toDouble() * 2.5 * 2.0
+                val existing = pool[sentenceEntry.word]
+                if (existing == null || sentenceScore > existing.second) {
+                    pool[sentenceEntry.word] = Pair(sentenceEntry, sentenceScore)
+                }
+            }
         }
 
         for (p in filteredPrefix) {
@@ -575,7 +602,7 @@ class ZhuyinT9Engine(private val context: Context) {
     /**
      * 動態規劃 (DP / Viterbi) 全域最佳分詞演算法 - 取得分詞片段與按鍵長度
      */
-    private fun findBestSentenceSegments(keys: List<Int>): List<Pair<String, Int>>? {
+    private fun findBestSentenceSegments(keys: List<Int>): List<Pair<DictEntry, Int>>? {
         val n = keys.size
         if (n < 4) return null
 
@@ -583,7 +610,6 @@ class ZhuyinT9Engine(private val context: Context) {
         dp[0] = 0.0
         val bestSplit = arrayOfNulls<Pair<Int, DictEntry>>(n + 1)
 
-        val wordBonus = 12.0 // 參考 libchewing：強烈長詞偏好，優先切分 2、3、4 字詞，徹底杜絕單字碎散切分
         val logTotal = if (logTotalWeight > 0) logTotalWeight else 17.91
 
         for (i in 1..n) {
@@ -595,14 +621,16 @@ class ZhuyinT9Engine(private val context: Context) {
                     val node = trie.searchNode(subKeys)
                     if (node != null && node.exactEntries.isNotEmpty()) {
                         val isTolerantEnabled = com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(context)
+                        val prevWord = bestSplit[j]?.second?.word
                         for (entry in node.exactEntries.values) {
                             if (!isTolerantEnabled && entry.isTolerant) continue
                             val boost = userDict.getBoost(entry.word)
                             val effectiveWeight = entry.weight + boost
                             val logProb = Math.log(maxOf(effectiveWeight.toDouble(), 1.0)) - logTotal
-                            val bonus = (entry.word.length - 1) * wordBonus
+                            val bigramBoost = if (prevWord != null) getBigramBoost(prevWord, entry.word) else 0
+                            val bigramBonus = if (bigramBoost > 0) Math.log(1.0 + bigramBoost / 100.0) else 0.0
                             val penalty = if (entry.isTolerant) -18.0 else 0.0
-                            val score = dp[j] + logProb + bonus + penalty
+                            val score = dp[j] + logProb + bigramBonus + penalty
                             if (score > dp[i]) {
                                 dp[i] = score
                                 bestSplit[i] = Pair(j, entry)
@@ -615,13 +643,13 @@ class ZhuyinT9Engine(private val context: Context) {
 
         if (dp[n] == Double.NEGATIVE_INFINITY) return null
 
-        val segments = mutableListOf<Pair<String, Int>>()
+        val segments = mutableListOf<Pair<DictEntry, Int>>()
         var curr = n
         while (curr > 0) {
             val split = bestSplit[curr] ?: return null
-            val word = split.second.word
+            val entry = split.second
             val keyLen = curr - split.first
-            segments.add(Pair(word, keyLen))
+            segments.add(Pair(entry, keyLen))
             curr = split.first
         }
         segments.reverse()
@@ -631,8 +659,11 @@ class ZhuyinT9Engine(private val context: Context) {
     private fun findBestSentence(keys: List<Int>): DictEntry? {
         val segments = findBestSentenceSegments(keys) ?: return null
         if (segments.size > 1) {
-            val combinedWord = segments.joinToString("") { it.first }
-            return DictEntry(combinedWord, "", 100_000_000)
+            val combinedWord = segments.joinToString("") { it.first.word }
+            val combinedZhuyin = segments.joinToString(" ") { it.first.zhuyin }
+            val avgLog = segments.map { Math.log(maxOf(it.first.weight.toDouble(), 1.0)) }.average()
+            val compositeWeight = minOf(Math.exp(avgLog).toInt(), 100_000_000)
+            return DictEntry(combinedWord, combinedZhuyin, compositeWeight)
         }
         return null
     }
@@ -656,13 +687,13 @@ class ZhuyinT9Engine(private val context: Context) {
         val segments = findBestSentenceSegments(cleanKeys) ?: return null
         if (segments.size < 2) return null
 
-        val firstSegment = segments[0] // Pair(word, keyLen)
+        val firstSegment = segments[0] // Pair(DictEntry, Int)
         val remainingKeyCount = cleanKeys.size - firstSegment.second
 
         // 判定條件：
         // 1. 分詞至少有 3 段 (例如: 今天 + 天氣 + 很...)
         // 2. 或第一段詞長 >= 2 字 (例如: 目前、今天)，且後續已有新輸入 (remainingKeyCount >= 1)
-        val shouldCommit = segments.size >= 3 || (firstSegment.first.length >= 2 && remainingKeyCount >= 1)
+        val shouldCommit = segments.size >= 3 || (firstSegment.first.word.length >= 2 && remainingKeyCount >= 1)
         if (!shouldCommit) return null
 
         val keysToRemove = firstSegment.second
@@ -681,7 +712,7 @@ class ZhuyinT9Engine(private val context: Context) {
         lockedZhuyinCombo = null
 
         recalculate()
-        return Pair(firstSegment.first, keysToRemove)
+        return Pair(firstSegment.first.word, keysToRemove)
     }
 
     var currentContextWord: String? = null
@@ -1238,7 +1269,7 @@ class ZhuyinT9Engine(private val context: Context) {
         dp[0] = 0.0
         val bestPrev = arrayOfNulls<Pair<Int, String>>(n + 1)
 
-        val wordBonus = 15.0 // 新酷音長詞偏好獎勵
+        val wordBonus = 2.0 // 均衡長詞偏好獎勵，避免冷門詞生硬壓制高頻常見詞組合
         val logTotal = if (logTotalWeight > 0) logTotalWeight else 17.91
 
         for (i in 1..n) {
