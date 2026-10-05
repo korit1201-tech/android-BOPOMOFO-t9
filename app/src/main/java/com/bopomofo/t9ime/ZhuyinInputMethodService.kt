@@ -32,6 +32,8 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.Settings
 import android.view.HapticFeedbackConstants
+import android.hardware.input.InputManager
+import android.view.InputDevice
 import androidx.core.content.ContextCompat
 import com.bopomofo.t9ime.engine.ChineseConverter
 import com.bopomofo.t9ime.engine.ClipboardHistoryManager
@@ -244,11 +246,42 @@ class ZhuyinInputMethodService : InputMethodService() {
             clipListener = listener
             clipManager?.addPrimaryClipChangedListener(listener)
         } catch (_: Exception) {}
+
+        // 註冊硬體輸入設備即時拔插監聽器（精準感知 USB / 藍牙鍵盤拔除與接入）
+        try {
+            val im = getSystemService(Context.INPUT_SERVICE) as? InputManager
+            im?.registerInputDeviceListener(inputDeviceListener, null)
+        } catch (_: Exception) {}
+    }
+
+    private val inputDeviceListener = object : InputManager.InputDeviceListener {
+        override fun onInputDeviceAdded(deviceId: Int) {
+            val hasKeyboard = isPhysicalKeyboardPresent()
+            isHardwareKeyboardConnected = hasKeyboard
+            updateHardwareKeyboardState()
+        }
+
+        override fun onInputDeviceRemoved(deviceId: Int) {
+            // 外接鍵盤拔掉瞬間立刻重設狀態並恢復虛擬鍵盤！
+            val hasKeyboard = isPhysicalKeyboardPresent()
+            isHardwareKeyboardConnected = hasKeyboard
+            updateHardwareKeyboardState()
+        }
+
+        override fun onInputDeviceChanged(deviceId: Int) {
+            val hasKeyboard = isPhysicalKeyboardPresent()
+            isHardwareKeyboardConnected = hasKeyboard
+            updateHardwareKeyboardState()
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         repeatHandler.removeCallbacksAndMessages(null)
+        try {
+            val im = getSystemService(Context.INPUT_SERVICE) as? InputManager
+            im?.unregisterInputDeviceListener(inputDeviceListener)
+        } catch (_: Exception) {}
         try {
             clipListener?.let { listener ->
                 val clipManager = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
@@ -266,6 +299,11 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        // 每次彈出輸入法，即時檢測實體鍵盤是否依然在線，若已拔除則立即恢復虛擬鍵盤
+        val hasPhysical = isPhysicalKeyboardPresent()
+        if (!hasPhysical) {
+            isHardwareKeyboardConnected = false
+        }
         rootView?.let { root ->
             ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
             applyOneHandedMode()
@@ -276,9 +314,10 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
-        val hardConnected = newConfig.keyboard == android.content.res.Configuration.KEYBOARD_QWERTY &&
-                newConfig.hardKeyboardHidden == android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO
-        isHardwareKeyboardConnected = hardConnected
+        val hasPhysical = isPhysicalKeyboardPresent()
+        if (!hasPhysical) {
+            isHardwareKeyboardConnected = false
+        }
         rootView?.let { root ->
             ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
             applyOneHandedMode()
@@ -286,22 +325,39 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
     }
 
-    private fun checkHardwareKeyboard(): Boolean {
-        val config = resources.configuration
-        return config.keyboard == android.content.res.Configuration.KEYBOARD_QWERTY &&
-                config.hardKeyboardHidden == android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO
+    /**
+     * 動態真實檢測系統中是否存在非虛擬的實體字母鍵盤（USB 或藍牙外接鍵盤）
+     */
+    private fun isPhysicalKeyboardPresent(): Boolean {
+        try {
+            val im = getSystemService(Context.INPUT_SERVICE) as? InputManager ?: return false
+            for (id in im.inputDeviceIds) {
+                val dev = im.getInputDevice(id) ?: continue
+                if (dev.isVirtual) continue
+                val sources = dev.sources
+                val isKeyboard = (sources and InputDevice.SOURCE_KEYBOARD) == InputDevice.SOURCE_KEYBOARD
+                if (isKeyboard && dev.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC) {
+                    return true
+                }
+            }
+        } catch (_: Exception) {}
+        return false
     }
 
     private fun updateHardwareKeyboardState() {
         if (!::layoutMainFrame.isInitialized || !::layoutBottomBar.isInitialized || !::layoutResizeHandle.isInitialized) return
-        val hardConnected = checkHardwareKeyboard() || isHardwareKeyboardConnected
+        val hasPhysical = isPhysicalKeyboardPresent()
+        // 核心關鍵：若實體鍵盤已經被拔掉，hardConnected 絕對為 false，虛擬鍵盤無條件完全長回來！
+        val hardConnected = isHardwareKeyboardConnected && hasPhysical
+        isHardwareKeyboardConnected = hardConnected
+
         if (hardConnected) {
-            // 實體鍵盤接入：折疊大面積虛擬鍵盤與工具列，保留 48dp 迷你候選列
+            // 實體鍵盤接入中：折疊大面積虛擬鍵盤與工具列，保留 48dp 迷你候選列
             layoutMainFrame.visibility = View.GONE
             layoutBottomBar.visibility = View.GONE
             layoutResizeHandle.visibility = View.GONE
         } else {
-            // 拔掉實體鍵盤或觸控：完整恢復虛擬鍵盤面板
+            // 實體鍵盤已拔掉：虛擬鍵盤面板完全恢復！
             layoutMainFrame.visibility = View.VISIBLE
             layoutBottomBar.visibility = View.VISIBLE
             layoutResizeHandle.visibility = View.VISIBLE
@@ -314,7 +370,7 @@ class ZhuyinInputMethodService : InputMethodService() {
      * 觸發多級細緻按鍵震動反饋（依據輸入法設定的開關與強度，細分普通按鍵、確認上屏、退格刪除、模式切換等波形）
      */
     private fun triggerHapticFeedback(type: HapticType = HapticType.KEY_PRESS) {
-        // 使用者觸摸螢幕按鍵時，若當前標記為實體鍵盤狀態，立刻恢復觸控模式
+        // 使用者觸摸螢幕按鍵時，立刻確保恢復觸控模式
         if (isHardwareKeyboardConnected) {
             isHardwareKeyboardConnected = false
             updateHardwareKeyboardState()
@@ -395,6 +451,15 @@ class ZhuyinInputMethodService : InputMethodService() {
             } else if (candidateContainer.width > (candidateScroll?.width ?: 0)) {
                 candidateMoreIndicator?.visibility = View.VISIBLE
             }
+        }
+        candidateScroll?.setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                if (isHardwareKeyboardConnected && !isPhysicalKeyboardPresent()) {
+                    isHardwareKeyboardConnected = false
+                    updateHardwareKeyboardState()
+                }
+            }
+            false
         }
         layoutSymbols = root.findViewById(R.id.layout_symbols)
         scrollZhuyinCombos = root.findViewById(R.id.scroll_zhuyin_combos)
@@ -3091,6 +3156,11 @@ class ZhuyinInputMethodService : InputMethodService() {
         pinnedSentenceChars.clear()
         sentenceCursor = 0
         isSentenceSelecting = false
+
+        if (isHardwareKeyboardConnected && !isPhysicalKeyboardPresent()) {
+            isHardwareKeyboardConnected = false
+            updateHardwareKeyboardState()
+        }
 
         engine.clear()
         fullZhuyinBuffer.clear()
