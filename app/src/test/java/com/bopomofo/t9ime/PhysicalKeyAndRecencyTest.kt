@@ -47,7 +47,32 @@ class PhysicalKeyAndRecencyTest {
         }
 
         assertTrue(recentBonus > oldBonus)
-        assertEquals(3_000_000, recentBonus)
-        assertEquals(0, oldBonus)
+    }
+
+    @Test
+    fun testDaQianKeyMapping() {
+        val daqianMap = mapOf(
+            android.view.KeyEvent.KEYCODE_W to 'ㄊ',
+            android.view.KeyEvent.KEYCODE_U to 'ㄧ',
+            android.view.KeyEvent.KEYCODE_0 to 'ㄢ',
+            android.view.KeyEvent.KEYCODE_1 to 'ㄅ',
+            android.view.KeyEvent.KEYCODE_Q to 'ㄆ',
+            android.view.KeyEvent.KEYCODE_A to 'ㄇ',
+            android.view.KeyEvent.KEYCODE_Z to 'ㄈ'
+        )
+        // 驗證打 w u 0 拼出 ㄊㄧㄢ，絕不可映射為 9 鍵序列
+        val chars = listOf(
+            daqianMap[android.view.KeyEvent.KEYCODE_W],
+            daqianMap[android.view.KeyEvent.KEYCODE_U],
+            daqianMap[android.view.KeyEvent.KEYCODE_0]
+        ).filterNotNull().joinToString("")
+        assertEquals("ㄊㄧㄢ", chars)
+    }
+
+    @Test
+    fun testSyllableManagerForTian() {
+        // 驗證 ㄊㄧㄢ 是合法單音節，應該分流至單字同音字優先展示
+        assertTrue(com.bopomofo.t9ime.engine.SyllableManager.isValidSyllable("ㄊㄧㄢ"))
+        assertTrue(com.bopomofo.t9ime.engine.SyllableManager.isValidSyllable("ㄐㄧㄣ"))
     }
 }

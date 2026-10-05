@@ -784,7 +784,7 @@ class ZhuyinT9Engine(private val context: Context) {
 
             // 3. 單字之後，再補入該音節開頭的常用詞彙（個人詞庫多字詞與 Trie 詞庫）
             val userMultiEntries = userEntries.filter {
-                it.word.length > 1 && it.zhuyin.filter { c -> c !in "ˇˋˊ˙" }.startsWith(cleanInput)
+                it.word.length > 1 && it.zhuyin.filter { c -> c !in "ˇˋˊ˙ " }.startsWith(cleanInput)
             }.sortedByDescending { it.count }
             for (u in userMultiEntries) {
                 if (seenWords.add(u.word)) {
@@ -809,7 +809,7 @@ class ZhuyinT9Engine(private val context: Context) {
                     trieResults
                 }
                 for (e in sortedTrieResults) {
-                    val eClean = e.zhuyin.filter { it !in "ˇˋˊ˙" }
+                    val eClean = e.zhuyin.filter { it !in "ˇˋˊ˙ " }
                     if (eClean.startsWith(cleanInput) && seenWords.add(e.word)) {
                         results.add(e)
                         if (results.size >= 60) break
@@ -824,7 +824,7 @@ class ZhuyinT9Engine(private val context: Context) {
         // 1. 個人詞庫 (UserDict) 最高優先權
         val userEntries = userDict.getAllEntries()
         for (u in userEntries) {
-            val uClean = u.zhuyin.filter { it !in "ˇˋˊ˙" }
+            val uClean = u.zhuyin.filter { it !in "ˇˋˊ˙ " }
             if (uClean.startsWith(cleanInput) || u.word.startsWith(cleanInput)) {
                 if (seenWords.add(u.word)) {
                     results.add(DictEntry(u.word, u.zhuyin, 50_000_000 + u.count * 1_000_000))
@@ -837,7 +837,7 @@ class ZhuyinT9Engine(private val context: Context) {
         if (fullKeys.size >= 4) {
             val sentenceEntry = findBestSentence(fullKeys)
             if (sentenceEntry != null && seenWords.add(sentenceEntry.word)) {
-                results.add(0, sentenceEntry)
+                results.add(sentenceEntry)
             }
         }
 
@@ -864,7 +864,7 @@ class ZhuyinT9Engine(private val context: Context) {
                     val matched = initialMap[targetInitials]
                     if (matched != null) {
                         for (e in matched) {
-                            val eClean = e.zhuyin.filter { it !in "ˇˋˊ˙" }
+                            val eClean = e.zhuyin.filter { it !in "ˇˋˊ˙ " }
                             if (eClean.startsWith(firstSyl) && seenWords.add(e.word)) {
                                 results.add(e)
                                 if (results.size >= 40) break
@@ -881,7 +881,7 @@ class ZhuyinT9Engine(private val context: Context) {
         if (keys.isNotEmpty()) {
             val trieResults = trie.searchPrefix(keys, includeTolerant = isTolerantEnabled)
             for (e in trieResults) {
-                val eClean = e.zhuyin.filter { it !in "ˇˋˊ˙" }
+                val eClean = e.zhuyin.filter { it !in "ˇˋˊ˙ " }
                 if (eClean.startsWith(cleanInput) && seenWords.add(e.word)) {
                     results.add(e)
                     if (results.size >= 50) break
@@ -930,6 +930,33 @@ class ZhuyinT9Engine(private val context: Context) {
     fun getHomophonesForChar(ch: Char): List<DictEntry> {
         val zhuyins = charZhuyinMap[ch] ?: emptyList()
         val seen = LinkedHashSet<String>()
+
+        // 0. 優先使用正統同音字庫 (soundToCharMap)：注音完全相符或同韻同音節單字（依同聲調與權重優先排序）
+        val pureSoundEntries = mutableListOf<DictEntry>()
+        for (zy in zhuyins) {
+            val cleanZy = zy.filter { it !in "ˇˋˊ˙" }
+            val toneChar = zy.find { it in "ˇˋˊ˙" }
+            val entries = soundToCharMap[cleanZy]
+            if (entries != null) {
+                val sorted = entries.sortedByDescending {
+                    val isSameTone = if (toneChar != null) it.zhuyin.contains(toneChar) else !it.zhuyin.any { c -> c in "ˇˋˊ˙" }
+                    val toneScore = if (isSameTone) 100_000_000L else 0L
+                    toneScore + it.weight + userDict.getBoost(it.word)
+                }
+                for (e in sorted) {
+                    if (seen.add(e.word)) {
+                        pureSoundEntries.add(e)
+                    }
+                }
+            }
+        }
+        if (pureSoundEntries.isNotEmpty()) {
+            val originalEntry = pureSoundEntries.find { it.word == ch.toString() }
+                ?: DictEntry(ch.toString(), zhuyins.firstOrNull() ?: "", 1000)
+            val others = pureSoundEntries.filter { it.word != ch.toString() }
+            return (listOf(originalEntry) + others).take(80)
+        }
+
         val exactKeyEntries = mutableListOf<DictEntry>()
         val sameZhuyinEntries = mutableListOf<DictEntry>()
         val prefixKeyEntries = mutableListOf<DictEntry>()
