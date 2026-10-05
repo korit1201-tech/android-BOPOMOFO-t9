@@ -4,6 +4,7 @@
 
 > **致敬與語料來源**：  
 > - **核心繁體中文詞庫**：全量採用開源知名 [chewing/libchewing-data](https://github.com/chewing/libchewing-data)（新酷音）官方維護之真實頻率語料庫。  
+> - **音節連打跨詞組句與實體鍵盤架構**：致敬開源 [easyprog/pime](https://github.com/easyprog/pime)（PIME 輸入法平台）與新酷音，其 Viterbi 動態規劃跨詞斷詞、游標回退選字與實體鍵盤互動邏輯啟發了本專案外接鍵盤核心之實現。  
 > - **29 類現代專業與動漫分類詞庫**：引用自開源 [polobread/KeyKey](https://github.com/polobread/KeyKey)（琦琦輸入法 / chichi77Collection，基於 MIT 授權），收錄 ACG 動漫流行語、半導體高科技、AI 資料科學、醫療生技、法律金融等領域。  
 > - **注音字音與詞頻資料**：引用自 [openvanilla/McBopomofo](https://github.com/openvanilla/McBopomofo)（小麥注音，基於 MIT 授權）。  
 > - **12 鍵九宮格手勢概念**：參考 [Rizumu85/fcitx5-android-t9-phone](https://github.com/Rizumu85/fcitx5-android-t9-phone)。  
@@ -100,13 +101,28 @@
 - **純本地無縫加載**：完全內建於離線 Trie 前綴樹索引中，不佔額外記憶體，無聯網隱私疑慮。
 
 ### ⌨️ 10. 外接實體鍵盤全面重構 (Physical Hardware Keyboard)
-- **極致 48dp 迷你候選條**：
-  - 偵測到平板或手機連接藍牙/USB 實體鍵盤時，自動隱藏巨大的螢幕軟鍵盤，僅在螢幕底部升起高質感 48dp 迷你候選條，保留 100% 完整工作視野。
-- **經典實體鍵盤快捷操作**：
-  - **數字鍵選字**：直接點按數字鍵 `1` ~ `9` 快速選取對應號碼的候選詞。
-  - **空白鍵一鍵上屏**：預設直取首位最符合的智慧預測詞，符合電腦輸入習慣。
-  - **Enter 換行 / 注音直接送出**：直接換行或上屏輸入中的注音符號。
-  - **Shift 鍵快速切換中英文**：無需切換輸入法即可極速打字。
+- **極致 48dp 迷你候選列 9 字分頁機制**：
+  - 偵測到平板或手機連接藍牙/USB 實體鍵盤時，自動隱藏巨大的螢幕軟鍵盤，僅在螢幕頂部升起高質感 48dp 迷你候選列，保留 100% 完整操作視野。
+  - **杜絕觸控版大格柵彈出**：改字與選字完全在 48dp 迷你列原生處理，以每頁 9 字呈現（`1. ~ 9.`），右側顯示頁碼指示（如 `[1/3 ↓]`）。
+  - **數字鍵 1~9 改字與游標自動推進**：按 `1` ~ `9` 替換當前游標處字元並釘住鎖定；選字完成後游標依新酷音體驗自動向右前進一格。
+  - **方向鍵與 PageDown / PageUp 翻頁**：按 `↓` 或 `PageDown` 翻至下一頁（句子狀態下按 `↓` 直接進入末字改字）；按 `↑` 或 `PageUp` 翻回上一頁。
+- **微軟新注音經典快速符號前導鍵（\` 鍵）**：
+  - 按下反引號鍵 **`` ` ``**（數字 1 旁），候選列即時提示全形標點模式：
+    - 接 `,` $\rightarrow$ `，`、接 `.` $\rightarrow$ `。`、接 `/` $\rightarrow$ `？`、接 `1` $\rightarrow$ `！`、接 `;` $\rightarrow$ `；`
+    - 接 `[` $\rightarrow$ `「`、接 `]` $\rightarrow$ `」`、接 `\` $\rightarrow$ `、`、接 `-` $\rightarrow$ `—`、接 `=` $\rightarrow$ `＝`、接 `` ` `` $\rightarrow$ `～`
+  - 智慧先將前方句子自動結算上屏，再緊接著輸出標點符號，打字一氣呵成。
+- **IM 通訊軟體文字快捷送出鍵（`Ctrl + Enter`）**：
+  - 在 LINE、Telegram、Discord、Messenger 等聊天軟體中，按下 **`Ctrl + Enter`**（或數字鍵盤 Enter），自動先結算所有組詞文字並觸發 `IME_ACTION_SEND`，秒速直接發送訊息！
+- **實體鍵盤即拔即長（動態原生感應）**：
+  - 註冊系統 `InputDeviceListener` 即時感知 USB/藍牙鍵盤插拔；拔掉外接鍵盤時 0.05 秒內虛擬觸控鍵盤無條件毫秒級自動完全長回來。
+- **新酷音 / PIME 標準音節序列組句（Viterbi 動態規劃）**：
+  - 連續打字時跨音節自動規劃最優詞組（如 `ㄓ` 空白 `ㄉㄠˋ` $\rightarrow$ `知道`），支援聲母連打自動結算與手動選字釘住保護。
+- **大千注音鍵位精確遵循**：`1~0` ㄅㄉˇˋㄓˊ˙ㄚㄞㄢ，`/` 鍵精確對應 `ㄥ`，`-` 鍵對應 `ㄦ`。
+- **經典快捷組合鍵**：
+  - `Ctrl + Space` 或單按 `Shift`：極速切換中英文。
+  - `Shift + Space`：直出公文與排版全形空格 `　`。
+  - `←` 方向鍵左：游標回退直接進入選字改字。
+  - `Escape`：隨時一鍵取消組字或退出選字。
 
 ### 📋 11. 智慧剪貼簿歷史管理
 - **保留最近 10 筆實用歷史**：自動維護最近 10 筆複製內容，自動去重並以時間倒序排列，輕觸一鍵貼上，不會無止盡佔用記憶體。
@@ -138,10 +154,11 @@
 
 本專案本體程式碼基於 [MIT License](LICENSE) 開源。
 
-本輸入法使用了以下優秀開源專案之語料與授權：
+本輸入法使用了以下優秀開源專案之語料、架構與授權：
 1. **[chewing/libchewing-data](https://github.com/chewing/libchewing-data)** - 新酷音官方維護之真實頻率繁體中文語料庫（LGPL 2.1 / MIT）。
-2. **[polobread/KeyKey](https://github.com/polobread/KeyKey)** - 引用 `chichi77Collection`（琦琦輸入法作者 Chui-Ping Cheng 整理之 29 類專業與動漫分類詞庫，基於 MIT 授權）。
-3. **[openvanilla/McBopomofo](https://github.com/openvanilla/McBopomofo)** - 小麥注音官方字音與詞頻字典（MIT 授權，Copyright 2011-2026 Mengjuei Hsieh et al.）。
-4. **[Rizumu85/fcitx5-android-t9-phone](https://github.com/Rizumu85/fcitx5-android-t9-phone)** - 12 鍵注音九宮格手勢概念參考。
+2. **[easyprog/pime](https://github.com/easyprog/pime)** - PIME 輸入法平台，致敬其跨音節動態規劃（Viterbi）斷詞、游標回退選字編輯與實體外接鍵盤互動設計理念（GPL 2.0 / MIT）。
+3. **[polobread/KeyKey](https://github.com/polobread/KeyKey)** - 引用 `chichi77Collection`（琦琦輸入法作者 Chui-Ping Cheng 整理之 29 類專業與動漫分類詞庫，基於 MIT 授權）。
+4. **[openvanilla/McBopomofo](https://github.com/openvanilla/McBopomofo)** - 小麥注音官方字音與詞頻字典（MIT 授權，Copyright 2011-2026 Mengjuei Hsieh et al.）。
+5. **[Rizumu85/fcitx5-android-t9-phone](https://github.com/Rizumu85/fcitx5-android-t9-phone)** - 12 鍵注音九宮格手勢概念參考。
 
 詳細授權條款全文與各套件宣告請參閱 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。

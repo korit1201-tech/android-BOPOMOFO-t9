@@ -251,13 +251,16 @@ class MainActivity : AppCompatActivity() {
                 1. chewing/libchewing-data (新酷音)
                 - 繁體中文全量高頻詞庫與注音語料庫 (LGPL-2.1 / MIT)。
 
-                2. polobread/KeyKey (琦琦輸入法)
+                2. easyprog/pime (PIME 輸入法平台)
+                - 音節連打跨詞動態規劃、游標編輯改字與實體外接鍵盤互動架構設計啟發 (GPL / MIT)。
+
+                3. polobread/KeyKey (琦琦輸入法)
                 - 引用 chichi77Collection (MIT License, Copyright 2026 Chui-Ping Cheng)，收錄 29 類現代專業與動漫生活分類詞庫。
 
-                3. openvanilla/McBopomofo (小麥注音)
+                4. openvanilla/McBopomofo (小麥注音)
                 - 提供精準字音與詞頻資料 (MIT License, Copyright 2011-2026 Mengjuei Hsieh et al.)。
 
-                4. Rizumu85/fcitx5-android-t9-phone
+                5. Rizumu85/fcitx5-android-t9-phone
                 - 啟發 12 鍵九宮格手勢交互概念。
             """.trimIndent()
 

@@ -135,6 +135,8 @@ class ZhuyinInputMethodService : InputMethodService() {
     private val pinnedSentenceChars = mutableMapOf<Int, String>() // 游標選字鎖定 (index -> char)
     private var sentenceCursor = 0
     private var isSentenceSelecting = false
+    private var physicalCandidatePageIndex = 0 // 實體鍵盤 48dp 迷你候選列當前頁碼 (每頁 9 字)
+    private var isSymbolLeadMode = false // 新注音前導鍵 (`) 快速標點符號模式
     private val ZHUYIN_INITIALS = "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙ"
     private val ZHUYIN_FINALS = "ㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ"
     private val ZHUYIN_TONES = "ˇˋˊ˙"
@@ -2559,6 +2561,8 @@ class ZhuyinInputMethodService : InputMethodService() {
         pinnedSentenceChars.clear()
         sentenceCursor = 0
         isSentenceSelecting = false
+        physicalCandidatePageIndex = 0
+        isSymbolLeadMode = false
         engine.clear()
         currentInputConnection?.finishComposingText()
         clearCandidateBar()
@@ -2707,6 +2711,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun openCandidateGrid() {
+        if (isHardwareKeyboardConnected) return // 實體鍵盤不開啟觸控大面板，全由 48dp 迷你候選列操作
         if (currentCandidateList.isEmpty()) return
         triggerHapticFeedback(HapticType.MODE_SWITCH)
         isCandidateGridOpen = true
@@ -2843,26 +2848,63 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun updateCandidateBar(candidates: List<DictEntry>) {
-        val effectiveCandidates = if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty() && !isHomophoneSelectionMode && !isHardwareKeyboardConnected) {
+        val effectiveCandidates = if (isSymbolLeadMode) {
+            listOf(
+                DictEntry("【全形標點模式】", "", 999_999_999),
+                DictEntry("，(按 ,)", "", 999_999),
+                DictEntry("。(按 .)", "", 999_998),
+                DictEntry("？(按 /)", "", 999_997),
+                DictEntry("！(按 1)", "", 999_996),
+                DictEntry("；(按 ;)", "", 999_995),
+                DictEntry("「 (按 [)", "", 999_994),
+                DictEntry("」 (按 ])", "", 999_993),
+                DictEntry("、(按 \\)", "", 999_992),
+                DictEntry("～(按 `)", "", 999_991)
+            )
+        } else if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty() && !isHomophoneSelectionMode && !isHardwareKeyboardConnected) {
             val zhuyinEntry = DictEntry("【$fullZhuyinBuffer】", fullZhuyinBuffer.toString(), 999_999_999)
             listOf(zhuyinEntry) + candidates
         } else {
             candidates
         }
         currentCandidateList = effectiveCandidates
-        btnCandidateExpand?.visibility = if (effectiveCandidates.isNotEmpty()) View.VISIBLE else View.GONE
-        if (isCandidateGridOpen) {
+
+        // 實體鍵盤模式：徹底隱藏觸控版的展開按鈕，全由 48dp 迷你列自身的分頁與方向鍵完成
+        btnCandidateExpand?.visibility = if (!isHardwareKeyboardConnected && effectiveCandidates.isNotEmpty()) View.VISIBLE else View.GONE
+        if (isCandidateGridOpen && !isHardwareKeyboardConnected) {
             populateCandidateGrid()
         }
 
-        val displayCandidates = effectiveCandidates.take(MAX_CANDIDATES_DISPLAY)
-        val count = displayCandidates.size
+        // 實體鍵盤每頁 9 字分頁設計，觸控模式則保持原本流動清單
+        val displayCandidates: List<DictEntry>
+        val isPhysicalMode = isHardwareKeyboardConnected
+        var pageIndicatorText: String? = null
 
-        for (i in 0 until count) {
-            val entry = displayCandidates[i]
-            val isZhuyinHeader = !isHardwareKeyboardConnected && currentMode == KeyboardMode.ZHUYIN_FULL && entry.word.startsWith("【") && entry.word.endsWith("】")
-            val rawWord = if (isSimplified) ChineseConverter.toSimplified(entry.word) else entry.word
-            val displayWord = if (isHardwareKeyboardConnected && !isZhuyinHeader && i < 9) {
+        if (isPhysicalMode && !isSymbolLeadMode) {
+            val pageSize = 9
+            val totalCount = effectiveCandidates.size
+            val totalPages = if (totalCount > 0) (totalCount + pageSize - 1) / pageSize else 1
+            physicalCandidatePageIndex = physicalCandidatePageIndex.coerceIn(0, maxOf(0, totalPages - 1))
+            val startIndex = physicalCandidatePageIndex * pageSize
+            val pagedItems = effectiveCandidates.drop(startIndex).take(pageSize).toMutableList()
+            if (totalPages > 1) {
+                pageIndicatorText = "[${physicalCandidatePageIndex + 1}/$totalPages ↓]"
+            }
+            displayCandidates = pagedItems
+        } else {
+            displayCandidates = effectiveCandidates.take(MAX_CANDIDATES_DISPLAY)
+        }
+
+        val count = displayCandidates.size
+        val totalRenderCount = count + (if (pageIndicatorText != null) 1 else 0)
+
+        for (i in 0 until totalRenderCount) {
+            val isPageIndicator = (i == count && pageIndicatorText != null)
+            val entry = if (!isPageIndicator) displayCandidates[i] else DictEntry(pageIndicatorText!!, "", 0)
+
+            val isZhuyinHeader = (!isHardwareKeyboardConnected && currentMode == KeyboardMode.ZHUYIN_FULL && entry.word.startsWith("【") && entry.word.endsWith("】")) || (isSymbolLeadMode && i == 0)
+            val rawWord = if (isSimplified && !isPageIndicator) ChineseConverter.toSimplified(entry.word) else entry.word
+            val displayWord = if (isPhysicalMode && !isZhuyinHeader && !isPageIndicator && !isSymbolLeadMode && i < 9) {
                 "${i + 1}. $rawWord"
             } else {
                 rawWord
@@ -2892,10 +2934,32 @@ class ZhuyinInputMethodService : InputMethodService() {
             val currentTheme = ThemeManager.getCurrentTheme(this)
             val themeColors = ThemeManager.getThemeColors(this, currentTheme)
             tv.text = displayWord
-            if (isZhuyinHeader) {
+
+            if (isPageIndicator) {
                 tv.setTextColor(themeColors.accent)
                 tv.setTypeface(null, Typeface.BOLD)
                 tv.setBackgroundResource(R.drawable.bg_key_action)
+                tv.setOnClickListener {
+                    triggerHapticFeedback(HapticType.MODE_SWITCH)
+                    val pageSize = 9
+                    val totalPages = (effectiveCandidates.size + pageSize - 1) / pageSize
+                    if (physicalCandidatePageIndex + 1 < totalPages) {
+                        physicalCandidatePageIndex++
+                    } else {
+                        physicalCandidatePageIndex = 0
+                    }
+                    updateCandidateBar(currentCandidateList)
+                }
+            } else if (isZhuyinHeader) {
+                tv.setTextColor(themeColors.accent)
+                tv.setTypeface(null, Typeface.BOLD)
+                tv.setBackgroundResource(R.drawable.bg_key_action)
+                tv.setOnClickListener {
+                    if (isSymbolLeadMode) {
+                        isSymbolLeadMode = false
+                        updateComposingDisplay()
+                    }
+                }
             } else {
                 val isFirstCandidate = if (isHardwareKeyboardConnected) i == 0 else (i == 0 || (currentMode == KeyboardMode.ZHUYIN_FULL && i == 1))
                 tv.setTextColor(
@@ -2904,30 +2968,55 @@ class ZhuyinInputMethodService : InputMethodService() {
                 )
                 tv.setTypeface(null, Typeface.NORMAL)
                 tv.background = null
-            }
-            tv.setOnClickListener {
-                triggerHapticFeedback(HapticType.COMMIT)
-                if (isCandidateGridOpen) {
-                    closeCandidateGrid()
-                }
-                if (isZhuyinHeader) {
-                    val zhuyinStr = fullZhuyinBuffer.toString()
-                    fullZhuyinBuffer.clear()
-                    currentInputConnection?.finishComposingText()
-                    safeCommitText(zhuyinStr)
-                    clearCandidateBar()
-                    return@setOnClickListener
-                }
-                if (isHomophoneSelectionMode) {
-                    if (entry.word.startsWith("✔")) {
-                        exitHomophoneSelectionMode()
-                    } else {
-                        applyHomophoneReplacement(entry)
+
+                tv.setOnClickListener {
+                    triggerHapticFeedback(HapticType.COMMIT)
+                    if (isCandidateGridOpen) {
+                        closeCandidateGrid()
                     }
-                } else {
-                    selectCandidate(entry)
+                    if (isSymbolLeadMode) {
+                        isSymbolLeadMode = false
+                        val symbolText = entry.word.substringBefore("(")
+                        handlePhysicalEnter()
+                        commitTextDirectly(symbolText)
+                        updateComposingDisplay()
+                        return@setOnClickListener
+                    }
+                    if (isZhuyinHeader) {
+                        val zhuyinStr = fullZhuyinBuffer.toString()
+                        fullZhuyinBuffer.clear()
+                        currentInputConnection?.finishComposingText()
+                        safeCommitText(zhuyinStr)
+                        clearCandidateBar()
+                        return@setOnClickListener
+                    }
+                    // 實體鍵盤改字模式點選
+                    if (isSentenceSelecting && sentenceCursor < composingSentence.length) {
+                        val chosenChar = entry.word[0].toString()
+                        composingSentence.setCharAt(sentenceCursor, chosenChar[0])
+                        pinnedSentenceChars[sentenceCursor] = chosenChar
+                        physicalCandidatePageIndex = 0
+                        if (sentenceCursor < composingSentence.length - 1) {
+                            sentenceCursor++
+                        } else {
+                            sentenceCursor = composingSentence.length
+                            isSentenceSelecting = false
+                        }
+                        updateComposingDisplay()
+                        return@setOnClickListener
+                    }
+                    if (isHomophoneSelectionMode) {
+                        if (entry.word.startsWith("✔")) {
+                            exitHomophoneSelectionMode()
+                        } else {
+                            applyHomophoneReplacement(entry)
+                        }
+                    } else {
+                        selectCandidate(entry)
+                    }
                 }
             }
+
             tv.setOnLongClickListener {
                 if (isZhuyinHeader) {
                     triggerHapticFeedback(HapticType.MODE_SWITCH)
@@ -2948,13 +3037,13 @@ class ZhuyinInputMethodService : InputMethodService() {
             tv.visibility = View.VISIBLE
         }
 
-        for (i in count until candidateTextViewPool.size) {
+        for (i in totalRenderCount until candidateTextViewPool.size) {
             candidateTextViewPool[i].visibility = View.GONE
         }
         candidateScroll?.scrollTo(0, 0)
         candidateScroll?.post {
             val canScroll = candidateContainer.width > (candidateScroll?.width ?: 0)
-            candidateMoreIndicator?.visibility = if (canScroll) View.VISIBLE else View.GONE
+            candidateMoreIndicator?.visibility = if (canScroll && !isPhysicalMode) View.VISIBLE else View.GONE
         }
     }
 
@@ -3156,6 +3245,8 @@ class ZhuyinInputMethodService : InputMethodService() {
         pinnedSentenceChars.clear()
         sentenceCursor = 0
         isSentenceSelecting = false
+        physicalCandidatePageIndex = 0
+        isSymbolLeadMode = false
 
         if (isHardwareKeyboardConnected && !isPhysicalKeyboardPresent()) {
             isHardwareKeyboardConnected = false
@@ -3397,6 +3488,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                     sentenceCursor--
                 }
             }
+            physicalCandidatePageIndex = 0
             updateComposingDisplay()
             return true
         }
@@ -3407,12 +3499,14 @@ class ZhuyinInputMethodService : InputMethodService() {
         if (composingSentence.isNotEmpty() && isSentenceSelecting) {
             if (sentenceCursor < composingSentence.length - 1) {
                 sentenceCursor++
+                physicalCandidatePageIndex = 0
                 updateComposingDisplay()
                 return true
             } else {
                 // 移出末字：退出選字模式
                 sentenceCursor = composingSentence.length
                 isSentenceSelecting = false
+                physicalCandidatePageIndex = 0
                 updateComposingDisplay()
                 return true
             }
@@ -3421,29 +3515,49 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun handlePhysicalDpadDown(): Boolean {
-        // 向下展開全部候選字面板（格柵多列）
-        if (currentCandidateList.isNotEmpty() && !isCandidateGridOpen) {
-            layoutMainFrame.visibility = View.VISIBLE
-            openCandidateGrid()
+        // 1. 若當前有整句且尚未進入選字，按下方向鍵下直接進入末字改字選字模式
+        if (!isSentenceSelecting && composingSentence.isNotEmpty()) {
+            if (fullZhuyinBuffer.isNotEmpty()) {
+                commitCurrentSyllableToSentence(toneChar = null)
+            }
+            sentenceCursor = (composingSentence.length - 1).coerceAtLeast(0)
+            isSentenceSelecting = true
+            physicalCandidatePageIndex = 0
+            updateComposingDisplay()
             return true
+        }
+
+        // 2. 實體鍵盤改字與選字分頁：按向下鍵翻至下一頁候選字 (每頁 9 字)
+        if (currentCandidateList.isNotEmpty()) {
+            val totalCount = currentCandidateList.size
+            val totalPages = (totalCount + 8) / 9
+            if (physicalCandidatePageIndex + 1 < totalPages) {
+                physicalCandidatePageIndex++
+                updateCandidateBar(currentCandidateList)
+                return true
+            }
         }
         return false
     }
 
     private fun handlePhysicalDpadUp(): Boolean {
-        // 向上收合全部候選字面板
-        if (isCandidateGridOpen) {
-            closeCandidateGrid()
-            if (isHardwareKeyboardConnected) {
-                layoutMainFrame.visibility = View.GONE
-            }
+        // 實體鍵盤改字與選字分頁：按向上鍵翻回上一頁候選字 (每頁 9 字)
+        if (physicalCandidatePageIndex > 0) {
+            physicalCandidatePageIndex--
+            updateCandidateBar(currentCandidateList)
+            return true
+        } else if (isSentenceSelecting) {
+            // 第一頁再按向上鍵：收合候選字選單，回到句尾
+            sentenceCursor = composingSentence.length
+            isSentenceSelecting = false
+            updateComposingDisplay()
             return true
         }
         return false
     }
 
     private fun handlePhysicalNumberSelect(number: Int): Boolean {
-        val selectIndex = number - 1
+        val selectIndex = physicalCandidatePageIndex * 9 + (number - 1)
         if (isSentenceSelecting && sentenceCursor < composingSentence.length) {
             val candidates = currentCandidateList
             if (selectIndex < candidates.size) {
@@ -3452,13 +3566,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 composingSentence.setCharAt(sentenceCursor, newChar[0])
                 // 手動選字鎖定：記錄此位置人工選定之字，避免後續動態規劃被覆蓋
                 pinnedSentenceChars[sentenceCursor] = newChar
-
-                if (isCandidateGridOpen) {
-                    closeCandidateGrid()
-                    if (isHardwareKeyboardConnected) {
-                        layoutMainFrame.visibility = View.GONE
-                    }
-                }
+                physicalCandidatePageIndex = 0
 
                 // 經典新酷音體驗：改完後游標自動向右跳一格！
                 if (sentenceCursor < composingSentence.length - 1) {
@@ -3472,6 +3580,49 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
         }
         return false
+    }
+
+    /**
+     * 實體鍵盤快捷鍵：Ctrl + Enter 快速送出 IM 聊天工具文字（LINE, Telegram, Discord 等）
+     */
+    private fun performImSendAction(): Boolean {
+        if (fullZhuyinBuffer.isNotEmpty()) {
+            commitCurrentSyllableToSentence(toneChar = null)
+        }
+        if (composingSentence.isNotEmpty()) {
+            val finalWord = composingSentence.toString()
+            commitProcessedWordWithUserDict(finalWord)
+            composingSentence.clear()
+            composingSyllables.clear()
+            pinnedSentenceChars.clear()
+            sentenceCursor = 0
+            isSentenceSelecting = false
+            updateComposingDisplay()
+        }
+
+        val ic = currentInputConnection ?: return false
+        val info = currentInputEditorInfo
+        val imeAction = (info?.imeOptions ?: 0) and android.view.inputmethod.EditorInfo.IME_MASK_ACTION
+
+        if (imeAction == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) {
+            return ic.performEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_SEND)
+        }
+        if (imeAction == android.view.inputmethod.EditorInfo.IME_ACTION_GO) {
+            return ic.performEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_GO)
+        }
+        if (imeAction == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
+            return ic.performEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_DONE)
+        }
+
+        var handled = ic.performEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_SEND)
+        if (!handled) {
+            handled = ic.performEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_DONE)
+        }
+        if (!handled) {
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
+            handled = true
+        }
+        return handled
     }
 
     private fun handlePhysicalSpace(): Boolean {
@@ -3591,6 +3742,12 @@ class ZhuyinInputMethodService : InputMethodService() {
             return true
         }
 
+        // 快捷鍵：Ctrl + Enter 快速送出 IM 聊天工具文字（LINE, Telegram, Discord, Messenger 等）
+        if (event.isCtrlPressed && (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+            isPhysicalShiftPressed = false
+            return performImSendAction()
+        }
+
         // 3. 其他修飾組合鍵（如 Ctrl+C, Ctrl+V, Alt+Tab, Meta 等）直接放行交由系統處理
         if (event.isCtrlPressed || event.isAltPressed || event.isMetaPressed) {
             isPhysicalShiftPressed = false
@@ -3607,6 +3764,52 @@ class ZhuyinInputMethodService : InputMethodService() {
 
         // 5. 注音模式下的實體鍵盤處理
         if (currentMode == KeyboardMode.ZHUYIN || currentMode == KeyboardMode.ZHUYIN_FULL) {
+            // 微軟新注音經典快速符號前導鍵 (`) 模式處理
+            if (isSymbolLeadMode) {
+                if (keyCode == KeyEvent.KEYCODE_ESCAPE || keyCode == KeyEvent.KEYCODE_DEL) {
+                    isSymbolLeadMode = false
+                    updateComposingDisplay()
+                    return true
+                }
+                val symbol = when (keyCode) {
+                    KeyEvent.KEYCODE_COMMA -> if (event.isShiftPressed) "《" else "，"
+                    KeyEvent.KEYCODE_PERIOD -> if (event.isShiftPressed) "》" else "。"
+                    KeyEvent.KEYCODE_SLASH -> "？"
+                    KeyEvent.KEYCODE_1 -> "！"
+                    KeyEvent.KEYCODE_SEMICOLON -> if (event.isShiftPressed) "：" else "；"
+                    KeyEvent.KEYCODE_APOSTROPHE -> if (event.isShiftPressed) "”" else "’"
+                    KeyEvent.KEYCODE_LEFT_BRACKET -> if (event.isShiftPressed) "『" else "「"
+                    KeyEvent.KEYCODE_RIGHT_BRACKET -> if (event.isShiftPressed) "』" else "」"
+                    KeyEvent.KEYCODE_BACKSLASH -> if (event.isShiftPressed) "｜" else "、"
+                    KeyEvent.KEYCODE_MINUS -> if (event.isShiftPressed) "——" else "—"
+                    KeyEvent.KEYCODE_EQUALS -> if (event.isShiftPressed) "＋" else "＝"
+                    KeyEvent.KEYCODE_GRAVE -> "～"
+                    KeyEvent.KEYCODE_9 -> "（"
+                    KeyEvent.KEYCODE_0 -> "）"
+                    KeyEvent.KEYCODE_2 -> if (event.isShiftPressed) "＠" else null
+                    KeyEvent.KEYCODE_3 -> if (event.isShiftPressed) "＃" else null
+                    KeyEvent.KEYCODE_4 -> if (event.isShiftPressed) "＄" else null
+                    KeyEvent.KEYCODE_5 -> if (event.isShiftPressed) "％" else null
+                    KeyEvent.KEYCODE_6 -> if (event.isShiftPressed) "…" else null
+                    KeyEvent.KEYCODE_7 -> if (event.isShiftPressed) "＆" else null
+                    KeyEvent.KEYCODE_8 -> if (event.isShiftPressed) "＊" else null
+                    else -> null
+                }
+                isSymbolLeadMode = false
+                if (symbol != null) {
+                    handlePhysicalEnter()
+                    commitTextDirectly(symbol)
+                    updateComposingDisplay()
+                    return true
+                }
+                updateComposingDisplay()
+            } else if (!event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed && keyCode == KeyEvent.KEYCODE_GRAVE) {
+                // 按下 ` 進入快速符號前導模式
+                isSymbolLeadMode = true
+                updateCandidateBar(emptyList())
+                return true
+            }
+
             // Shift + Space 經典快捷鍵：輸出全形空格（公文、排版極高頻）
             if (event.isShiftPressed && keyCode == KeyEvent.KEYCODE_SPACE) {
                 isPhysicalShiftPressed = false
@@ -3697,13 +3900,13 @@ class ZhuyinInputMethodService : InputMethodService() {
                 if (handlePhysicalDpadRight()) return true
             }
 
-            // 方向鍵下 (↓)：展開候選字面板！
-            if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+            // 方向鍵下 (↓) 或 PageDown：展開/向下翻頁候選字面板！
+            if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN || keyCode == KeyEvent.KEYCODE_PAGE_DOWN) {
                 if (handlePhysicalDpadDown()) return true
             }
 
-            // 方向鍵上 (↑)：收合候選字面板！
-            if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+            // 方向鍵上 (↑) 或 PageUp：向上翻頁/收合候選字面板！
+            if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_PAGE_UP) {
                 if (handlePhysicalDpadUp()) return true
             }
 
