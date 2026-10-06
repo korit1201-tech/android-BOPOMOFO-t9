@@ -190,5 +190,13 @@ class EngineRankingFullTest {
         val niDaoDiTop = getCandidates(listOf(7, 6, 1, 8, 1, 6)).first()
         println("Top candidate for [7, 6, 1, 8, 1, 6]: $niDaoDiTop")
         assertEquals("你到底", niDaoDiTop)
+
+        val tiGanCandidates = getCandidates(listOf(4, 6, 2, 3))
+        println("Top candidate for [4, 6, 2, 3]: ${tiGanCandidates.firstOrNull()}")
+        assertEquals("體感", tiGanCandidates.first())
+
+        val multiCombos = SyllableManager.getMultiSyllableCombinations(listOf(4, 6, 2, 3))
+        println("MultiCombos for [4, 6, 2, 3]: $multiCombos")
+        assertTrue("MultiCombos should contain ㄊㄧㄍㄢ", multiCombos.contains("ㄊㄧㄍㄢ"))
     }
 }

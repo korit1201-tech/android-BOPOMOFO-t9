@@ -566,7 +566,7 @@ class ZhuyinT9Engine(private val context: Context) {
             for (syl in exactSyllables) {
                 val label = if (toneChar != null) "$syl$toneChar" else syl
                 comboSet.add(label)
-                if (comboSet.size >= 8) break
+                if (comboSet.size >= 16) break
             }
         }
 
@@ -579,11 +579,21 @@ class ZhuyinT9Engine(private val context: Context) {
                 val label = if (toneChar != null) "$prefix$toneChar" else prefix
                 comboSet.add(label)
             }
-            if (comboSet.size >= 8) break
+            if (comboSet.size >= 16) break
         }
 
-        // 3. 【容錯音節候補】：若容錯開關啟用且尚有空間，才提取容錯詞的前綴音節（如 ㄓㄥ，嚴格排在精確音節之後作為候補）
-        if (isTolerantEnabled && comboSet.size < 8) {
+        // 3. 【多音節組合候補】：對於 4 鍵以上長序列，若候選詞庫前綴不足，調用合法多音節組合生成器（如 [2,7,3,10] -> ㄊㄧㄍㄢ, ㄉㄧㄍㄢ）
+        if (phonemeKeyLen >= 4 && comboSet.size < 16) {
+            val multiCombos = SyllableManager.getMultiSyllableCombinations(cleanKeys, maxCount = 16)
+            for (combo in multiCombos) {
+                val label = if (toneChar != null) "$combo$toneChar" else combo
+                comboSet.add(label)
+                if (comboSet.size >= 16) break
+            }
+        }
+
+        // 4. 【容錯音節候補】：若容錯開關啟用且尚有空間，才提取容錯詞的前綴音節（如 ㄓㄥ，嚴格排在精確音節之後作為候補）
+        if (isTolerantEnabled && comboSet.size < 16) {
             for (entry in candidateList) {
                 if (!entry.isTolerant) continue
                 val clean = entry.zhuyin.filter { it !in "ˇˋˊ˙" }
@@ -592,11 +602,11 @@ class ZhuyinT9Engine(private val context: Context) {
                     val label = if (toneChar != null) "$prefix$toneChar" else prefix
                     comboSet.add(label)
                 }
-                if (comboSet.size >= 8) break
+                if (comboSet.size >= 16) break
             }
         }
 
-        // 4. 保底：若依然為空，以各按鍵第一注音符號合成
+        // 5. 保底：若依然為空，以各按鍵第一注音符號合成
         if (comboSet.isEmpty()) {
             val sb = StringBuilder()
             for (k in cleanKeys) {
@@ -740,7 +750,39 @@ class ZhuyinT9Engine(private val context: Context) {
             val filtered = baseList.filter { entry ->
                 entry.zhuyin.filter { it !in "ˇˋˊ˙" }.startsWith(cleanLock)
             }
-            cachedCandidates = if (filtered.isNotEmpty()) filtered else baseList
+            if (filtered.isNotEmpty()) {
+                cachedCandidates = filtered
+                return
+            }
+            // 若 baseList 無匹配詞條，嘗試從完整注音映射中直接檢索或組字（杜絕點擊注音組合後無字可選）
+            val directWords = fullZhuyinWordMap[cleanLock]
+            if (!directWords.isNullOrEmpty()) {
+                cachedCandidates = directWords.sortedByDescending { it.weight + userDict.getBoost(it.word) }
+                return
+            }
+            // 嘗試切分為音節組合並合成詞（如 ㄊㄧ + ㄍㄢ -> 體 + 感 = 體感）
+            val syllables = SyllableManager.splitIntoSyllables(cleanLock, 2)
+            if (syllables != null && syllables.size == 2) {
+                val words1 = fullZhuyinWordMap[syllables[0]]
+                val words2 = fullZhuyinWordMap[syllables[1]]
+                if (!words1.isNullOrEmpty() && !words2.isNullOrEmpty()) {
+                    val synthesized = mutableListOf<DictEntry>()
+                    val top1 = words1.take(5)
+                    val top2 = words2.take(5)
+                    for (w1 in top1) {
+                        for (w2 in top2) {
+                            val combined = w1.word + w2.word
+                            val avgWt = (w1.weight + w2.weight) / 2
+                            synthesized.add(DictEntry(combined, "${w1.zhuyin} ${w2.zhuyin}", avgWt))
+                        }
+                    }
+                    if (synthesized.isNotEmpty()) {
+                        cachedCandidates = synthesized.sortedByDescending { it.weight + userDict.getBoost(it.word) }
+                        return
+                    }
+                }
+            }
+            cachedCandidates = baseList
             return
         }
         cachedCandidates = baseList
