@@ -1373,8 +1373,49 @@ class ZhuyinT9Engine(private val context: Context) {
                         val effectiveWeight = entry.weight + boost
                         val logProb = Math.log(maxOf(effectiveWeight.toDouble(), 1.0)) - logTotal
                         val bonus = (entry.word.length - 1) * wordBonus
-                        val toneBonus = if (entry.zhuyin.filter { it != ' ' } == subTone) 4.0 else 0.0
-                        val score = dp[j] + logProb + bonus + toneBonus
+
+                        // 計算音節聲調相符度與衝突懲罰
+                        var hasToneMismatch = false
+                        var exactToneMatchCount = 0
+                        val entryZhuyinList = if (entry.zhuyin.contains(' ')) {
+                            entry.zhuyin.split(' ').filter { it.isNotEmpty() }
+                        } else if (len == 1) {
+                            listOf(entry.zhuyin)
+                        } else {
+                            emptyList()
+                        }
+
+                        if (entryZhuyinList.size == len) {
+                            for (idx in 0 until len) {
+                                val userSyll = subSyllables[idx]
+                                val userTone = userSyll.find { it in "ˇˋˊ˙" }
+                                val entryTone = entryZhuyinList[idx].find { it in "ˇˋˊ˙" }
+
+                                if (userTone != null) {
+                                    // 使用者明確指定聲調
+                                    if (userTone == entryTone) {
+                                        exactToneMatchCount++
+                                    } else {
+                                        hasToneMismatch = true
+                                    }
+                                }
+                            }
+                        } else if (len == 1) {
+                            val userTone = subSyllables[0].find { it in "ˇˋˊ˙" }
+                            val entryTone = entry.zhuyin.find { it in "ˇˋˊ˙" }
+                            if (userTone != null) {
+                                if (userTone == entryTone) {
+                                    exactToneMatchCount++
+                                } else {
+                                    hasToneMismatch = true
+                                }
+                            }
+                        }
+
+                        // 若使用者明確指定聲調，聲調不符給予重罰 (-25.0)，聲調吻合大幅加權 (+8.0/字)
+                        val tonePenalty = if (hasToneMismatch) -25.0 else 0.0
+                        val toneBonus = exactToneMatchCount * 8.0
+                        val score = dp[j] + logProb + bonus + toneBonus + tonePenalty
                         if (score > dp[i]) {
                             dp[i] = score
                             bestPrev[i] = Pair(j, entry.word)
@@ -1382,8 +1423,14 @@ class ZhuyinT9Engine(private val context: Context) {
                     }
                 } else if (len == 1) {
                     // 若字典無完全相符詞條，以單字音節索引或音節本身兜底
+                    val userSyll = subSyllables[0]
+                    val userTone = userSyll.find { it in "ˇˋˊ˙" }
                     val soundMatches = soundToCharMap[subClean]
-                    val fallbackChar = soundMatches?.firstOrNull()?.word ?: subClean
+                    val fallbackChar = if (userTone != null && !soundMatches.isNullOrEmpty()) {
+                        soundMatches.find { it.zhuyin.contains(userTone) }?.word ?: soundMatches.firstOrNull()?.word ?: subClean
+                    } else {
+                        soundMatches?.firstOrNull()?.word ?: subClean
+                    }
                     val score = dp[j] - 10.0
                     if (score > dp[i]) {
                         dp[i] = score
@@ -1397,7 +1444,13 @@ class ZhuyinT9Engine(private val context: Context) {
             // 保底返回各音節單字
             return syllables.map { s ->
                 val clean = s.filter { it !in "ˇˋˊ˙ " }
-                soundToCharMap[clean]?.firstOrNull()?.word ?: clean
+                val tone = s.find { it in "ˇˋˊ˙" }
+                val list = soundToCharMap[clean]
+                if (tone != null && !list.isNullOrEmpty()) {
+                    list.find { it.zhuyin.contains(tone) }?.word ?: list.firstOrNull()?.word ?: clean
+                } else {
+                    list?.firstOrNull()?.word ?: clean
+                }
             }
         }
 
