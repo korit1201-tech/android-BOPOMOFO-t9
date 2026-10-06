@@ -102,6 +102,63 @@ object SyllableManager {
         return results.distinct().sortedByDescending { getSyllableWeight(it) }.take(maxCount)
     }
 
+    /**
+     * 多音節組合生成：當輸入按鍵序列達到 4 鍵以上（例如 [2, 7, 3, 10]）時，
+     * 將鍵序切分為合法完整音節序列（如 [2, 7] -> ㄊㄧ, ㄉㄧ, ㄌㄧ 與 [3, 10] -> ㄍㄢ, ㄎㄢ, ㄏㄢ），
+     * 生成合法自然的拼音組合（如 ㄊㄧㄍㄢ），杜絕生僻詞佔據左側欄位導致常用音節組合遺失。
+     */
+    fun getMultiSyllableCombinations(keys: List<Int>, maxCount: Int = 12): List<String> {
+        val n = keys.size
+        if (n < 4 || n > 8) return emptyList()
+
+        val results = mutableListOf<Pair<String, Double>>()
+
+        fun isFullSyllable(syl: String): Boolean {
+            // 單聲母（如 ㄅ, ㄉ, ㄊ, ㄍ）在多音節詞中不視為完整音節
+            return syl !in "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙ"
+        }
+
+        fun search(idx: Int, current: MutableList<String>, currentScore: Double) {
+            if (idx == n) {
+                var finalScore = currentScore
+                if (current.all { isFullSyllable(it) }) {
+                    finalScore += 20.0
+                }
+                results.add(Pair(current.joinToString(""), finalScore))
+                return
+            }
+
+            for (len in minOf(3, n - idx) downTo 1) {
+                val sub = keys.subList(idx, idx + len)
+                val matches = EXACT_KEY_MAP[sub]
+                if (!matches.isNullOrEmpty()) {
+                    val topMatches = matches.take(5)
+                    // 長音節（2~3 鍵）獲得大幅加分，避免 4 鍵長度被切碎為 4 個孤立單韻母/聲母
+                    val lenBonus = if (len > 1) (len - 1) * 8.0 else -5.0
+                    for (syl in topMatches) {
+                        current.add(syl)
+                        val w = getSyllableWeight(syl)
+                        val sylScore = Math.log(maxOf(w.toDouble(), 10.0)) + lenBonus
+                        search(idx + len, current, currentScore + sylScore)
+                        current.removeAt(current.size - 1)
+                    }
+                }
+            }
+        }
+
+        search(0, mutableListOf(), 0.0)
+        results.sortByDescending { it.second }
+        val seen = HashSet<String>()
+        val distinctList = mutableListOf<String>()
+        for (pair in results) {
+            if (seen.add(pair.first)) {
+                distinctList.add(pair.first)
+                if (distinctList.size >= maxCount) break
+            }
+        }
+        return distinctList
+    }
+
     val VALID_SYLLABLES_SET: Set<String> by lazy { VALID_SYLLABLES.toHashSet() }
 
     /**
