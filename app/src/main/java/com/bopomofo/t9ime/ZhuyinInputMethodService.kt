@@ -2,6 +2,7 @@ package com.bopomofo.t9ime
 
 import android.annotation.SuppressLint
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.inputmethodservice.InputMethodService
 import android.os.Handler
@@ -135,7 +136,8 @@ class ZhuyinInputMethodService : InputMethodService() {
     private val pinnedSentenceChars = mutableMapOf<Int, String>() // 游標選字鎖定 (index -> char)
     private var sentenceCursor = 0
     private var isSentenceSelecting = false
-    private var physicalCandidatePageIndex = 0 // 實體鍵盤 48dp 迷你候選列當前頁碼 (每頁 9 字)
+    private var physicalCandidatePageIndex = 0 // 實體鍵盤 48dp 迷你候選列當前頁碼
+    private var physicalCandidatePages: List<List<DictEntry>> = emptyList() // 依當前螢幕方向與可用寬度動態切分之候選字分頁
     private var isSymbolLeadMode = false // 新注音前導鍵 (`) 快速標點符號模式
     private val ZHUYIN_INITIALS = "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙ"
     private val ZHUYIN_FINALS = "ㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ"
@@ -324,6 +326,10 @@ class ZhuyinInputMethodService : InputMethodService() {
             ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
             applyOneHandedMode()
             updateHardwareKeyboardState()
+            if (isHardwareKeyboardConnected && currentCandidateList.isNotEmpty()) {
+                physicalCandidatePageIndex = 0
+                updateCandidateBar(currentCandidateList)
+            }
         }
     }
 
@@ -2833,6 +2839,91 @@ class ZhuyinInputMethodService : InputMethodService() {
         applyOneHandedMode()
     }
 
+    /**
+     * 動態取得當前候選字條的實際可用水平內容寬度（像素）
+     * 支援直向、橫向、平板及分割視窗螢幕自適應
+     */
+    private fun getCandidateContentAvailableWidth(): Int {
+        val scrollW = candidateScroll?.width ?: 0
+        val totalW = if (scrollW > 0) {
+            scrollW
+        } else {
+            val rootW = rootView?.width?.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+            val density = resources.displayMetrics.density
+            val symbolBtnW = (42 * density).toInt()
+            val sidePadding = (46 * density).toInt()
+            (rootW - symbolBtnW - sidePadding).coerceAtLeast(200)
+        }
+        val containerPad = (candidateContainer.paddingStart) + (candidateContainer.paddingEnd)
+        return (totalW - containerPad).coerceAtLeast(150)
+    }
+
+    /**
+     * 依據螢幕可用寬度動態切分實體鍵盤候選字分頁
+     * 確保每頁所有候選項目與分頁指示器 [X/Y ↓] 100% 完整顯示在螢幕可視區內，絕不被裁切
+     */
+    private fun partitionCandidatesForPhysicalMode(
+        candidates: List<DictEntry>,
+        contentWidth: Int
+    ): List<List<DictEntry>> {
+        if (candidates.isEmpty()) return emptyList()
+
+        val measurePaint = Paint().apply {
+            textSize = 20f * resources.displayMetrics.scaledDensity
+            isAntiAlias = true
+        }
+        val itemPadding = (CANDIDATE_BAR_PADDING_PX * 2).toFloat()
+        // 預估分頁指示標籤寬度 [99/99 ↓]
+        val indicatorWidth = measurePaint.measureText("[99/99 ↓]") + itemPadding + 8f
+        val maxAvailableWidth = contentWidth.toFloat()
+
+        // 試算：如果全部候選字能在單頁（最多 9 個）全部塞下且不超過 contentWidth，不需要指示器
+        if (candidates.size <= 9) {
+            var totalW = 0f
+            var allFit = true
+            for (idx in candidates.indices) {
+                val rawWord = if (isSimplified) ChineseConverter.toSimplified(candidates[idx].word) else candidates[idx].word
+                val w = measurePaint.measureText("${idx + 1}. $rawWord") + itemPadding
+                totalW += w
+                if (totalW > maxAvailableWidth) {
+                    allFit = false
+                    break
+                }
+            }
+            if (allFit) {
+                return listOf(candidates)
+            }
+        }
+
+        // 多頁動態切分：每頁最多 9 字，且總寬度不超過 (contentWidth - indicatorWidth)
+        val pages = mutableListOf<List<DictEntry>>()
+        var curPage = mutableListOf<DictEntry>()
+        var curWidth = 0f
+        val maxLimitWithIndicator = (maxAvailableWidth - indicatorWidth).coerceAtLeast(100f)
+
+        var i = 0
+        while (i < candidates.size) {
+            val entry = candidates[i]
+            val rawWord = if (isSimplified) ChineseConverter.toSimplified(entry.word) else entry.word
+            val itemNum = curPage.size + 1
+            val itemWidth = measurePaint.measureText("$itemNum. $rawWord") + itemPadding
+
+            if (curPage.isNotEmpty() && (curWidth + itemWidth > maxLimitWithIndicator || curPage.size >= 9)) {
+                pages.add(curPage)
+                curPage = mutableListOf()
+                curWidth = 0f
+            } else {
+                curPage.add(entry)
+                curWidth += itemWidth
+                i++
+            }
+        }
+        if (curPage.isNotEmpty()) {
+            pages.add(curPage)
+        }
+        return pages
+    }
+
     private fun updateCandidateBar(candidates: List<DictEntry>) {
         val effectiveCandidates = if (isSymbolLeadMode) {
             listOf(
@@ -2861,23 +2952,23 @@ class ZhuyinInputMethodService : InputMethodService() {
             populateCandidateGrid()
         }
 
-        // 實體鍵盤每頁 9 字分頁設計，觸控模式則保持原本流動清單
+        // 實體鍵盤動態自適應螢幕寬度分頁，觸控模式則保持原本流動清單
         val displayCandidates: List<DictEntry>
         val isPhysicalMode = isHardwareKeyboardConnected
         var pageIndicatorText: String? = null
 
         if (isPhysicalMode && !isSymbolLeadMode) {
-            val pageSize = 9
-            val totalCount = effectiveCandidates.size
-            val totalPages = if (totalCount > 0) (totalCount + pageSize - 1) / pageSize else 1
-            physicalCandidatePageIndex = physicalCandidatePageIndex.coerceIn(0, maxOf(0, totalPages - 1))
-            val startIndex = physicalCandidatePageIndex * pageSize
-            val pagedItems = effectiveCandidates.drop(startIndex).take(pageSize).toMutableList()
+            val availableW = getCandidateContentAvailableWidth()
+            physicalCandidatePages = partitionCandidatesForPhysicalMode(effectiveCandidates, availableW)
+            val totalPages = physicalCandidatePages.size.coerceAtLeast(1)
+            physicalCandidatePageIndex = physicalCandidatePageIndex.coerceIn(0, totalPages - 1)
+            val pagedItems = physicalCandidatePages.getOrElse(physicalCandidatePageIndex) { emptyList() }
             if (totalPages > 1) {
                 pageIndicatorText = "[${physicalCandidatePageIndex + 1}/$totalPages ↓]"
             }
             displayCandidates = pagedItems
         } else {
+            physicalCandidatePages = emptyList()
             displayCandidates = effectiveCandidates.take(MAX_CANDIDATES_DISPLAY)
         }
 
@@ -2927,14 +3018,15 @@ class ZhuyinInputMethodService : InputMethodService() {
                 tv.setBackgroundResource(R.drawable.bg_key_action)
                 tv.setOnClickListener {
                     triggerHapticFeedback(HapticType.MODE_SWITCH)
-                    val pageSize = 9
-                    val totalPages = (effectiveCandidates.size + pageSize - 1) / pageSize
-                    if (physicalCandidatePageIndex + 1 < totalPages) {
-                        physicalCandidatePageIndex++
-                    } else {
-                        physicalCandidatePageIndex = 0
+                    val totalPages = physicalCandidatePages.size
+                    if (totalPages > 1) {
+                        if (physicalCandidatePageIndex + 1 < totalPages) {
+                            physicalCandidatePageIndex++
+                        } else {
+                            physicalCandidatePageIndex = 0
+                        }
+                        updateCandidateBar(currentCandidateList)
                     }
-                    updateCandidateBar(currentCandidateList)
                 }
             } else if (isZhuyinHeader) {
                 tv.setTextColor(themeColors.accent)
@@ -3054,8 +3146,13 @@ class ZhuyinInputMethodService : InputMethodService() {
         isHomophoneSelectionMode = true
         homophoneCharIndex = charIndex
         val targetChar = currentWord[charIndex]
-
-        val homophones = engine.getHomophonesForChar(targetChar)
+        val userSyllable = composingSyllables.getOrNull(charIndex)
+        val homophones = if (!userSyllable.isNullOrEmpty()) {
+            val list = engine.searchFullZhuyin(userSyllable).filter { it.word.length == 1 }
+            if (list.isNotEmpty()) list else engine.getHomophonesForChar(targetChar)
+        } else {
+            engine.getHomophonesForChar(targetChar)
+        }
         val candidateItems = mutableListOf<DictEntry>()
 
         // 第一項：原字確認項（可點擊保持原字或取消同音模式）
@@ -3357,9 +3454,16 @@ class ZhuyinInputMethodService : InputMethodService() {
 
         // 候選列更新
         if (isSentenceSelecting && cursor < composingSentence.length) {
-            val targetChar = composingSentence[cursor]
-            val homophones = engine.getHomophonesForChar(targetChar)
-            updateCandidateBar(homophones)
+            val userSyllable = composingSyllables.getOrNull(cursor)
+            val candidates = if (!userSyllable.isNullOrEmpty()) {
+                val fullMatches = engine.searchFullZhuyin(userSyllable)
+                val singleChars = fullMatches.filter { it.word.length == 1 }
+                if (singleChars.isNotEmpty()) singleChars else fullMatches
+            } else {
+                val targetChar = composingSentence[cursor]
+                engine.getHomophonesForChar(targetChar)
+            }
+            updateCandidateBar(candidates)
         } else if (fullZhuyinBuffer.isNotEmpty()) {
             val candidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString())
             updateCandidateBar(candidates)
@@ -3513,10 +3617,9 @@ class ZhuyinInputMethodService : InputMethodService() {
             return true
         }
 
-        // 2. 實體鍵盤改字與選字分頁：按向下鍵翻至下一頁候選字 (每頁 9 字)
-        if (currentCandidateList.isNotEmpty()) {
-            val totalCount = currentCandidateList.size
-            val totalPages = (totalCount + 8) / 9
+        // 2. 實體鍵盤改字與選字分頁：按向下鍵翻至下一頁候選字
+        if (physicalCandidatePages.isNotEmpty()) {
+            val totalPages = physicalCandidatePages.size
             if (physicalCandidatePageIndex + 1 < totalPages) {
                 physicalCandidatePageIndex++
                 updateCandidateBar(currentCandidateList)
@@ -3527,7 +3630,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun handlePhysicalDpadUp(): Boolean {
-        // 實體鍵盤改字與選字分頁：按向上鍵翻回上一頁候選字 (每頁 9 字)
+        // 實體鍵盤改字與選字分頁：按向上鍵翻回上一頁候選字
         if (physicalCandidatePageIndex > 0) {
             physicalCandidatePageIndex--
             updateCandidateBar(currentCandidateList)
@@ -3543,27 +3646,29 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun handlePhysicalNumberSelect(number: Int): Boolean {
-        val selectIndex = physicalCandidatePageIndex * 9 + (number - 1)
-        if (isSentenceSelecting && sentenceCursor < composingSentence.length) {
-            val candidates = currentCandidateList
-            if (selectIndex < candidates.size) {
-                val chosen = candidates[selectIndex]
-                val newChar = chosen.word[0].toString()
-                composingSentence.setCharAt(sentenceCursor, newChar[0])
-                // 手動選字鎖定：記錄此位置人工選定之字，避免後續動態規劃被覆蓋
-                pinnedSentenceChars[sentenceCursor] = newChar
-                physicalCandidatePageIndex = 0
+        val currentPage = physicalCandidatePages.getOrElse(physicalCandidatePageIndex) { emptyList() }
+        val itemIndex = number - 1
+        if (itemIndex < 0 || itemIndex >= currentPage.size) {
+            return false
+        }
+        val chosen = currentPage[itemIndex]
 
-                // 經典新酷音體驗：改完後游標自動向右跳一格！
-                if (sentenceCursor < composingSentence.length - 1) {
-                    sentenceCursor++
-                } else {
-                    sentenceCursor = composingSentence.length
-                    isSentenceSelecting = false
-                }
-                updateComposingDisplay()
-                return true
+        if (isSentenceSelecting && sentenceCursor < composingSentence.length) {
+            val newChar = chosen.word[0].toString()
+            composingSentence.setCharAt(sentenceCursor, newChar[0])
+            // 手動選字鎖定：記錄此位置人工選定之字，避免後續動態規劃被覆蓋
+            pinnedSentenceChars[sentenceCursor] = newChar
+            physicalCandidatePageIndex = 0
+
+            // 經典新酷音體驗：改完後游標自動向右跳一格！
+            if (sentenceCursor < composingSentence.length - 1) {
+                sentenceCursor++
+            } else {
+                sentenceCursor = composingSentence.length
+                isSentenceSelecting = false
             }
+            updateComposingDisplay()
+            return true
         }
         return false
     }
