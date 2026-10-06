@@ -56,6 +56,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         private const val MAX_CANDIDATES_DISPLAY = 30
         private const val CANDIDATE_BAR_PADDING_PX = 32
         private const val CANDIDATE_BAR_PADDING_VERTICAL_PX = 16
+        private const val MAX_PHYSICAL_PAGE_SIZE = 9 // 實體鍵盤數字鍵 1~9 選字上限，絕不可超過 9
         private const val KEYBOARD_MIN_HEIGHT_DP = 180
         private const val KEYBOARD_MAX_HEIGHT_DP = 380
         private const val KEYBOARD_DEFAULT_HEIGHT_DP = 240
@@ -2877,8 +2878,8 @@ class ZhuyinInputMethodService : InputMethodService() {
         val indicatorWidth = measurePaint.measureText("[99/99 ↓]") + itemPadding + 8f
         val maxAvailableWidth = contentWidth.toFloat()
 
-        // 試算：如果全部候選字能在單頁（最多 9 個）全部塞下且不超過 contentWidth，不需要指示器
-        if (candidates.size <= 9) {
+        // 試算：如果全部候選字能在單頁（最多 MAX_PHYSICAL_PAGE_SIZE 個）全部塞下且不超過 contentWidth，不需要指示器
+        if (candidates.size <= MAX_PHYSICAL_PAGE_SIZE) {
             var totalW = 0f
             var allFit = true
             for (idx in candidates.indices) {
@@ -2891,11 +2892,11 @@ class ZhuyinInputMethodService : InputMethodService() {
                 }
             }
             if (allFit) {
-                return listOf(candidates)
+                return listOf(candidates.take(MAX_PHYSICAL_PAGE_SIZE))
             }
         }
 
-        // 多頁動態切分：每頁最多 9 字，且總寬度不超過 (contentWidth - indicatorWidth)
+        // 多頁動態切分：每頁最多 MAX_PHYSICAL_PAGE_SIZE 字（嚴格限制 <= 9），且總寬度不超過 (contentWidth - indicatorWidth)
         val pages = mutableListOf<List<DictEntry>>()
         var curPage = mutableListOf<DictEntry>()
         var curWidth = 0f
@@ -2908,8 +2909,8 @@ class ZhuyinInputMethodService : InputMethodService() {
             val itemNum = curPage.size + 1
             val itemWidth = measurePaint.measureText("$itemNum. $rawWord") + itemPadding
 
-            if (curPage.isNotEmpty() && (curWidth + itemWidth > maxLimitWithIndicator || curPage.size >= 9)) {
-                pages.add(curPage)
+            if (curPage.isNotEmpty() && (curWidth + itemWidth > maxLimitWithIndicator || curPage.size >= MAX_PHYSICAL_PAGE_SIZE)) {
+                pages.add(curPage.take(MAX_PHYSICAL_PAGE_SIZE))
                 curPage = mutableListOf()
                 curWidth = 0f
             } else {
@@ -2919,7 +2920,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
         }
         if (curPage.isNotEmpty()) {
-            pages.add(curPage)
+            pages.add(curPage.take(MAX_PHYSICAL_PAGE_SIZE))
         }
         return pages
     }
@@ -3646,6 +3647,9 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun handlePhysicalNumberSelect(number: Int): Boolean {
+        if (number !in 1..MAX_PHYSICAL_PAGE_SIZE) {
+            return false
+        }
         val currentPage = physicalCandidatePages.getOrElse(physicalCandidatePageIndex) { emptyList() }
         val itemIndex = number - 1
         if (itemIndex < 0 || itemIndex >= currentPage.size) {
