@@ -214,8 +214,12 @@ class ZhuyinT9Engine(private val context: Context) {
         val userEntries = userDict.getAllEntries()
         for (u in userEntries) {
             if (u.zhuyin.isNotEmpty()) {
-                // 使用者選過的詞給予高優先權，確保出現在候選詞中
-                val weight = 5_000_000 + minOf(u.count * 6_000_000, 100_000_000)
+                // 使用者選過的詞給予加權，但多字詞給予高優先權，單字則適度加權 (避免單字在 Trie 中壓死多字詞)
+                val weight = if (u.word.length == 1) {
+                    minOf(120_000 + u.count * 10_000, 200_000)
+                } else {
+                    5_000_000 + minOf(u.count * 6_000_000, 100_000_000)
+                }
                 val entry = DictEntry(u.word, u.zhuyin, weight)
                 targetTrie.insert(entry)
                 if (targetFullZhuyinWordMap != null) {
@@ -436,11 +440,18 @@ class ZhuyinT9Engine(private val context: Context) {
      */
     private fun getEffectiveWeight(entry: DictEntry, inputKeyCount: Int, isExact: Boolean, prevTopWord: String? = null): Double {
         val userBoost = userDict.getBoost(entry.word)
-        if (userBoost > 0) {
+        // 關鍵防禦：只有「完全匹配 (isExact)」之字詞才享有 10 億級置頂優選！
+        // 尚未拼完的前綴預測詞 (!isExact) 絕對不能享有 10 億特權，嚴禁搶佔已拼完的精確單字！
+        if (isExact && userBoost > 0) {
             return 1_000_000_000.0 + userBoost
         }
 
-        val rawWeight = entry.weight.toDouble()
+        var rawWeight = entry.weight.toDouble()
+        if (!isExact && userBoost > 0) {
+            // 未完成前綴預測僅享有適度加權 (最多 3x)，絕不破壞順位
+            rawWeight *= (1.0 + minOf(userBoost, 2_000_000) / 1_000_000.0)
+        }
+
         val lengthMultiplier = when {
             isExact -> {
                 when (entry.word.length) {
@@ -536,7 +547,7 @@ class ZhuyinT9Engine(private val context: Context) {
 
         val rankedList = pool.values
             .sortedWith(
-                compareByDescending<Pair<DictEntry, Double>> { userDict.getBoost(it.first.word) > 0 }
+                compareByDescending<Pair<DictEntry, Double>> { it.second >= 1_000_000_000.0 }
                     .thenByDescending { !it.first.isTolerant }
                     .thenByDescending { it.second }
             )
@@ -625,12 +636,17 @@ class ZhuyinT9Engine(private val context: Context) {
                         for (entry in node.exactEntries.values) {
                             if (!isTolerantEnabled && entry.isTolerant) continue
                             val boost = userDict.getBoost(entry.word)
-                            val effectiveWeight = entry.weight + boost
+                            val effectiveWeight = if (entry.word.length == 1) {
+                                minOf(entry.weight + minOf(boost, 50_000), 120_000)
+                            } else {
+                                entry.weight + minOf(boost, 200_000)
+                            }
                             val logProb = Math.log(maxOf(effectiveWeight.toDouble(), 1.0)) - logTotal
+                            val bonus = if (entry.word.length > 1) 3.5 * (entry.word.length - 1) else 0.0
                             val bigramBoost = if (prevWord != null) getBigramBoost(prevWord, entry.word) else 0
                             val bigramBonus = if (bigramBoost > 0) Math.log(1.0 + bigramBoost / 100.0) else 0.0
                             val penalty = if (entry.isTolerant) -18.0 else 0.0
-                            val score = dp[j] + logProb + bigramBonus + penalty
+                            val score = dp[j] + logProb + bonus + bigramBonus + penalty
                             if (score > dp[i]) {
                                 dp[i] = score
                                 bestSplit[i] = Pair(j, entry)
