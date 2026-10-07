@@ -304,8 +304,29 @@ class ZhuyinInputMethodService : InputMethodService() {
         return true
     }
 
+    override fun onStartInput(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
+        super.onStartInput(attribute, restarting)
+        // 進入新輸入框時，主動清除前次可能殘留的組字與游標狀態，確保目標 App 輸入框乾淨接收貼上事件
+        if (!restarting) {
+            currentInputConnection?.finishComposingText()
+            if (::engine.isInitialized) {
+                engine.clear()
+            }
+            fullZhuyinBuffer.clear()
+            customComposingWord = null
+            isHomophoneSelectionMode = false
+            homophoneCharIndex = -1
+            lastComposingStart = -1
+            lastComposingEnd = -1
+        }
+    }
+
     override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        // 每次彈出鍵盤時，若當前無正在組字，確保終止 Composing 狀態
+        if (!engine.hasComposing() && fullZhuyinBuffer.isEmpty()) {
+            currentInputConnection?.finishComposingText()
+        }
         // 快取震動設定，避免按鍵高頻輸入時讀取 SharedPreferences
         cachedVibrationEnabled = PreferencesRepository.isVibrationEnabled(this)
         cachedVibrationStrength = PreferencesRepository.getVibrationStrength(this).coerceIn(5, 100)
@@ -1383,7 +1404,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                     setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
                     setOnClickListener {
                         triggerHapticFeedback(HapticType.COMMIT)
-                        currentInputConnection?.commitText(clip, 1)
+                        safeCommitText(clip)
                         hideSymbolPanel()
                     }
                     setOnLongClickListener {
@@ -1633,7 +1654,20 @@ class ZhuyinInputMethodService : InputMethodService() {
             setBackgroundResource(R.drawable.bg_key_action)
             val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { setMargins(2, 2, 2, 2) }
             layoutParams = p
-            setOnClickListener { triggerHapticFeedback(); currentInputConnection?.performContextMenuAction(android.R.id.paste) }
+            setOnClickListener {
+                triggerHapticFeedback()
+                val clipManager = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                val clipData = clipManager?.primaryClip
+                val clipText = if (clipData != null && clipData.itemCount > 0) {
+                    clipData.getItemAt(0)?.coerceToText(this@ZhuyinInputMethodService)?.toString()
+                } else null
+
+                if (!clipText.isNullOrEmpty()) {
+                    safeCommitText(clipText)
+                } else {
+                    currentInputConnection?.performContextMenuAction(android.R.id.paste)
+                }
+            }
         }
         val btnOneHanded = Button(this).apply {
             text = currentOneHandedMode.title
@@ -4060,5 +4094,19 @@ class ZhuyinInputMethodService : InputMethodService() {
         lastCommittedWord = null
         clearCandidateBar()
         currentInputConnection?.finishComposingText()
+    }
+
+    override fun onFinishInput() {
+        super.onFinishInput()
+        currentInputConnection?.finishComposingText()
+        if (::engine.isInitialized) {
+            engine.clear()
+        }
+        fullZhuyinBuffer.clear()
+        customComposingWord = null
+        isHomophoneSelectionMode = false
+        homophoneCharIndex = -1
+        lastComposingStart = -1
+        lastComposingEnd = -1
     }
 }
