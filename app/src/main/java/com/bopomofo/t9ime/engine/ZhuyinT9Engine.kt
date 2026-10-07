@@ -1065,15 +1065,54 @@ class ZhuyinT9Engine(private val context: Context) {
      * 3. 納入前綴延伸單字
      * 4. 排序：首位原字、使用者曾選字最優先 (getBoost > 0)、字典權重降序
      */
-    fun getHomophonesForChar(ch: Char): List<DictEntry> {
-        val zhuyins = charZhuyinMap[ch] ?: emptyList()
+    /**
+     * 取得當前組字文字指定字元索引對應的輸入音節 (帶聲調)
+     * 1. 優先從當前頂部候選詞（或首選詞）的注音切分出第 charIndex 個音節
+     * 2. 若為單字，且有鎖定注音組合或頂部注音組合，返回該組合
+     */
+    fun getComposingSyllableAt(charIndex: Int): String? {
+        val topEntry = cachedCandidates.firstOrNull()
+        if (topEntry != null && topEntry.zhuyin.isNotEmpty()) {
+            val syllables = SyllableManager.splitFullZhuyin(topEntry.zhuyin, topEntry.word.length)
+            if (syllables != null && charIndex in syllables.indices) {
+                return syllables[charIndex]
+            }
+        }
+        if (charIndex == 0) {
+            val combo = lockedZhuyinCombo ?: cachedZhuyinCombos.firstOrNull()
+            if (!combo.isNullOrEmpty()) {
+                return combo
+            }
+        }
+        return null
+    }
+
+    /**
+     * 同音/同拼法候選字查詢：
+     * 1. 若傳入 preferredZhuyin（使用者實際輸入的音節），優先以該音節排序，避免多音字卡在字典第一讀音
+     * 2. 優先由 soundToCharMap 檢索標準同音字，以同聲調 > 字典權重 > 使用者個人化權重排序
+     * 3. 納入前綴延伸單字
+     * 4. 排序：首位原字、使用者曾選字最優先 (getBoost > 0)、字典權重降序
+     */
+    fun getHomophonesForChar(ch: Char, preferredZhuyin: String? = null): List<DictEntry> {
+        var zhuyins = charZhuyinMap[ch] ?: emptyList()
+        if (!preferredZhuyin.isNullOrEmpty()) {
+            val cleanPref = preferredZhuyin.filter { it !in "ˇˋˊ˙" }
+            val matched = zhuyins.find { it.filter { c -> c !in "ˇˋˊ˙" } == cleanPref }
+            if (matched != null) {
+                zhuyins = listOf(matched) + zhuyins.filter { it != matched }
+            } else {
+                zhuyins = listOf(preferredZhuyin) + zhuyins
+            }
+        }
         val seen = LinkedHashSet<String>()
 
         // 0. 優先使用正統同音字庫 (soundToCharMap)：注音完全相符或同韻同音節單字（依同聲調與權重優先排序）
         val pureSoundEntries = mutableListOf<DictEntry>()
+        val prefTone = preferredZhuyin?.find { it in "ˇˋˊ˙" }
         for (zy in zhuyins) {
             val cleanZy = zy.filter { it !in "ˇˋˊ˙" }
-            val toneChar = zy.find { it in "ˇˋˊ˙" }
+            val toneChar = prefTone ?: zy.find { it in "ˇˋˊ˙" }
             val entries = soundToCharMap[cleanZy]
             if (entries != null) {
                 val sorted = entries.sortedByDescending {
