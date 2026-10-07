@@ -1997,7 +1997,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
         btnPeriod.setOnClickListener {
             triggerHapticFeedback()
-            val sym = if (currentMode == KeyboardMode.NUMBER_SYM) ":" else if (isTraditionalMode()) "。" else "."
+            val sym = if (currentMode == KeyboardMode.NUMBER_SYM) "%" else if (isTraditionalMode()) "。" else "."
             commitSymbol(sym)
         }
     }
@@ -2203,7 +2203,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 btnQwertyToggle.visibility = View.VISIBLE
                 btnQwertyToggle.text = "( )"
                 if (::btnComma.isInitialized) btnComma.text = ","
-                if (::btnPeriod.isInitialized) btnPeriod.text = ":"
+                if (::btnPeriod.isInitialized) btnPeriod.text = "%"
 
                 update12KeyLabelsNumbers()
                 if (::btnSymAt.isInitialized) {
@@ -2277,7 +2277,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             btnComma.text = if (currentMode == KeyboardMode.NUMBER_SYM) "," else if (isTraditionalMode()) "，" else ","
         }
         if (::btnPeriod.isInitialized) {
-            btnPeriod.text = if (currentMode == KeyboardMode.NUMBER_SYM) ":" else if (isTraditionalMode()) "。" else "."
+            btnPeriod.text = if (currentMode == KeyboardMode.NUMBER_SYM) "%" else if (isTraditionalMode()) "。" else "."
         }
 
         if (!::btnSym1.isInitialized) return
