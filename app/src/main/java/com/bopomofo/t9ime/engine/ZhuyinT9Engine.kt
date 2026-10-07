@@ -582,13 +582,13 @@ class ZhuyinT9Engine(private val context: Context) {
             if (comboSet.size >= 16) break
         }
 
-        // 3. 【多音節組合候補】：對於 4 鍵以上長序列，若候選詞庫前綴不足，調用合法多音節組合生成器（如 [2,7,3,10] -> ㄊㄧㄍㄢ, ㄉㄧㄍㄢ）
-        if (phonemeKeyLen >= 4 && comboSet.size < 16) {
-            val multiCombos = SyllableManager.getMultiSyllableCombinations(cleanKeys, maxCount = 16)
+        // 3. 【多音節組合候補】：對於 4~6 鍵序列，若候選詞庫前綴組合不足，才調用合法多音節組合生成器（如 [4,6,2,3] -> ㄊㄧㄍㄢ）
+        if (phonemeKeyLen in 4..6 && comboSet.size < 6) {
+            val multiCombos = SyllableManager.getMultiSyllableCombinations(cleanKeys, maxCount = 8)
             for (combo in multiCombos) {
                 val label = if (toneChar != null) "$combo$toneChar" else combo
                 comboSet.add(label)
-                if (comboSet.size >= 16) break
+                if (comboSet.size >= 8) break
             }
         }
 

@@ -198,5 +198,18 @@ class EngineRankingFullTest {
         val multiCombos = SyllableManager.getMultiSyllableCombinations(listOf(4, 6, 2, 3))
         println("MultiCombos for [4, 6, 2, 3]: $multiCombos")
         assertTrue("MultiCombos should contain ㄊㄧㄍㄢ", multiCombos.contains("ㄊㄧㄍㄢ"))
+
+        // 效能壓力測試：
+        for (testKeys in listOf(
+            listOf(4, 6, 2, 3),
+            listOf(7, 6, 1, 8, 1, 6),
+            listOf(1, 9, 5, 2, 8, 6, 6),
+            listOf(3, 6, 7, 7, 10, 7)
+        )) {
+            val start = System.nanoTime()
+            val res = SyllableManager.getMultiSyllableCombinations(testKeys)
+            val costMs = (System.nanoTime() - start) / 1_000_000.0
+            println("Keys $testKeys cost: $costMs ms, found ${res.size} combos")
+        }
     }
 }

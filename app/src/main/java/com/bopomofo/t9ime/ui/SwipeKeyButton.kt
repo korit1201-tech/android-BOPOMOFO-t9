@@ -196,9 +196,6 @@ class SwipeKeyButton @JvmOverloads constructor(
                 activeDirection = null
                 isPressed = true
 
-                // 按鍵按壓微縮動畫
-                animate().scaleX(0.96f).scaleY(0.96f).setDuration(50).start()
-
                 // 長按 220ms 展開十字指南針預覽（快速敲擊 <220ms 絕不喚起彈窗）
                 removeCallbacks(showPopupRunnable)
                 postDelayed(showPopupRunnable, SHOW_POPUP_DELAY_MS)
@@ -227,7 +224,7 @@ class SwipeKeyButton @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP -> {
                 isPressed = false
-                animate().scaleX(1.0f).scaleY(1.0f).setDuration(60).start()
+                removeCallbacks(showPopupRunnable)
                 val selectedDir = activeDirection
 
                 // 核心關鍵：立即同步派發輸入事件（0 毫秒延遲，絕不等待動畫或異步回呼，杜絕快打時按鍵順序顛倒）
@@ -244,7 +241,7 @@ class SwipeKeyButton @JvmOverloads constructor(
             }
             MotionEvent.ACTION_CANCEL -> {
                 isPressed = false
-                animate().scaleX(1.0f).scaleY(1.0f).setDuration(60).start()
+                removeCallbacks(showPopupRunnable)
                 dismissPreviewPopup()
             }
         }
