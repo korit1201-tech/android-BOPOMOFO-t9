@@ -53,7 +53,7 @@ import com.bopomofo.t9ime.ui.SwipeKeyButton
 class ZhuyinInputMethodService : InputMethodService() {
 
     companion object {
-        private const val MAX_CANDIDATES_DISPLAY = 30
+        private const val MAX_CANDIDATES_DISPLAY = 20
         private const val CANDIDATE_BAR_PADDING_PX = 32
         private const val CANDIDATE_BAR_PADDING_VERTICAL_PX = 16
         private const val MAX_PHYSICAL_PAGE_SIZE = 9 // 實體鍵盤數字鍵 1~9 選字上限，絕不可超過 9
@@ -158,6 +158,8 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private var rootView: View? = null
     private var vibrator: Vibrator? = null
+    private var cachedVibrationEnabled = true
+    private var cachedVibrationStrength = 40
 
     private lateinit var btnMode123: Button
     private lateinit var btnLangToggle: Button
@@ -304,6 +306,9 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        // 快取震動設定，避免按鍵高頻輸入時讀取 SharedPreferences
+        cachedVibrationEnabled = PreferencesRepository.isVibrationEnabled(this)
+        cachedVibrationStrength = PreferencesRepository.getVibrationStrength(this).coerceIn(5, 100)
         // 每次彈出輸入法，即時檢測實體鍵盤是否依然在線，若已拔除則立即恢復虛擬鍵盤
         val hasPhysical = isPhysicalKeyboardPresent()
         if (!hasPhysical) {
@@ -385,9 +390,9 @@ class ZhuyinInputMethodService : InputMethodService() {
             updateHardwareKeyboardState()
         }
         try {
-            if (!PreferencesRepository.isVibrationEnabled(this)) return
+            if (!cachedVibrationEnabled) return
 
-            val baseStrength = PreferencesRepository.getVibrationStrength(this).coerceIn(5, 100)
+            val baseStrength = cachedVibrationStrength
 
             if (vibrator != null && vibrator?.hasVibrator() == true) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
