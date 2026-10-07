@@ -9,6 +9,7 @@
 
     <!-- 頂部：候選字列與常駐符號按鈕 -->
     <LinearLayout
+        android:id="@+id/layout_candidate_bar"
         android:layout_width="match_parent"
         android:layout_height="48dp"
         android:background="@color/kb_candidate_bg"

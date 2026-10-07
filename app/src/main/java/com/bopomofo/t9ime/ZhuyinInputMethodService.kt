@@ -35,6 +35,7 @@ import android.provider.Settings
 import android.view.HapticFeedbackConstants
 import android.hardware.input.InputManager
 import android.view.InputDevice
+import android.content.res.Configuration
 import androidx.core.content.ContextCompat
 import com.bopomofo.t9ime.engine.ChineseConverter
 import com.bopomofo.t9ime.engine.ClipboardHistoryManager
@@ -60,6 +61,9 @@ class ZhuyinInputMethodService : InputMethodService() {
         private const val KEYBOARD_MIN_HEIGHT_DP = 180
         private const val KEYBOARD_MAX_HEIGHT_DP = 380
         private const val KEYBOARD_DEFAULT_HEIGHT_DP = 240
+        private const val KEYBOARD_MIN_HEIGHT_LANDSCAPE_DP = 110
+        private const val KEYBOARD_MAX_HEIGHT_LANDSCAPE_DP = 220
+        private const val KEYBOARD_DEFAULT_HEIGHT_LANDSCAPE_DP = 145
     }
 
     enum class KeyboardMode {
@@ -152,6 +156,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     private lateinit var layoutMainFrame: FrameLayout
     private lateinit var layoutResizeHandle: FrameLayout
     private lateinit var layoutBottomBar: LinearLayout
+    private lateinit var layoutCandidateBar: LinearLayout
     private var isHardwareKeyboardConnected = false
     private lateinit var handwritingCanvas: com.bopomofo.t9ime.ui.HandwritingCanvasView
     private var googleRecognizer: com.bopomofo.t9ime.engine.GoogleHandwritingRecognizer? = null
@@ -299,9 +304,59 @@ class ZhuyinInputMethodService : InputMethodService() {
         googleRecognizer?.close()
     }
 
+    override fun onEvaluateFullscreenMode(): Boolean {
+        // 嚴格禁用全螢幕覆蓋模式（Extract Mode），確保橫向或多重視窗下原 App 背景完全可見，絕不霸佔全畫面
+        return false
+    }
+
+    override fun updateFullscreenMode() {
+        super.updateFullscreenMode()
+        // 同步關閉 ExtractView，防止 Android 系統自動插入全螢幕編輯框
+        setExtractViewShown(false)
+    }
+
     override fun onEvaluateInputViewShown(): Boolean {
         // 無論是否連接外接實體鍵盤，一律顯示 InputView 以呈現候選字列（相容實體鍵盤 48dp 迷你候選條）
         return true
+    }
+
+    /**
+     * 判定當前是否處於「手機手持狹窄橫向模式」（非平板、非外接大螢幕桌面模式）
+     * 條件：橫向 (LANDSCAPE) 且 螢幕垂直高度 < 500dp
+     */
+    private fun isPhoneLandscapeMode(): Boolean {
+        val conf = resources.configuration
+        return conf.orientation == Configuration.ORIENTATION_LANDSCAPE && conf.screenHeightDp < 500
+    }
+
+    /**
+     * 依當前顯示情境（手機直向、手機橫向、外接桌面/大螢幕）套用最適鍵盤高度與緊湊版面
+     */
+    private fun applyAdaptiveKeyboardHeight() {
+        if (!::layoutMainFrame.isInitialized || !::layoutCandidateBar.isInitialized || !::layoutBottomBar.isInitialized) return
+        val density = resources.displayMetrics.density
+        val isLandscape = isPhoneLandscapeMode()
+
+        if (isLandscape) {
+            val savedLandscapeDp = PreferencesRepository.getKeyboardHeightLandscapeDp(this)
+            val minHeightPx = (KEYBOARD_MIN_HEIGHT_LANDSCAPE_DP * density).toInt()
+            val maxHeightPx = (KEYBOARD_MAX_HEIGHT_LANDSCAPE_DP * density).toInt()
+            val heightPx = (savedLandscapeDp * density).toInt().coerceIn(minHeightPx, maxHeightPx)
+            layoutMainFrame.layoutParams.height = heightPx
+            layoutCandidateBar.layoutParams.height = (40 * density).toInt()
+            layoutBottomBar.layoutParams.height = (40 * density).toInt()
+        } else {
+            val savedDp = PreferencesRepository.getKeyboardHeightDp(this)
+            val minHeightPx = (KEYBOARD_MIN_HEIGHT_DP * density).toInt()
+            val maxHeightPx = (KEYBOARD_MAX_HEIGHT_DP * density).toInt()
+            val heightPx = (savedDp * density).toInt().coerceIn(minHeightPx, maxHeightPx)
+            layoutMainFrame.layoutParams.height = heightPx
+            layoutCandidateBar.layoutParams.height = (48 * density).toInt()
+            layoutBottomBar.layoutParams.height = (48 * density).toInt()
+        }
+        layoutMainFrame.requestLayout()
+        layoutCandidateBar.requestLayout()
+        layoutBottomBar.requestLayout()
     }
 
     override fun onStartInput(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
@@ -337,6 +392,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
         rootView?.let { root ->
             ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
+            applyAdaptiveKeyboardHeight()
             applyOneHandedMode()
             updateKeyboardModeUI()
             updateHardwareKeyboardState()
@@ -351,6 +407,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
         rootView?.let { root ->
             ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
+            applyAdaptiveKeyboardHeight()
             applyOneHandedMode()
             updateHardwareKeyboardState()
             if (isHardwareKeyboardConnected && currentCandidateList.isNotEmpty()) {
@@ -506,16 +563,20 @@ class ZhuyinInputMethodService : InputMethodService() {
         layoutMainFrame = root.findViewById(R.id.layout_main_frame)
         layoutResizeHandle = root.findViewById(R.id.layout_resize_handle)
         layoutBottomBar = root.findViewById(R.id.layout_bottom_bar)
+        layoutCandidateBar = root.findViewById(R.id.layout_candidate_bar)
         handwritingCanvas = root.findViewById(R.id.handwriting_canvas)
 
-        // 鍵盤高度拉伸調整（支援上下拖動自由縮放大小，預設 240dp）
-        val savedHeightDp = PreferencesRepository.getKeyboardHeightDp(this)
-        val density = resources.displayMetrics.density
-        layoutMainFrame.layoutParams.height = (savedHeightDp * density).toInt()
+        // 依當前直向/橫向動態套用鍵盤高度（手機橫向自適應緊湊預設 145dp，直向 240dp）
+        applyAdaptiveKeyboardHeight()
 
         var startY = 0f
         var startHeight = 0
         layoutResizeHandle.setOnTouchListener { _, event ->
+            val density = resources.displayMetrics.density
+            val isLandscape = isPhoneLandscapeMode()
+            val minHeightPx = if (isLandscape) (KEYBOARD_MIN_HEIGHT_LANDSCAPE_DP * density).toInt() else (KEYBOARD_MIN_HEIGHT_DP * density).toInt()
+            val maxHeightPx = if (isLandscape) (KEYBOARD_MAX_HEIGHT_LANDSCAPE_DP * density).toInt() else (KEYBOARD_MAX_HEIGHT_DP * density).toInt()
+
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     startY = event.rawY
@@ -525,8 +586,6 @@ class ZhuyinInputMethodService : InputMethodService() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val deltaY = startY - event.rawY // 向上拉 deltaY > 0 -> 高度放大
-                    val minHeightPx = (KEYBOARD_MIN_HEIGHT_DP * density).toInt()
-                    val maxHeightPx = (KEYBOARD_MAX_HEIGHT_DP * density).toInt()
                     val newHeight = (startHeight + deltaY).toInt().coerceIn(minHeightPx, maxHeightPx)
                     if (layoutMainFrame.height != newHeight) {
                         layoutMainFrame.layoutParams.height = newHeight
@@ -536,7 +595,11 @@ class ZhuyinInputMethodService : InputMethodService() {
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     val finalDp = (layoutMainFrame.height / density).toInt()
-                    PreferencesRepository.setKeyboardHeightDp(this, finalDp)
+                    if (isLandscape) {
+                        PreferencesRepository.setKeyboardHeightLandscapeDp(this, finalDp)
+                    } else {
+                        PreferencesRepository.setKeyboardHeightDp(this, finalDp)
+                    }
                     triggerHapticFeedback()
                     true
                 }

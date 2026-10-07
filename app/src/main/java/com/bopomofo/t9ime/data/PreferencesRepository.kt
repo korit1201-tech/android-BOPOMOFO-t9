@@ -15,6 +15,7 @@ object PreferencesRepository {
     const val KEY_VIBRATION_STRENGTH = "pref_vibration_strength"
     const val KEY_VIBRATION_MS = "pref_vibration_ms"
     const val KEY_KEYBOARD_HEIGHT_DP = "pref_keyboard_height_dp"
+    const val KEY_KEYBOARD_HEIGHT_LANDSCAPE_DP = "pref_keyboard_height_landscape_dp"
     const val KEY_ONE_HANDED_MODE = "pref_one_handed_mode"
     const val KEY_THEME = "pref_theme"
     const val KEY_TOLERANT_INPUT_ENABLED = "pref_tolerant_input_enabled"
@@ -24,6 +25,7 @@ object PreferencesRepository {
     const val DEFAULT_VIBRATION_STRENGTH = 30
     const val DEFAULT_VIBRATION_MS = 25
     const val DEFAULT_KEYBOARD_HEIGHT_DP = 240
+    const val DEFAULT_KEYBOARD_HEIGHT_LANDSCAPE_DP = 145
     const val DEFAULT_ONE_HANDED_MODE = "full"
     const val DEFAULT_THEME = "system"
     const val DEFAULT_TOLERANT_INPUT_ENABLED = true
@@ -89,6 +91,20 @@ object PreferencesRepository {
     fun setKeyboardHeightDp(context: Context, dp: Int) {
         try {
             getPrefs(context)?.edit()?.putInt(KEY_KEYBOARD_HEIGHT_DP, dp)?.apply()
+        } catch (_: Exception) {}
+    }
+
+    fun getKeyboardHeightLandscapeDp(context: Context): Int {
+        return try {
+            getPrefs(context)?.getInt(KEY_KEYBOARD_HEIGHT_LANDSCAPE_DP, DEFAULT_KEYBOARD_HEIGHT_LANDSCAPE_DP) ?: DEFAULT_KEYBOARD_HEIGHT_LANDSCAPE_DP
+        } catch (_: Exception) {
+            DEFAULT_KEYBOARD_HEIGHT_LANDSCAPE_DP
+        }
+    }
+
+    fun setKeyboardHeightLandscapeDp(context: Context, dp: Int) {
+        try {
+            getPrefs(context)?.edit()?.putInt(KEY_KEYBOARD_HEIGHT_LANDSCAPE_DP, dp)?.apply()
         } catch (_: Exception) {}
     }
 
