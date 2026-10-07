@@ -3147,9 +3147,12 @@ class ZhuyinInputMethodService : InputMethodService() {
         homophoneCharIndex = charIndex
         val targetChar = currentWord[charIndex]
         val userSyllable = composingSyllables.getOrNull(charIndex)
+            ?: if (fullZhuyinBuffer.isNotEmpty()) fullZhuyinBuffer.toString()
+            else engine.getComposingSyllableAt(charIndex)
+
         val homophones = if (!userSyllable.isNullOrEmpty()) {
             val list = engine.searchFullZhuyin(userSyllable).filter { it.word.length == 1 }
-            if (list.isNotEmpty()) list else engine.getHomophonesForChar(targetChar)
+            if (list.isNotEmpty()) list else engine.getHomophonesForChar(targetChar, userSyllable)
         } else {
             engine.getHomophonesForChar(targetChar)
         }
@@ -3458,7 +3461,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             val candidates = if (!userSyllable.isNullOrEmpty()) {
                 val fullMatches = engine.searchFullZhuyin(userSyllable)
                 val singleChars = fullMatches.filter { it.word.length == 1 }
-                if (singleChars.isNotEmpty()) singleChars else fullMatches
+                if (singleChars.isNotEmpty()) singleChars else engine.getHomophonesForChar(composingSentence[cursor], userSyllable)
             } else {
                 val targetChar = composingSentence[cursor]
                 engine.getHomophonesForChar(targetChar)

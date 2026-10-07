@@ -204,4 +204,67 @@ object SyllableManager {
     fun isValidSyllable(cleanZhuyin: String): Boolean {
         return cleanZhuyin in VALID_SYLLABLES_SET
     }
+
+    /**
+     * 將包含聲調或空格的完整注音字串切分為指定字數的合法音節（保留各字聲調）
+     * 例："ㄉㄚˋㄐㄧㄚ", 2 -> ["ㄉㄚˋ", "ㄐㄧㄚ"]
+     * 例："ㄉㄨˊ", 1 -> ["ㄉㄨˊ"]
+     * 例："ㄐㄧㄣ ㄊㄧㄢ", 2 -> ["ㄐㄧㄣ", "ㄊㄧㄢ"]
+     */
+    fun splitFullZhuyin(rawZhuyin: String, targetLength: Int): List<String>? {
+        if (rawZhuyin.isEmpty() || targetLength <= 0) return null
+        if (rawZhuyin.contains(" ")) {
+            val parts = rawZhuyin.split(" ").filter { it.isNotEmpty() }
+            if (parts.size == targetLength) return parts
+        }
+        if (targetLength == 1) {
+            val clean = rawZhuyin.filter { it !in "ˇˋˊ˙" }
+            if (isValidSyllable(clean)) {
+                return listOf(rawZhuyin)
+            }
+        }
+        val n = rawZhuyin.length
+        val tones = setOf('ˇ', 'ˋ', 'ˊ', '˙')
+        fun backtrack(idx: Int, count: Int): MutableList<String>? {
+            if (idx == n && count == targetLength) return ArrayList(targetLength)
+            if (idx >= n || count >= targetLength) return null
+            for (subLen in 3 downTo 1) {
+                if (idx + subLen <= n) {
+                    val sylPart = rawZhuyin.substring(idx, idx + subLen)
+                    if (sylPart.any { it in tones }) continue
+                    if (VALID_SYLLABLES_SET.contains(sylPart)) {
+                        val nextIdx = idx + subLen
+                        val hasTone = nextIdx < n && rawZhuyin[nextIdx] in tones
+                        val step = subLen + if (hasTone) 1 else 0
+                        val rem = backtrack(idx + step, count + 1)
+                        if (rem != null) {
+                            rem.add(0, rawZhuyin.substring(idx, idx + step))
+                            return rem
+                        }
+                    }
+                }
+            }
+            return null
+        }
+        val result = backtrack(0, 0)
+        if (result != null) return result
+
+        // 保底：若合法音節集合未覆蓋特殊音（如 ㄆㄨㄥ 等），嘗試以 cleanZhuyin 切分後映射長度
+        val clean = rawZhuyin.filter { it !in "ˇˋˊ˙" }
+        val cleanSplit = splitIntoSyllables(clean, targetLength)
+        if (cleanSplit != null && cleanSplit.size == targetLength) {
+            val out = mutableListOf<String>()
+            var rawIdx = 0
+            for (s in cleanSplit) {
+                val start = rawIdx
+                rawIdx += s.length
+                if (rawIdx < n && rawZhuyin[rawIdx] in tones) {
+                    rawIdx++
+                }
+                out.add(rawZhuyin.substring(start, rawIdx))
+            }
+            return out
+        }
+        return null
+    }
 }
