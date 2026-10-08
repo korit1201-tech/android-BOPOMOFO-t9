@@ -388,7 +388,9 @@ class ZhuyinInputMethodService : InputMethodService() {
         cachedVibrationStrength = PreferencesRepository.getVibrationStrength(this).coerceIn(5, 100)
         // 每次彈出輸入法，即時檢測實體鍵盤是否依然在線，若已拔除則立即恢復虛擬鍵盤
         val hasPhysical = isPhysicalKeyboardPresent()
-        if (!hasPhysical) {
+        if (hasPhysical) {
+            isHardwareKeyboardConnected = true
+        } else {
             isHardwareKeyboardConnected = false
         }
         rootView?.let { root ->
@@ -3268,20 +3270,32 @@ class ZhuyinInputMethodService : InputMethodService() {
                         clearCandidateBar()
                         return@setOnClickListener
                     }
-                    // 實體鍵盤改字模式點選
-                    if (isSentenceSelecting && sentenceCursor < composingSentence.length) {
-                        val chosenChar = entry.word[0].toString()
-                        composingSentence.setCharAt(sentenceCursor, chosenChar[0])
-                        pinnedSentenceChars[sentenceCursor] = chosenChar
-                        physicalCandidatePageIndex = 0
-                        if (sentenceCursor < composingSentence.length - 1) {
-                            sentenceCursor++
+                    // 實體鍵盤改字與選字模式點選
+                    if (isSentenceSelecting) {
+                        if (sentenceCursor < composingSentence.length) {
+                            val chosenChar = entry.word[0].toString()
+                            pinnedSentenceChars[sentenceCursor] = chosenChar
+                            val nextCursor = if (sentenceCursor < composingSentence.length - 1) sentenceCursor + 1 else composingSentence.length
+                            val stillSelecting = nextCursor < composingSentence.length
+                            recalculateSentenceFromSyllables(skipUiUpdate = true)
+                            sentenceCursor = nextCursor
+                            isSentenceSelecting = stillSelecting
+                            physicalCandidatePageIndex = 0
+                            updateComposingDisplay()
+                            return@setOnClickListener
                         } else {
+                            composingSentence.clear()
+                            composingSentence.append(entry.word)
+                            pinnedSentenceChars.clear()
+                            for (idx in entry.word.indices) {
+                                pinnedSentenceChars[idx] = entry.word[idx].toString()
+                            }
                             sentenceCursor = composingSentence.length
                             isSentenceSelecting = false
+                            physicalCandidatePageIndex = 0
+                            updateComposingDisplay()
+                            return@setOnClickListener
                         }
-                        updateComposingDisplay()
-                        return@setOnClickListener
                     }
                     if (isHomophoneSelectionMode) {
                         if (entry.word.startsWith("✔")) {
@@ -3661,7 +3675,8 @@ class ZhuyinInputMethodService : InputMethodService() {
             val candidates = if (!userSyllable.isNullOrEmpty()) {
                 val fullMatches = engine.searchFullZhuyin(userSyllable)
                 val singleChars = fullMatches.filter { it.word.length == 1 }
-                if (singleChars.isNotEmpty()) singleChars else engine.getHomophonesForChar(composingSentence[cursor], userSyllable)
+                val homophones = engine.getHomophonesForChar(composingSentence[cursor], userSyllable)
+                (singleChars + homophones).distinctBy { it.word }
             } else {
                 val targetChar = composingSentence[cursor]
                 engine.getHomophonesForChar(targetChar)
@@ -3673,7 +3688,18 @@ class ZhuyinInputMethodService : InputMethodService() {
         } else if (composingSentence.isNotEmpty()) {
             val currentSentenceStr = composingSentence.toString()
             val topEntry = DictEntry(currentSentenceStr, composingSyllables.joinToString(" "), 999_999_999)
-            updateCandidateBar(listOf(topEntry))
+            val cleanKey = composingSyllables.joinToString("") { it.filter { c -> c !in "ˇˋˊ˙ " } }
+            val exactWords = if (cleanKey.isNotEmpty()) engine.getExactZhuyinWords(cleanKey) else emptyList()
+            val candidates = if (composingSyllables.size == 1) {
+                val singleSyllable = composingSyllables[0]
+                val singleMatches = engine.searchFullZhuyin(singleSyllable).filter { it.word.length == 1 }
+                val homophones = if (currentSentenceStr.isNotEmpty()) engine.getHomophonesForChar(currentSentenceStr[0], singleSyllable) else emptyList()
+                val singleCandidates = (singleMatches + homophones).distinctBy { it.word }
+                (listOf(topEntry) + singleCandidates + exactWords).distinctBy { it.word }.take(40)
+            } else {
+                (listOf(topEntry) + exactWords).distinctBy { it.word }.take(40)
+            }
+            updateCandidateBar(candidates)
         } else {
             clearCandidateBar()
         }
@@ -3726,9 +3752,20 @@ class ZhuyinInputMethodService : InputMethodService() {
 
         // 2. 若當前沒有正在拼寫的注音，但音節序列不為空：刪除游標前方的音節與漢字
         if (composingSyllables.isNotEmpty()) {
-            val lastIdx = composingSyllables.size - 1
-            composingSyllables.removeAt(lastIdx)
-            pinnedSentenceChars.remove(lastIdx)
+            val delIdx = if (isSentenceSelecting && sentenceCursor in 0 until composingSyllables.size) {
+                sentenceCursor
+            } else {
+                composingSyllables.size - 1
+            }
+            composingSyllables.removeAt(delIdx)
+            pinnedSentenceChars.remove(delIdx)
+            val newPinned = mutableMapOf<Int, String>()
+            for ((k, v) in pinnedSentenceChars) {
+                if (k < delIdx) newPinned[k] = v
+                else if (k > delIdx) newPinned[k - 1] = v
+            }
+            pinnedSentenceChars.clear()
+            pinnedSentenceChars.putAll(newPinned)
             recalculateSentenceFromSyllables()
             return true
         }
@@ -3809,26 +3846,30 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun handlePhysicalDpadDown(): Boolean {
-        // 1. 若當前有整句且尚未進入選字，按下方向鍵下直接進入末字改字選字模式
+        // 1. 若當前有注音未結算，結算入句
+        if (fullZhuyinBuffer.isNotEmpty()) {
+            commitCurrentSyllableToSentence(toneChar = null)
+        }
+
+        // 2. 若當前已有句子且尚未進入選字，按下方向鍵下直接進入選字模式（游標在句尾可選整詞，按左鍵可選單字）
         if (!isSentenceSelecting && composingSentence.isNotEmpty()) {
-            if (fullZhuyinBuffer.isNotEmpty()) {
-                commitCurrentSyllableToSentence(toneChar = null)
-            }
-            sentenceCursor = (composingSentence.length - 1).coerceAtLeast(0)
+            sentenceCursor = composingSentence.length
             isSentenceSelecting = true
             physicalCandidatePageIndex = 0
             updateComposingDisplay()
             return true
         }
 
-        // 2. 實體鍵盤改字與選字分頁：按向下鍵翻至下一頁候選字
-        if (physicalCandidatePages.isNotEmpty()) {
-            val totalPages = physicalCandidatePages.size
-            if (physicalCandidatePageIndex + 1 < totalPages) {
-                physicalCandidatePageIndex++
-                updateCandidateBar(currentCandidateList)
-                return true
+        // 3. 實體鍵盤改字與選字分頁：按向下鍵在各分頁間循環翻頁
+        if (isSentenceSelecting) {
+            if (physicalCandidatePages.isNotEmpty()) {
+                val totalPages = physicalCandidatePages.size
+                if (totalPages > 1) {
+                    physicalCandidatePageIndex = (physicalCandidatePageIndex + 1) % totalPages
+                    updateCandidateBar(currentCandidateList)
+                }
             }
+            return true
         }
         return false
     }
@@ -3857,23 +3898,34 @@ class ZhuyinInputMethodService : InputMethodService() {
         val itemIndex = number - 1
         val chosen = currentPage.getOrNull(itemIndex) ?: currentCandidateList.getOrNull(itemIndex) ?: return false
 
-        // 1. 若處於整句游標回退改字模式
-        if (isSentenceSelecting && sentenceCursor < composingSentence.length) {
-            val newChar = chosen.word[0].toString()
-            composingSentence.setCharAt(sentenceCursor, newChar[0])
-            // 手動選字鎖定：記錄此位置人工選定之字，避免後續動態規劃被覆蓋
-            pinnedSentenceChars[sentenceCursor] = newChar
-            physicalCandidatePageIndex = 0
-
-            // 經典新酷音體驗：改完後游標自動向右跳一格！
-            if (sentenceCursor < composingSentence.length - 1) {
-                sentenceCursor++
+        // 1. 若處於整句選字/改字模式
+        if (isSentenceSelecting) {
+            if (sentenceCursor < composingSentence.length) {
+                // 逐字改字模式：替換游標所在單字
+                val newChar = chosen.word[0].toString()
+                pinnedSentenceChars[sentenceCursor] = newChar
+                val nextCursor = if (sentenceCursor < composingSentence.length - 1) sentenceCursor + 1 else composingSentence.length
+                val stillSelecting = nextCursor < composingSentence.length
+                recalculateSentenceFromSyllables(skipUiUpdate = true)
+                sentenceCursor = nextCursor
+                isSentenceSelecting = stillSelecting
+                physicalCandidatePageIndex = 0
+                updateComposingDisplay()
+                return true
             } else {
+                // 整詞/整句選字模式：替換整詞
+                composingSentence.clear()
+                composingSentence.append(chosen.word)
+                pinnedSentenceChars.clear()
+                for (idx in chosen.word.indices) {
+                    pinnedSentenceChars[idx] = chosen.word[idx].toString()
+                }
                 sentenceCursor = composingSentence.length
                 isSentenceSelecting = false
+                physicalCandidatePageIndex = 0
+                updateComposingDisplay()
+                return true
             }
-            updateComposingDisplay()
-            return true
         }
 
         // 2. 符號前導模式
@@ -4046,6 +4098,9 @@ class ZhuyinInputMethodService : InputMethodService() {
         if (!isHardwareKeyboardConnected) {
             isHardwareKeyboardConnected = true
             updateHardwareKeyboardState()
+        }
+        if (!isInputViewShown) {
+            requestShowSelf(0)
         }
 
         // 1. Shift 鍵按下標記

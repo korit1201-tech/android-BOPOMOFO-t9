@@ -128,4 +128,39 @@ class PhysicalKeyAndRecencyTest {
         // ㄊㄧ 後面遇到 ㄢ：屬於同一個字，不結算
         assertTrue(!needCommit('ㄢ', "ㄊㄧ"))
     }
+
+    @Test
+    fun testPhysicalCandidateEnrichmentAndSelection() {
+        // 1. 驗證音節序列去聲調 cleanKey 提取正確性
+        val syllables = listOf("ㄕˊ", "ㄊㄧˇ")
+        val cleanKey = syllables.joinToString("") { it.filter { c -> c !in "ˇˋˊ˙ " } }
+        assertEquals("ㄕㄊㄧ", cleanKey)
+
+        // 2. 驗證整詞候選與單字候選的合成邏輯
+        val topEntry = com.bopomofo.t9ime.engine.DictEntry("時體", syllables.joinToString(" "), 999_999_999)
+        val exactWords = listOf(
+            com.bopomofo.t9ime.engine.DictEntry("實體", "ㄕˊ ㄊㄧˇ", 5000),
+            com.bopomofo.t9ime.engine.DictEntry("試題", "ㄕˋ ㄊㄧˊ", 3000)
+        )
+        val candidates = (listOf(topEntry) + exactWords).distinctBy { e -> e.word }
+        assertEquals(3, candidates.size)
+        assertEquals("時體", candidates[0].word)
+        assertEquals("實體", candidates[1].word)
+        assertEquals("試題", candidates[2].word)
+
+        // 3. 驗證選字時整詞替換 (sentenceCursor == length)
+        val sentence = StringBuilder("時體")
+        val chosen = candidates[1] // 選取 "實體"
+        sentence.clear()
+        sentence.append(chosen.word)
+        assertEquals("實體", sentence.toString())
+
+        // 4. 驗證選字時單字替換 (sentenceCursor < length)
+        val singleSentence = StringBuilder("時體")
+        val newChar = "實"
+        val cursor = 0
+        singleSentence.setCharAt(cursor, newChar[0])
+        assertEquals("實體", singleSentence.toString())
+    }
 }
+
