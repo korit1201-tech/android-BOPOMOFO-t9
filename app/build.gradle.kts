@@ -11,8 +11,8 @@ android {
         applicationId = "com.bopomofo.t9ime"
         minSdk = 24
         targetSdk = 34
-        versionCode = 60
-        versionName = "2.3.10"
+        versionCode = 61
+        versionName = "2.3.11"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

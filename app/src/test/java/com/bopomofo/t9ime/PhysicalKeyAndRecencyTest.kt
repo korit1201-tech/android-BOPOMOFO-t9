@@ -103,4 +103,29 @@ class PhysicalKeyAndRecencyTest {
         val canSelectAfterDirectionKey = directionKeyModifiedSelecting || normalTypingGrid || normalTypingHomophone || normalTypingSymbol
         assertTrue("用方向鍵叫出修改時，必須啟用數字選字", canSelectAfterDirectionKey)
     }
+
+    @Test
+    fun testSyllableBoundaryDetection() {
+        val initials = "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙ"
+        val finals = "ㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ"
+        fun needCommit(ch: Char, buf: String): Boolean = when {
+            ch in initials -> buf.isNotEmpty()
+            ch in "ㄧㄨㄩ" -> buf.any { it in "ㄧㄨㄩ" || it in finals }
+            ch in finals -> buf.any { it in finals }
+            else -> false
+        }
+
+        // ㄓ 後面遇到 ㄉ（知道）：必須立即結算 ㄓ，絕不能黏成 ㄓㄉ！
+        assertTrue(needCommit('ㄉ', "ㄓ"))
+        // ㄕ 後面遇到 ㄊ（實體）：必須立即結算 ㄕ！
+        assertTrue(needCommit('ㄊ', "ㄕ"))
+        // ㄧ 後面遇到 ㄈ（衣服）：必須立即結算 ㄧ！
+        assertTrue(needCommit('ㄈ', "ㄧ"))
+        // ㄊㄧㄢ 後面遇到 ㄑ（天氣）：必須立即結算 ㄊㄧㄢ！
+        assertTrue(needCommit('ㄑ', "ㄊㄧㄢ"))
+        // ㄊ 後面遇到 ㄧ：屬於同一個字，不結算
+        assertTrue(!needCommit('ㄧ', "ㄊ"))
+        // ㄊㄧ 後面遇到 ㄢ：屬於同一個字，不結算
+        assertTrue(!needCommit('ㄢ', "ㄊㄧ"))
+    }
 }

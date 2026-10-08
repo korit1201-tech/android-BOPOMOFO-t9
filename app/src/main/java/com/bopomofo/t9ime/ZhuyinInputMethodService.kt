@@ -3671,21 +3671,9 @@ class ZhuyinInputMethodService : InputMethodService() {
             val candidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString())
             updateCandidateBar(candidates)
         } else if (composingSentence.isNotEmpty()) {
-            val fullSyllablesKey = composingSyllables.joinToString("")
-            val rawCandidates = if (fullSyllablesKey.isNotEmpty()) {
-                engine.searchFullZhuyin(fullSyllablesKey)
-            } else {
-                emptyList()
-            }
             val currentSentenceStr = composingSentence.toString()
-            val candidates = if (currentSentenceStr.isNotEmpty()) {
-                val existing = rawCandidates.find { it.word == currentSentenceStr }
-                val topEntry = existing ?: DictEntry(currentSentenceStr, fullSyllablesKey, 999_999_999)
-                listOf(topEntry) + rawCandidates.filter { it.word != currentSentenceStr }
-            } else {
-                rawCandidates
-            }
-            updateCandidateBar(candidates)
+            val topEntry = DictEntry(currentSentenceStr, composingSyllables.joinToString(" "), 999_999_999)
+            updateCandidateBar(listOf(topEntry))
         } else {
             clearCandidateBar()
         }
@@ -3694,12 +3682,12 @@ class ZhuyinInputMethodService : InputMethodService() {
     /**
      * 依據已輸入之音節序列（如 ["ㄓ", "ㄉㄠˋ"]）與手動選字釘住紀錄，重新動態規劃計算最佳整句
      */
-    private fun recalculateSentenceFromSyllables() {
+    private fun recalculateSentenceFromSyllables(skipUiUpdate: Boolean = false) {
         if (composingSyllables.isEmpty()) {
             composingSentence.clear()
             sentenceCursor = 0
             isSentenceSelecting = false
-            updateComposingDisplay()
+            if (!skipUiUpdate) updateComposingDisplay()
             return
         }
 
@@ -3709,16 +3697,16 @@ class ZhuyinInputMethodService : InputMethodService() {
         composingSentence.clear()
         composingSentence.append(combined)
         sentenceCursor = composingSentence.length
-        updateComposingDisplay()
+        if (!skipUiUpdate) updateComposingDisplay()
     }
 
-    private fun commitCurrentSyllableToSentence(toneChar: Char? = null) {
+    private fun commitCurrentSyllableToSentence(toneChar: Char? = null, skipUiUpdate: Boolean = false) {
         if (fullZhuyinBuffer.isEmpty()) return
         val zy = if (toneChar != null) fullZhuyinBuffer.toString() + toneChar else fullZhuyinBuffer.toString()
         composingSyllables.add(zy)
         fullZhuyinBuffer.clear()
         isSentenceSelecting = false
-        recalculateSentenceFromSyllables()
+        recalculateSentenceFromSyllables(skipUiUpdate = skipUiUpdate)
     }
 
     private fun handlePhysicalBackspace(): Boolean {
@@ -4028,15 +4016,19 @@ class ZhuyinInputMethodService : InputMethodService() {
             return false
         }
 
-        // 2. 連打組詞切換：若當前已包含韻母，此時又輸入了聲母（如 ㄅㄆㄇ...），代表上一字已完成
-        if (ch in ZHUYIN_INITIALS) {
-            val hasFinal = fullZhuyinBuffer.any { it in ZHUYIN_FINALS }
-            val hasInitial = fullZhuyinBuffer.any { it in ZHUYIN_INITIALS }
-            val hasMedial = fullZhuyinBuffer.any { it in "ㄧㄨㄩ" }
-            if (hasFinal || (hasInitial && hasMedial)) {
-                // 自動以一聲結算前一字
-                commitCurrentSyllableToSentence(toneChar = null)
-            }
+        // 2. 連打組詞切換：音節邊界嚴格判定（遵循教育部國語注音音節規則）
+        // A. 聲母 (ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙ)：一個音節絕不可有第二個聲母！
+        //    只要 buffer 內已有任何符號，新聲母必定屬於下一個字，立即以一聲結算前字！
+        // B. 介母 (ㄧㄨㄩ)：若 buffer 內已有介母或韻母，新介母必定屬於下一個字！
+        // C. 韻母 (ㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ)：若 buffer 內已有韻母，新韻母必定屬於下一個字！
+        val needCommitPrevious = when {
+            ch in ZHUYIN_INITIALS -> fullZhuyinBuffer.isNotEmpty()
+            ch in "ㄧㄨㄩ" -> fullZhuyinBuffer.any { it in "ㄧㄨㄩ" || it in ZHUYIN_FINALS }
+            ch in ZHUYIN_FINALS -> fullZhuyinBuffer.any { it in ZHUYIN_FINALS }
+            else -> false
+        }
+        if (needCommitPrevious) {
+            commitCurrentSyllableToSentence(toneChar = null, skipUiUpdate = true)
         }
 
         // 3. 將注音符號加入緩衝區
