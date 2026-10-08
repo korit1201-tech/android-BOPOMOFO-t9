@@ -3670,7 +3670,20 @@ class ZhuyinInputMethodService : InputMethodService() {
             val candidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString())
             updateCandidateBar(candidates)
         } else if (composingSentence.isNotEmpty()) {
-            val candidates = engine.searchFullZhuyin(composingSentence.toString())
+            val fullSyllablesKey = composingSyllables.joinToString("")
+            val rawCandidates = if (fullSyllablesKey.isNotEmpty()) {
+                engine.searchFullZhuyin(fullSyllablesKey)
+            } else {
+                emptyList()
+            }
+            val currentSentenceStr = composingSentence.toString()
+            val candidates = if (currentSentenceStr.isNotEmpty()) {
+                val existing = rawCandidates.find { it.word == currentSentenceStr }
+                val topEntry = existing ?: DictEntry(currentSentenceStr, fullSyllablesKey, 999_999_999)
+                listOf(topEntry) + rawCandidates.filter { it.word != currentSentenceStr }
+            } else {
+                rawCandidates
+            }
             updateCandidateBar(candidates)
         } else {
             clearCandidateBar()
@@ -3853,11 +3866,9 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
         val currentPage = physicalCandidatePages.getOrElse(physicalCandidatePageIndex) { emptyList() }
         val itemIndex = number - 1
-        if (itemIndex < 0 || itemIndex >= currentPage.size) {
-            return false
-        }
-        val chosen = currentPage[itemIndex]
+        val chosen = currentPage.getOrNull(itemIndex) ?: currentCandidateList.getOrNull(itemIndex) ?: return false
 
+        // 1. 若處於整句游標回退改字模式
         if (isSentenceSelecting && sentenceCursor < composingSentence.length) {
             val newChar = chosen.word[0].toString()
             composingSentence.setCharAt(sentenceCursor, newChar[0])
@@ -3875,7 +3886,34 @@ class ZhuyinInputMethodService : InputMethodService() {
             updateComposingDisplay()
             return true
         }
-        return false
+
+        // 2. 符號前導模式
+        if (isSymbolLeadMode) {
+            isSymbolLeadMode = false
+            val symbolText = chosen.word.substringBefore("(")
+            handlePhysicalEnter()
+            commitTextDirectly(symbolText)
+            updateComposingDisplay()
+            return true
+        }
+
+        // 3. 同音字選字模式
+        if (isHomophoneSelectionMode) {
+            if (chosen.word.startsWith("✔")) {
+                exitHomophoneSelectionMode()
+            } else {
+                applyHomophoneReplacement(chosen)
+            }
+            return true
+        }
+
+        // 4. 一般輸入候選詞選字：使用者看頂部候選列（1. 2. 3. ...）按數字鍵直接選取上屏！
+        triggerHapticFeedback(HapticType.COMMIT)
+        if (isCandidateGridOpen) {
+            closeCandidateGrid()
+        }
+        selectCandidate(chosen)
+        return true
     }
 
     /**
@@ -4206,9 +4244,18 @@ class ZhuyinInputMethodService : InputMethodService() {
                 if (handlePhysicalDpadUp()) return true
             }
 
-            // 數字鍵選字：若正在改字模式，1~9 直接替換當前字
-            if (isSentenceSelecting && keyCode in KeyEvent.KEYCODE_1..KeyEvent.KEYCODE_9) {
-                val num = keyCode - KeyEvent.KEYCODE_1 + 1
+            // 數字鍵選字：若正在改字模式、格柵展開、同音字模式、符號引導，或當前音節已結算(注音緩衝區空)且候選列有字
+            val hasCandidates = currentCandidateList.isNotEmpty() || physicalCandidatePages.isNotEmpty()
+            val canSelectCandidateByNumber = isSentenceSelecting ||
+                    isCandidateGridOpen ||
+                    isHomophoneSelectionMode ||
+                    isSymbolLeadMode ||
+                    (fullZhuyinBuffer.isEmpty() && hasCandidates)
+
+            val isNumpad = keyCode in KeyEvent.KEYCODE_NUMPAD_1..KeyEvent.KEYCODE_NUMPAD_9
+            val isMainDigit = keyCode in KeyEvent.KEYCODE_1..KeyEvent.KEYCODE_9
+            if ((isNumpad || canSelectCandidateByNumber) && (isMainDigit || isNumpad)) {
+                val num = if (isNumpad) keyCode - KeyEvent.KEYCODE_NUMPAD_1 + 1 else keyCode - KeyEvent.KEYCODE_1 + 1
                 if (handlePhysicalNumberSelect(num)) return true
             }
 

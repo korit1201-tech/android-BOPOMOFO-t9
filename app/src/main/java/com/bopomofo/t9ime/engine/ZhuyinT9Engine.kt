@@ -1421,7 +1421,7 @@ class ZhuyinT9Engine(private val context: Context) {
                         } else if (len == 1) {
                             listOf(entry.zhuyin)
                         } else {
-                            emptyList()
+                            SyllableManager.splitFullZhuyin(entry.zhuyin, len) ?: emptyList()
                         }
 
                         if (entryZhuyinList.size == len) {
