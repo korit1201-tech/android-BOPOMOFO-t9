@@ -3180,7 +3180,8 @@ class ZhuyinInputMethodService : InputMethodService() {
 
             val isZhuyinHeader = (!isHardwareKeyboardConnected && currentMode == KeyboardMode.ZHUYIN_FULL && entry.word.startsWith("【") && entry.word.endsWith("】")) || (isSymbolLeadMode && i == 0)
             val rawWord = if (isSimplified && !isPageIndicator) ChineseConverter.toSimplified(entry.word) else entry.word
-            val displayWord = if (isPhysicalMode && !isZhuyinHeader && !isPageIndicator && !isSymbolLeadMode && i < 9) {
+            val isSelectingState = isSentenceSelecting || isCandidateGridOpen || isHomophoneSelectionMode || isSymbolLeadMode
+            val displayWord = if (isPhysicalMode && isSelectingState && !isZhuyinHeader && !isPageIndicator && !isSymbolLeadMode && i < 9) {
                 "${i + 1}. $rawWord"
             } else {
                 rawWord
@@ -4244,17 +4245,18 @@ class ZhuyinInputMethodService : InputMethodService() {
                 if (handlePhysicalDpadUp()) return true
             }
 
-            // 數字鍵選字：若正在改字模式、格柵展開、同音字模式、符號引導，或當前音節已結算(注音緩衝區空)且候選列有字
-            val hasCandidates = currentCandidateList.isNotEmpty() || physicalCandidatePages.isNotEmpty()
-            val canSelectCandidateByNumber = isSentenceSelecting ||
+            // 數字鍵選字：比照 PIME / 微軟新注音標準行為
+            // 只有在用方向鍵叫出修改 (isSentenceSelecting)、候選格柵展開 (isCandidateGridOpen)、
+            // 同音字模式 (isHomophoneSelectionMode) 或符號引導 (isSymbolLeadMode) 時，數字鍵 1~9 才作為選字鍵！
+            // 平常打字輸入時，主鍵盤 1~9 100% 作為大千注音（1:ㄅ, 2:ㄉ, 3:ˇ, 4:ˋ, 5:ㄓ, 6:ˊ, 7:˙, 8:ㄚ, 9:ㄞ, 0:ㄢ），絕不攔截打字！
+            val isSelectingState = isSentenceSelecting ||
                     isCandidateGridOpen ||
                     isHomophoneSelectionMode ||
-                    isSymbolLeadMode ||
-                    (fullZhuyinBuffer.isEmpty() && hasCandidates)
+                    isSymbolLeadMode
 
             val isNumpad = keyCode in KeyEvent.KEYCODE_NUMPAD_1..KeyEvent.KEYCODE_NUMPAD_9
             val isMainDigit = keyCode in KeyEvent.KEYCODE_1..KeyEvent.KEYCODE_9
-            if ((isNumpad || canSelectCandidateByNumber) && (isMainDigit || isNumpad)) {
+            if ((isNumpad || isSelectingState) && (isMainDigit || isNumpad)) {
                 val num = if (isNumpad) keyCode - KeyEvent.KEYCODE_NUMPAD_1 + 1 else keyCode - KeyEvent.KEYCODE_1 + 1
                 if (handlePhysicalNumberSelect(num)) return true
             }

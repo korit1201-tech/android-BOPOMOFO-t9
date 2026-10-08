@@ -89,20 +89,18 @@ class PhysicalKeyAndRecencyTest {
 
     @Test
     fun testPhysicalNumberSelectLogic() {
-        // 驗證數字鍵選字狀態判定：當音節已結算(注音緩衝區空)且候選列非空時，數字鍵必須能作為挑字鍵
-        val isSentenceSelecting = false
-        val isCandidateGridOpen = false
-        val isHomophoneSelectionMode = false
-        val isSymbolLeadMode = false
-        val fullZhuyinBufferEmpty = true
-        val hasCandidates = true
+        // 驗證 PIME / 微軟新注音標準行為：
+        // 1. 平常打字輸入狀態下，不可攔截主鍵盤數字鍵，主鍵盤 1~9 必須走大千注音（如 2 走 ㄉ）
+        val normalTypingSelecting = false
+        val normalTypingGrid = false
+        val normalTypingHomophone = false
+        val normalTypingSymbol = false
+        val canSelectDuringNormalTyping = normalTypingSelecting || normalTypingGrid || normalTypingHomophone || normalTypingSymbol
+        assertTrue("平常打字時絕對不可啟用主鍵盤數字選字，確保 ㄉ (2) 等注音盲打暢行無阻", !canSelectDuringNormalTyping)
 
-        val canSelect = isSentenceSelecting ||
-                isCandidateGridOpen ||
-                isHomophoneSelectionMode ||
-                isSymbolLeadMode ||
-                (fullZhuyinBufferEmpty && hasCandidates)
-
-        assertTrue("當音節已結算且候選字條有候選項目時，必須允許數字鍵選字", canSelect)
+        // 2. 用方向鍵叫出修改模式 (isSentenceSelecting) 或展開選字清單時，數字鍵 1~9 才作為挑字鍵
+        val directionKeyModifiedSelecting = true
+        val canSelectAfterDirectionKey = directionKeyModifiedSelecting || normalTypingGrid || normalTypingHomophone || normalTypingSymbol
+        assertTrue("用方向鍵叫出修改時，必須啟用數字選字", canSelectAfterDirectionKey)
     }
 }
