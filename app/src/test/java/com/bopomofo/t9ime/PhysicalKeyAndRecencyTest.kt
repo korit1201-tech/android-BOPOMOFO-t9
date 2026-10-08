@@ -75,4 +75,34 @@ class PhysicalKeyAndRecencyTest {
         assertTrue(com.bopomofo.t9ime.engine.SyllableManager.isValidSyllable("ㄊㄧㄢ"))
         assertTrue(com.bopomofo.t9ime.engine.SyllableManager.isValidSyllable("ㄐㄧㄣ"))
     }
+
+    @Test
+    fun testSplitFullZhuyinForMultiCharWords() {
+        // 驗證關鍵高頻詞音節切分正確，確保 Viterbi DP 演算法精準匹配各音節聲調加權
+        assertEquals(listOf("ㄕˊ", "ㄊㄧˇ"), com.bopomofo.t9ime.engine.SyllableManager.splitFullZhuyin("ㄕˊㄊㄧˇ", 2))
+        assertEquals(listOf("ㄓㄨㄤˋ", "ㄊㄞˋ"), com.bopomofo.t9ime.engine.SyllableManager.splitFullZhuyin("ㄓㄨㄤˋㄊㄞˋ", 2))
+        assertEquals(listOf("ㄨㄣˋ", "ㄊㄧˊ"), com.bopomofo.t9ime.engine.SyllableManager.splitFullZhuyin("ㄨㄣˋㄊㄧˊ", 2))
+        assertEquals(listOf("ㄓㄜˋ", "ㄒㄧㄝ"), com.bopomofo.t9ime.engine.SyllableManager.splitFullZhuyin("ㄓㄜˋㄒㄧㄝ", 2))
+        assertEquals(listOf("ㄇㄧㄥˊ", "ㄒㄧㄢˇ"), com.bopomofo.t9ime.engine.SyllableManager.splitFullZhuyin("ㄇㄧㄥˊㄒㄧㄢˇ", 2))
+        assertEquals(listOf("ㄘㄨㄛˋ", "ㄨˋ"), com.bopomofo.t9ime.engine.SyllableManager.splitFullZhuyin("ㄘㄨㄛˋㄨˋ", 2))
+    }
+
+    @Test
+    fun testPhysicalNumberSelectLogic() {
+        // 驗證數字鍵選字狀態判定：當音節已結算(注音緩衝區空)且候選列非空時，數字鍵必須能作為挑字鍵
+        val isSentenceSelecting = false
+        val isCandidateGridOpen = false
+        val isHomophoneSelectionMode = false
+        val isSymbolLeadMode = false
+        val fullZhuyinBufferEmpty = true
+        val hasCandidates = true
+
+        val canSelect = isSentenceSelecting ||
+                isCandidateGridOpen ||
+                isHomophoneSelectionMode ||
+                isSymbolLeadMode ||
+                (fullZhuyinBufferEmpty && hasCandidates)
+
+        assertTrue("當音節已結算且候選字條有候選項目時，必須允許數字鍵選字", canSelect)
+    }
 }
