@@ -171,6 +171,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     private lateinit var btnFullEnter: Button
     private lateinit var btnSpaceSwipe: SwipeKeyButton
     private lateinit var btnQwertyToggle: SwipeKeyButton
+    private lateinit var spacerBottomBar: View
     private lateinit var btnSymbolDrawer: Button
     private lateinit var containerSymbolContent: FrameLayout
 
@@ -393,6 +394,12 @@ class ZhuyinInputMethodService : InputMethodService() {
         rootView?.let { root ->
             ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
             applyAdaptiveKeyboardHeight()
+            if (::layoutZhuyinFull.isInitialized) {
+                setupZhuyinFullLayout(root)
+            }
+            if (::layoutQwerty.isInitialized) {
+                setupQwertyLayout(root)
+            }
             applyOneHandedMode()
             updateKeyboardModeUI()
             updateHardwareKeyboardState()
@@ -408,7 +415,14 @@ class ZhuyinInputMethodService : InputMethodService() {
         rootView?.let { root ->
             ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
             applyAdaptiveKeyboardHeight()
+            if (::layoutZhuyinFull.isInitialized) {
+                setupZhuyinFullLayout(root)
+            }
+            if (::layoutQwerty.isInitialized) {
+                setupQwertyLayout(root)
+            }
             applyOneHandedMode()
+            updateKeyboardModeUI()
             updateHardwareKeyboardState()
             if (isHardwareKeyboardConnected && currentCandidateList.isNotEmpty()) {
                 physicalCandidatePageIndex = 0
@@ -648,6 +662,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
         btnSpaceSwipe = root.findViewById(R.id.btn_space_swipe)
         btnQwertyToggle = root.findViewById(R.id.btn_qwerty_toggle)
+        spacerBottomBar = root.findViewById(R.id.spacer_bottom_bar)
         layoutZhuyinFull = root.findViewById(R.id.layout_zhuyin_full)
         layoutSymbolPanel = root.findViewById(R.id.layout_symbol_panel)
         btnSymbolDrawer = root.findViewById(R.id.btn_symbol_drawer)
@@ -898,10 +913,18 @@ class ZhuyinInputMethodService : InputMethodService() {
         val row2 = root.findViewById<LinearLayout>(R.id.qwerty_row_2)
         val row3 = root.findViewById<LinearLayout>(R.id.qwerty_row_3)
 
+        val isLand = isPhoneLandscapeMode()
+        val splitSpacerWeight = 2.0f
+
         // 0. 常用符號列 (Direct Symbol Row): + - * / = ( ) @ _ &
         val symbols = listOf("+", "-", "*", "/", "=", "(", ")", "@", "_", "&")
         rowSymbols?.removeAllViews()
-        for (sym in symbols) {
+        for ((idx, sym) in symbols.withIndex()) {
+            if (isLand && idx == 5) {
+                rowSymbols?.addView(View(this).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, splitSpacerWeight)
+                })
+            }
             rowSymbols?.addView(createQwertySymbolKey(sym, 1f))
         }
 
@@ -910,18 +933,34 @@ class ZhuyinInputMethodService : InputMethodService() {
         val letters3 = listOf("z" to "~", "x" to "\\", "c" to "'", "v" to "<", "b" to ">", "n" to ";", "m" to ":")
 
         row1?.removeAllViews()
-        for ((ch, num) in letters1) {
-            row1?.addView(createQwertyKey(ch, 1f, num))
+        for ((idx, pair) in letters1.withIndex()) {
+            if (isLand && idx == 5) {
+                row1?.addView(View(this).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, splitSpacerWeight)
+                })
+            }
+            row1?.addView(createQwertyKey(pair.first, 1f, pair.second))
         }
 
         row2?.removeAllViews()
-        for ((ch, sym) in letters2) {
-            row2?.addView(createQwertyKey(ch, 1f, sym))
+        if (!isLand) {
+            val pad16Px = (16 * resources.displayMetrics.density).toInt()
+            row2?.setPadding(pad16Px, 0, pad16Px, 0)
+        } else {
+            row2?.setPadding(0, 0, 0, 0)
+        }
+        for ((idx, pair) in letters2.withIndex()) {
+            if (isLand && idx == 5) {
+                row2?.addView(View(this).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, splitSpacerWeight)
+                })
+            }
+            row2?.addView(createQwertyKey(pair.first, 1f, pair.second))
         }
 
         row3?.removeAllViews()
 
-        // 1. Shift 大小寫切換鍵 (左側，方案 1 直覺三態：小寫空心⇧、單次高亮實心⬆、鎖定高亮藍底白字⇪)
+        // 1. Shift 大小寫切換鍵 (左側)
         val btnShift = Button(this).apply {
             tag = "shift"
             textSize = 18f
@@ -937,12 +976,17 @@ class ZhuyinInputMethodService : InputMethodService() {
         applyShiftStyle(btnShift)
         row3?.addView(btnShift)
 
-        // 2. 字母鍵 Z X C V B N M
-        for ((ch, sym) in letters3) {
-            row3?.addView(createQwertyKey(ch, 1f, sym))
+        // 2. 字母鍵 Z X C (中央 Spacer) V B N M
+        for ((idx, pair) in letters3.withIndex()) {
+            if (isLand && idx == 3) {
+                row3?.addView(View(this).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, splitSpacerWeight)
+                })
+            }
+            row3?.addView(createQwertyKey(pair.first, 1f, pair.second))
         }
 
-        // 3. ENTER 換行鍵（夾在字母與退格鍵之間，使用者需求）
+        // 3. ENTER 換行鍵
         val btnQwertyEnter = Button(this).apply {
             text = "↵"
             textSize = 18f
@@ -959,7 +1003,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
         row3?.addView(btnQwertyEnter)
 
-        // 4. 26 鍵專屬退格鍵 (右側，支援點按與長按連續退位)
+        // 4. 26 鍵專屬退格鍵 (右側)
         val btnQwertyDel = Button(this).apply {
             text = "⌫"
             textSize = 18f
@@ -1154,22 +1198,27 @@ class ZhuyinInputMethodService : InputMethodService() {
         val r3 = listOf('ㄇ', 'ㄋ', 'ㄎ', 'ㄑ', 'ㄕ', 'ㄘ', 'ㄨ', 'ㄜ', 'ㄠ', 'ㄤ')
         val r4 = listOf('ㄈ', 'ㄌ', 'ㄏ', 'ㄒ', 'ㄖ', 'ㄙ', 'ㄩ', 'ㄝ', 'ㄡ', 'ㄥ', 'ㄦ')
 
-        for ((ch, num) in r1) {
-            row1.addView(createZhuyinFullKey(ch, 1f, num))
-        }
-        row1.addView(createZhuyinFullDelKey(1.1f))
+        val isLand = isPhoneLandscapeMode()
+        val splitSpacerWeight = 2.0f
 
-        for (ch in r2) {
-            row2.addView(createZhuyinFullKey(ch, 1f))
-        }
-        for (ch in r3) {
-            row3.addView(createZhuyinFullKey(ch, 1f))
+        val addRowKeys = { row: LinearLayout, keys: List<Pair<Char, String?>>, splitIndex: Int, appendDel: Boolean ->
+            for ((index, item) in keys.withIndex()) {
+                if (isLand && index == splitIndex) {
+                    row.addView(View(this).apply {
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, splitSpacerWeight)
+                    })
+                }
+                row.addView(createZhuyinFullKey(item.first, 1f, item.second))
+            }
+            if (appendDel) {
+                row.addView(createZhuyinFullDelKey(1.1f))
+            }
         }
 
-        // 第 4 排回歸純注音 11 鍵，按鍵寬度放大約 30%，徹底解決擁擠問題
-        for (ch in r4) {
-            row4.addView(createZhuyinFullKey(ch, 1f))
-        }
+        addRowKeys(row1, r1.map { it.first to it.second }, 5, true)
+        addRowKeys(row2, r2.map { it to null }, 5, false)
+        addRowKeys(row3, r3.map { it to null }, 5, false)
+        addRowKeys(row4, r4.map { it to null }, 5, false)
     }
 
     private fun createZhuyinFullKey(ch: Char, weight: Float, longClickChar: String? = null): Button {
@@ -2114,17 +2163,21 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun formatMode123Label(mainText: String): CharSequence {
+        val isLand = isPhoneLandscapeMode()
         val fullText = "$mainText\n⚙"
         val spannable = SpannableString(fullText)
         val split = mainText.length
         val primaryColor = ContextCompat.getColor(this, R.color.kb_text_primary)
         val secondaryColor = ContextCompat.getColor(this, R.color.kb_text_secondary)
 
-        spannable.setSpan(RelativeSizeSpan(0.88f), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val mainSize = if (isLand) 0.72f else 0.88f
+        val iconSize = if (isLand) 0.45f else 0.55f
+
+        spannable.setSpan(RelativeSizeSpan(mainSize), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         spannable.setSpan(StyleSpan(Typeface.BOLD), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         spannable.setSpan(ForegroundColorSpan(primaryColor), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
 
-        spannable.setSpan(RelativeSizeSpan(0.55f), split + 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        spannable.setSpan(RelativeSizeSpan(iconSize), split + 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         spannable.setSpan(ForegroundColorSpan(secondaryColor), split + 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         return spannable
     }
@@ -2133,6 +2186,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         current: String,
         isCompact: Boolean = false
     ): CharSequence {
+        val isLand = isPhoneLandscapeMode()
         // 極簡清爽版面：第一行中央主語言（中 / English / 手寫），第二行空白標記
         val line1 = current
         val line2 = if (current == "English") "Space" else "空白"
@@ -2142,8 +2196,18 @@ class ZhuyinInputMethodService : InputMethodService() {
         val primaryColor = ContextCompat.getColor(this, R.color.kb_text_primary)
         val secondaryColor = ContextCompat.getColor(this, R.color.kb_text_secondary)
 
-        val mainSize = if (isCompact) 1.15f else 1.35f
-        val line2Size = if (isCompact) 0.65f else 0.75f
+        val mainSize = when {
+            isLand && isCompact -> 0.95f
+            isLand -> 1.05f
+            isCompact -> 1.15f
+            else -> 1.35f
+        }
+        val line2Size = when {
+            isLand && isCompact -> 0.52f
+            isLand -> 0.58f
+            isCompact -> 0.65f
+            else -> 0.75f
+        }
 
         // 第一行主語言：大號、加粗、主色
         spannable.setSpan(RelativeSizeSpan(mainSize), 0, line1.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -2159,6 +2223,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun formatFullZhuyinEnterLabel(): CharSequence {
+        val isLand = isPhoneLandscapeMode()
         val line1 = "↵"
         val line2 = if (isSimplified) "9鍵·簡" else "9鍵·繁"
         val fullText = "$line1\n$line2"
@@ -2167,16 +2232,20 @@ class ZhuyinInputMethodService : InputMethodService() {
         val primaryColor = ContextCompat.getColor(this, R.color.kb_text_primary)
         val secondaryColor = ContextCompat.getColor(this, R.color.kb_text_secondary)
 
-        spannable.setSpan(RelativeSizeSpan(1.30f), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val mainSize = if (isLand) 1.05f else 1.30f
+        val subSize = if (isLand) 0.48f else 0.55f
+
+        spannable.setSpan(RelativeSizeSpan(mainSize), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         spannable.setSpan(StyleSpan(Typeface.BOLD), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         spannable.setSpan(ForegroundColorSpan(primaryColor), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
 
-        spannable.setSpan(RelativeSizeSpan(0.55f), split + 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        spannable.setSpan(RelativeSizeSpan(subSize), split + 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         spannable.setSpan(ForegroundColorSpan(secondaryColor), split + 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         return spannable
     }
 
     private fun formatAbbrevLabel(): CharSequence {
+        val isLand = isPhoneLandscapeMode()
         val line1 = "'"
         val line2 = "常用縮寫"
         val fullText = "$line1\n$line2"
@@ -2185,11 +2254,14 @@ class ZhuyinInputMethodService : InputMethodService() {
         val primaryColor = ContextCompat.getColor(this, R.color.kb_text_primary)
         val secondaryColor = ContextCompat.getColor(this, R.color.kb_text_secondary)
 
-        spannable.setSpan(RelativeSizeSpan(1.40f), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val mainSize = if (isLand) 1.10f else 1.40f
+        val subSize = if (isLand) 0.48f else 0.55f
+
+        spannable.setSpan(RelativeSizeSpan(mainSize), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         spannable.setSpan(StyleSpan(Typeface.BOLD), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         spannable.setSpan(ForegroundColorSpan(primaryColor), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
 
-        spannable.setSpan(RelativeSizeSpan(0.55f), split + 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        spannable.setSpan(RelativeSizeSpan(subSize), split + 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         spannable.setSpan(ForegroundColorSpan(secondaryColor), split + 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         return spannable
     }
@@ -2244,6 +2316,22 @@ class ZhuyinInputMethodService : InputMethodService() {
             btnFullEnter.visibility = if (currentMode == KeyboardMode.ZHUYIN_FULL) View.VISIBLE else View.GONE
         }
 
+        val isLand = isPhoneLandscapeMode()
+        val defaultBtnTextSize = if (isLand) 13.5f else 16f
+        val langBtnTextSize = if (isLand) 11.5f else 14f
+
+        btnMode123.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, defaultBtnTextSize)
+        btnLangToggle.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, langBtnTextSize)
+        if (::btnComma.isInitialized) btnComma.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, defaultBtnTextSize)
+        if (::btnPeriod.isInitialized) btnPeriod.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, defaultBtnTextSize)
+        if (::btnFullEnter.isInitialized) btnFullEnter.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 15f else 18f)
+
+        // 分離式鍵盤時，底欄中央空隙（在全注音與全英文橫向模式時展開）
+        val isFullKeyboard = currentMode == KeyboardMode.ZHUYIN_FULL || currentMode == KeyboardMode.ENGLISH_QWERTY
+        if (::spacerBottomBar.isInitialized) {
+            spacerBottomBar.visibility = if (isLand && isFullKeyboard) View.VISIBLE else View.GONE
+        }
+
         when (currentMode) {
             KeyboardMode.ZHUYIN -> {
                 layout12Key.visibility = View.VISIBLE
@@ -2253,7 +2341,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
                 btnMode123.text = formatMode123Label("123")
                 btnLangToggle.text = if (isSimplified) "全鍵·簡" else "全鍵·繁"
-                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 17f)
+                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 14f else 17f)
                 btnSpaceSwipe.text = formatSpaceChineseSubModeLabel("中文", isCompact = false)
                 btnQwertyToggle.visibility = View.GONE
                 if (::btnComma.isInitialized) btnComma.text = if (isTraditionalMode()) "，" else ","
@@ -2274,7 +2362,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
                 btnMode123.text = formatMode123Label("123")
                 btnLangToggle.text = if (isSimplified) "9鍵·簡" else "9鍵·繁"
-                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 11.5f else 13.5f)
                 btnSpaceSwipe.text = formatSpaceChineseSubModeLabel("中文", isCompact = true)
                 btnQwertyToggle.visibility = View.GONE
                 if (::btnComma.isInitialized) btnComma.text = if (isTraditionalMode()) "，" else ","
@@ -2289,7 +2377,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 val chineseLabel = if (lastChineseMode == KeyboardMode.ZHUYIN_FULL) "全鍵" else "注音"
                 btnMode123.text = formatMode123Label(chineseLabel)
                 btnLangToggle.text = "英文"
-                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 17f)
+                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 14f else 17f)
                 btnSpaceSwipe.text = "空格"
                 btnQwertyToggle.visibility = View.VISIBLE
                 btnQwertyToggle.text = "( )"
@@ -2311,7 +2399,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
                 btnMode123.text = formatMode123Label("123")
                 btnLangToggle.text = formatAbbrevLabel()
-                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 17f)
+                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 14f else 17f)
                 btnSpaceSwipe.text = formatSpaceChineseSubModeLabel("English", isCompact = false)
                 btnQwertyToggle.visibility = View.GONE
                 if (::btnComma.isInitialized) btnComma.text = ","
@@ -2351,6 +2439,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                         else -> false
                     }
                 }
+                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 14f else 17f)
                 btnSpaceSwipe.text = formatSpaceChineseSubModeLabel("手寫", isCompact = false)
                 btnQwertyToggle.visibility = View.GONE
                 if (::btnSymAt.isInitialized) {
@@ -2361,6 +2450,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
         }
         updateSymbolsDisplay()
+        applyOneHandedMode()
     }
 
     private fun updateSymbolsDisplay() {
@@ -2910,6 +3000,18 @@ class ZhuyinInputMethodService : InputMethodService() {
         currentOneHandedMode = OneHandedMode.values().find { it.id == modeId } ?: OneHandedMode.FULL
 
         val density = resources.displayMetrics.density
+        val isLandscape = isPhoneLandscapeMode()
+
+        // 方案 A：在手機橫向手持模式下，9 鍵模式（注音九宮格、數字符號九宮格）限制最大寬度約 480dp 並置中
+        val is9KeyMode = currentMode == KeyboardMode.ZHUYIN || currentMode == KeyboardMode.NUMBER_SYM
+        if (isLandscape && is9KeyMode && currentOneHandedMode == OneHandedMode.FULL) {
+            val screenWidthPx = resources.displayMetrics.widthPixels
+            val targetWidthPx = (480 * density).toInt()
+            val sideInset = ((screenWidthPx - targetWidthPx) / 2).coerceAtLeast(0)
+            root.setPadding(sideInset + 4, 4, sideInset + 4, 4)
+            return
+        }
+
         val sidePaddingPx = (75 * density).toInt()
 
         when (currentOneHandedMode) {
