@@ -2862,7 +2862,37 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
         }
         updateSymbolsDisplay()
+        updateBottomBarOrder()
         applyOneHandedMode()
+    }
+
+    private fun updateBottomBarOrder() {
+        if (!::layoutBottomBar.isInitialized || !::btnPeriod.isInitialized || !::btnSpaceSwipe.isInitialized) return
+        val isEnglish = currentMode == KeyboardMode.ENGLISH_QWERTY
+        val periodIndex = layoutBottomBar.indexOfChild(btnPeriod)
+        val spaceIndex = layoutBottomBar.indexOfChild(btnSpaceSwipe)
+        if (periodIndex == -1 || spaceIndex == -1) return
+
+        if (isEnglish) {
+            // 英文模式：逗號 [,] -> 句號 [.] -> 空白鍵 [Space] -> 常用縮寫 ['] -> 換行 [↵]
+            if (periodIndex > spaceIndex) {
+                layoutBottomBar.removeView(btnPeriod)
+                val newSpaceIndex = layoutBottomBar.indexOfChild(btnSpaceSwipe)
+                layoutBottomBar.addView(btnPeriod, newSpaceIndex)
+            }
+        } else {
+            // 中文/數字/其他模式恢復原本佈局：逗號 [，] -> 空白鍵 [Space] -> 句號 [。] -> ...
+            if (periodIndex < spaceIndex) {
+                layoutBottomBar.removeView(btnPeriod)
+                val newSpaceIndex = layoutBottomBar.indexOfChild(btnSpaceSwipe)
+                val insertIndex = if (::spacerBottomBar.isInitialized && layoutBottomBar.indexOfChild(spacerBottomBar) > newSpaceIndex) {
+                    layoutBottomBar.indexOfChild(spacerBottomBar) + 1
+                } else {
+                    newSpaceIndex + 1
+                }
+                layoutBottomBar.addView(btnPeriod, insertIndex)
+            }
+        }
     }
 
     private fun updateSymbolsDisplay() {
