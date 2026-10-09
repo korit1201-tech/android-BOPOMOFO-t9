@@ -82,6 +82,11 @@ class MainActivity : AppCompatActivity() {
             openDocumentLauncher.launch(arrayOf("text/plain", "*/*"))
         }
 
+        // 檢視與編輯專屬詞彙清單
+        findViewById<Button>(R.id.btn_view_dict)?.setOnClickListener {
+            showUserDictDialog()
+        }
+
         // 清空學習紀錄
         findViewById<Button>(R.id.btn_clear_dict)?.setOnClickListener {
             AlertDialog.Builder(this)
@@ -276,6 +281,38 @@ class MainActivity : AppCompatActivity() {
                 .setNegativeButton("關閉", null)
                 .show()
         }
+    }
+
+    private fun showUserDictDialog() {
+        val entries = userDictManager.getAllEntries()
+        if (entries.isEmpty()) {
+            Toast.makeText(this, "目前個人詞庫內尚無記錄任何詞彙", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val displayItems = entries.map { entry ->
+            val zhuyinPart = if (entry.zhuyin.isNotEmpty()) " (${entry.zhuyin})" else ""
+            "${entry.word}$zhuyinPart  —  次數: ${entry.count}"
+        }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("專屬詞彙清單 (${entries.size} 條)")
+            .setItems(displayItems) { _, which ->
+                val selectedEntry = entries[which]
+                AlertDialog.Builder(this)
+                    .setTitle("刪除專屬詞彙")
+                    .setMessage("確定要從個人詞庫中刪除「${selectedEntry.word}」嗎？\n（刪除後該詞將不再享有優先加權排序）")
+                    .setPositiveButton("刪除") { _, _ ->
+                        userDictManager.removeEntry(selectedEntry.word)
+                        updateDictStats()
+                        Toast.makeText(this, "已刪除「${selectedEntry.word}」", Toast.LENGTH_SHORT).show()
+                        showUserDictDialog() // 重新刷新對話框
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+            }
+            .setPositiveButton("關閉", null)
+            .show()
     }
 
     override fun onResume() {

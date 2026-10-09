@@ -61,9 +61,9 @@ class ZhuyinInputMethodService : InputMethodService() {
         private const val KEYBOARD_MIN_HEIGHT_DP = 180
         private const val KEYBOARD_MAX_HEIGHT_DP = 380
         private const val KEYBOARD_DEFAULT_HEIGHT_DP = 240
-        private const val KEYBOARD_MIN_HEIGHT_LANDSCAPE_DP = 110
-        private const val KEYBOARD_MAX_HEIGHT_LANDSCAPE_DP = 220
-        private const val KEYBOARD_DEFAULT_HEIGHT_LANDSCAPE_DP = 145
+        private const val KEYBOARD_MIN_HEIGHT_LANDSCAPE_DP = 95
+        private const val KEYBOARD_MAX_HEIGHT_LANDSCAPE_DP = 175
+        private const val KEYBOARD_DEFAULT_HEIGHT_LANDSCAPE_DP = 115
     }
 
     enum class KeyboardMode {
@@ -157,6 +157,17 @@ class ZhuyinInputMethodService : InputMethodService() {
     private lateinit var layoutResizeHandle: FrameLayout
     private lateinit var layoutBottomBar: LinearLayout
     private lateinit var layoutCandidateBar: LinearLayout
+    private lateinit var layoutFloatingDragBar: View
+    private lateinit var floatingDragHandle: View
+    private lateinit var btnFloatingResizeLeft: View
+    private lateinit var btnFloatingResizeRight: View
+    private lateinit var btnFloatingDock: Button
+    private lateinit var layoutFloatingDockedHandle: View
+    private var isFloatingDocked = false
+    private var floatingWidthDp: Int = 330
+    private var floatingHeightDp: Int = 115
+    private var floatingOffsetX: Float = 0f
+    private var floatingOffsetY: Float = 0f
     private var isHardwareKeyboardConnected = false
     private lateinit var handwritingCanvas: com.bopomofo.t9ime.ui.HandwritingCanvasView
     private var googleRecognizer: com.bopomofo.t9ime.engine.GoogleHandwritingRecognizer? = null
@@ -310,6 +321,29 @@ class ZhuyinInputMethodService : InputMethodService() {
         return false
     }
 
+    override fun onConfigureWindow(win: android.view.Window, isFullscreen: Boolean, isCandidatesOnly: Boolean) {
+        super.onConfigureWindow(win, isFullscreen, isCandidatesOnly)
+        // 確保 IME Window 本體完全透明且不繪製背景色，杜絕橫向懸浮模式下系統 Window 預設白色背景覆蓋
+        win.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+        win.setDimAmount(0f)
+        win.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+        win.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        win.navigationBarColor = android.graphics.Color.TRANSPARENT
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            win.isNavigationBarContrastEnforced = false
+        }
+        val isLandscape = isPhoneLandscapeMode()
+        val is9KeyMode = currentMode == KeyboardMode.ZHUYIN || currentMode == KeyboardMode.NUMBER_SYM
+        if (isLandscape && is9KeyMode) {
+            // 橫向 9 鍵懸浮模式：視窗擴展為全螢幕，突破 WRAP_CONTENT 裁切限制，可自由拉到螢幕頂端
+            win.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            win.setGravity(Gravity.BOTTOM or Gravity.FILL_HORIZONTAL)
+        } else {
+            win.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            win.setGravity(Gravity.BOTTOM)
+        }
+    }
+
     override fun updateFullscreenMode() {
         super.updateFullscreenMode()
         // 同步關閉 ExtractView，防止 Android 系統自動插入全螢幕編輯框
@@ -334,18 +368,24 @@ class ZhuyinInputMethodService : InputMethodService() {
      * 依當前顯示情境（手機直向、手機橫向、外接桌面/大螢幕）套用最適鍵盤高度與緊湊版面
      */
     private fun applyAdaptiveKeyboardHeight() {
-        if (!::layoutMainFrame.isInitialized || !::layoutCandidateBar.isInitialized || !::layoutBottomBar.isInitialized) return
+        if (!::layoutMainFrame.isInitialized || !::layoutCandidateBar.isInitialized || !::layoutBottomBar.isInitialized || !::layoutResizeHandle.isInitialized) return
         val density = resources.displayMetrics.density
         val isLandscape = isPhoneLandscapeMode()
+        val isFullKeyboard = currentMode == KeyboardMode.ZHUYIN_FULL || currentMode == KeyboardMode.ENGLISH_QWERTY
 
         if (isLandscape) {
             val savedLandscapeDp = PreferencesRepository.getKeyboardHeightLandscapeDp(this)
-            val minHeightPx = (KEYBOARD_MIN_HEIGHT_LANDSCAPE_DP * density).toInt()
-            val maxHeightPx = (KEYBOARD_MAX_HEIGHT_LANDSCAPE_DP * density).toInt()
-            val heightPx = (savedLandscapeDp * density).toInt().coerceIn(minHeightPx, maxHeightPx)
+            // 全鍵盤 4 列必須有足夠高度（至少 150dp，每列約 37dp）杜絕注音符號上下被裁切；9 鍵懸浮小鍵盤則依使用者自由縮放高度（預設 115dp）
+            val defaultDp = if (isFullKeyboard) savedLandscapeDp.coerceAtLeast(155) else PreferencesRepository.getFloatingHeightDp(this)
+            val minDp = if (isFullKeyboard) 140 else 80
+            val maxDp = if (isFullKeyboard) 200 else 240
+            val minHeightPx = (minDp * density).toInt()
+            val maxHeightPx = (maxDp * density).toInt()
+            val heightPx = (defaultDp * density).toInt().coerceIn(minHeightPx, maxHeightPx)
             layoutMainFrame.layoutParams.height = heightPx
-            layoutCandidateBar.layoutParams.height = (40 * density).toInt()
-            layoutBottomBar.layoutParams.height = (40 * density).toInt()
+            layoutCandidateBar.layoutParams.height = (36 * density).toInt()
+            layoutBottomBar.layoutParams.height = (34 * density).toInt()
+            layoutResizeHandle.layoutParams.height = (6 * density).toInt()
         } else {
             val savedDp = PreferencesRepository.getKeyboardHeightDp(this)
             val minHeightPx = (KEYBOARD_MIN_HEIGHT_DP * density).toInt()
@@ -354,10 +394,85 @@ class ZhuyinInputMethodService : InputMethodService() {
             layoutMainFrame.layoutParams.height = heightPx
             layoutCandidateBar.layoutParams.height = (48 * density).toInt()
             layoutBottomBar.layoutParams.height = (48 * density).toInt()
+            layoutResizeHandle.layoutParams.height = (16 * density).toInt()
         }
         layoutMainFrame.requestLayout()
         layoutCandidateBar.requestLayout()
         layoutBottomBar.requestLayout()
+        layoutResizeHandle.requestLayout()
+    }
+
+    /**
+     * 計算橫向 9 鍵懸浮小鍵盤可見實體（候選字列 + 主鍵盤 + 底部列 + 拖曳把手 + padding）的實際像素高度
+     */
+    private fun getFloatingContentHeightPx(density: Float): Int {
+        val candH = if (::layoutCandidateBar.isInitialized && layoutCandidateBar.visibility == View.VISIBLE) {
+            layoutCandidateBar.height.takeIf { it > 0 } ?: (36 * density).toInt()
+        } else 0
+        val mainH = if (::layoutMainFrame.isInitialized && layoutMainFrame.visibility == View.VISIBLE) {
+            layoutMainFrame.height.takeIf { it > 0 } ?: (floatingHeightDp * density).toInt()
+        } else 0
+        val bottomH = if (::layoutBottomBar.isInitialized && layoutBottomBar.visibility == View.VISIBLE) {
+            layoutBottomBar.height.takeIf { it > 0 } ?: (34 * density).toInt()
+        } else 0
+        val dragH = if (::layoutFloatingDragBar.isInitialized && layoutFloatingDragBar.visibility == View.VISIBLE) {
+            layoutFloatingDragBar.height.takeIf { it > 0 } ?: (22 * density).toInt()
+        } else 0
+        val paddingV = (4 * density).toInt() // 上下 padding 總和 (各 2dp)
+        return candH + mainH + bottomH + dragH + paddingV
+    }
+
+    override fun onComputeInsets(outInsets: InputMethodService.Insets) {
+        super.onComputeInsets(outInsets)
+        val root = rootView ?: return
+        val isLandscape = isPhoneLandscapeMode()
+        val is9KeyMode = currentMode == KeyboardMode.ZHUYIN || currentMode == KeyboardMode.NUMBER_SYM
+
+        if (isLandscape && is9KeyMode) {
+            val screenHeight = resources.displayMetrics.heightPixels
+
+            // 核心痛點解決：不佔用原本輸入區塊、絕不把底層 App 內容頂上去或留下大白底！
+            // 將 contentTopInsets 與 visibleTopInsets 設為螢幕真實全高度（告知系統此懸浮鍵盤佔用高度為 0，絕不觸發底層 adjustResize）
+            outInsets.contentTopInsets = screenHeight
+            outInsets.visibleTopInsets = screenHeight
+            outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_REGION
+
+            if (isFloatingDocked) {
+                // 收進邊緣時，僅邊緣迷你把手區域接收觸控點擊
+                if (::layoutFloatingDockedHandle.isInitialized && layoutFloatingDockedHandle.visibility == View.VISIBLE) {
+                    val handleLoc = IntArray(2)
+                    layoutFloatingDockedHandle.getLocationInWindow(handleLoc)
+                    val hLeft = handleLoc[0]
+                    val hTop = handleLoc[1]
+                    val hRight = hLeft + layoutFloatingDockedHandle.width
+                    val hBottom = hTop + layoutFloatingDockedHandle.height
+                    outInsets.touchableRegion.set(hLeft, hTop, hRight, hBottom)
+                } else {
+                    outInsets.touchableRegion.setEmpty()
+                }
+            } else {
+                // 懸浮視窗本體觸控感應區：以視圖在 Window 內的真實絕對座標（getLocationInWindow）計算，其餘螢幕 100% 穿透
+                if (::layoutCandidateBar.isInitialized && ::layoutFloatingDragBar.isInitialized) {
+                    val candLoc = IntArray(2)
+                    val dragLoc = IntArray(2)
+                    layoutCandidateBar.getLocationInWindow(candLoc)
+                    layoutFloatingDragBar.getLocationInWindow(dragLoc)
+                    val left = candLoc[0]
+                    val top = candLoc[1]
+                    val right = candLoc[0] + layoutCandidateBar.width
+                    val bottom = dragLoc[1] + layoutFloatingDragBar.height
+                    outInsets.touchableRegion.set(left, top, right, bottom)
+                } else {
+                    val density = resources.displayMetrics.density
+                    val kbContentHeight = getFloatingContentHeightPx(density)
+                    val left = (root.paddingLeft + root.translationX).toInt().coerceAtLeast(0)
+                    val right = (root.width - root.paddingRight + root.translationX).toInt().coerceAtMost(root.width)
+                    val top = (screenHeight - kbContentHeight + root.translationY).toInt().coerceAtLeast(0)
+                    val bottom = (screenHeight + root.translationY).toInt().coerceAtMost(screenHeight)
+                    outInsets.touchableRegion.set(left, top, right, bottom)
+                }
+            }
+        }
     }
 
     override fun onStartInput(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
@@ -669,6 +784,197 @@ class ZhuyinInputMethodService : InputMethodService() {
         layoutSymbolPanel = root.findViewById(R.id.layout_symbol_panel)
         btnSymbolDrawer = root.findViewById(R.id.btn_symbol_drawer)
         containerSymbolContent = root.findViewById(R.id.container_symbol_content)
+        layoutFloatingDragBar = root.findViewById(R.id.layout_floating_drag_bar)
+        floatingDragHandle = root.findViewById(R.id.floating_drag_handle)
+        btnFloatingResizeLeft = root.findViewById(R.id.btn_floating_resize_left)
+        btnFloatingResizeRight = root.findViewById(R.id.btn_floating_resize_right)
+        btnFloatingDock = root.findViewById(R.id.btn_floating_dock)
+        layoutFloatingDockedHandle = root.findViewById(R.id.layout_floating_docked_handle)
+
+        // 1. 懸浮視窗全螢幕任意拖曳移動
+        var dragStartX = 0f
+        var dragStartY = 0f
+        var initialTransX = 0f
+        var initialTransY = 0f
+        floatingDragHandle.setOnTouchListener { _, event ->
+            val density = resources.displayMetrics.density
+            val screenWidthPx = resources.displayMetrics.widthPixels
+            val screenHeightPx = resources.displayMetrics.heightPixels
+            val isLandscape = isPhoneLandscapeMode()
+            val is9KeyMode = currentMode == KeyboardMode.ZHUYIN || currentMode == KeyboardMode.NUMBER_SYM
+
+            if (!isLandscape || !is9KeyMode) return@setOnTouchListener false
+
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    dragStartX = event.rawX
+                    dragStartY = event.rawY
+                    initialTransX = root.translationX
+                    initialTransY = root.translationY
+                    triggerHapticFeedback()
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val deltaX = event.rawX - dragStartX
+                    val deltaY = event.rawY - dragStartY
+
+                    // 允許全螢幕任意移動
+                    val targetWidthPx = (floatingWidthDp * density).toInt()
+                    val remainingPx = (screenWidthPx - targetWidthPx).coerceAtLeast(0)
+                    val baseLeft = when (currentOneHandedMode) {
+                        OneHandedMode.LEFT -> 0f
+                        OneHandedMode.FULL, OneHandedMode.RIGHT -> remainingPx.toFloat()
+                    }
+                    val minTransX = -baseLeft
+                    val maxTransX = (screenWidthPx - targetWidthPx - baseLeft).toFloat()
+
+                    val newTransX = (initialTransX + deltaX).coerceIn(minTransX, maxTransX)
+                    val kbContentHeight = getFloatingContentHeightPx(density)
+
+                    // 動態基線校正：取得目前 View 在 Window 內的真實未位移基準頂部座標 (baseTopY)
+                    val loc = IntArray(2)
+                    root.getLocationInWindow(loc)
+                    val baseTopY = (loc[1] - root.translationY).coerceAtLeast(0f)
+
+                    // 向上極限：小鍵盤頂部貼齊螢幕最頂部 (y=0)
+                    val minTransY = -baseTopY
+                    // 向下極限：小鍵盤底部貼齊螢幕物理最底端 (y=screenHeightPx)
+                    val maxTransY = (screenHeightPx - baseTopY - kbContentHeight).coerceAtLeast(minTransY)
+
+                    val newTransY = (initialTransY + deltaY).coerceIn(minTransY, maxTransY)
+
+                    floatingOffsetX = newTransX
+                    floatingOffsetY = newTransY
+                    root.translationX = newTransX
+                    root.translationY = newTransY
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    PreferencesRepository.setFloatingOffsetXDp(this, (floatingOffsetX / density).toInt())
+                    PreferencesRepository.setFloatingOffsetYDp(this, (floatingOffsetY / density).toInt())
+                    triggerHapticFeedback()
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // 2. 右下角雙向縮放錨點 (長寬分別可調、任意比例)
+        var resizeStartX = 0f
+        var resizeStartY = 0f
+        var startWidthDp = 330
+        var startHeightPx = 0
+        btnFloatingResizeRight.setOnTouchListener { _, event ->
+            val density = resources.displayMetrics.density
+            val screenWidthPx = resources.displayMetrics.widthPixels
+            val maxAllowedWidthDp = (screenWidthPx / density).toInt()
+
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    resizeStartX = event.rawX
+                    resizeStartY = event.rawY
+                    startWidthDp = floatingWidthDp
+                    startHeightPx = layoutMainFrame.height
+                    triggerHapticFeedback()
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val deltaX = event.rawX - resizeStartX
+                    val deltaY = event.rawY - resizeStartY
+
+                    // 寬度調整：向右拖拉變寬，向左拖拉變窄 (240dp ~ 全螢幕寬度)
+                    val newWidthDp = (startWidthDp + (deltaX / density).toInt()).coerceIn(240, maxAllowedWidthDp)
+                    if (newWidthDp != floatingWidthDp) {
+                        floatingWidthDp = newWidthDp
+                        val targetWidthPx = (floatingWidthDp * density).toInt()
+                        val remainingPx = (screenWidthPx - targetWidthPx).coerceAtLeast(0)
+                        val (leftPad, rightPad) = when (currentOneHandedMode) {
+                            OneHandedMode.LEFT -> Pair(0, remainingPx)
+                            OneHandedMode.FULL, OneHandedMode.RIGHT -> Pair(remainingPx, 0)
+                        }
+                        root.setPadding(leftPad, 2, rightPad, 2)
+                    }
+
+                    // 高度調整：向下拖拉高度變大，向上拖拉高度變小 (80dp ~ 240dp)
+                    val newHeightPx = (startHeightPx + deltaY).toInt().coerceIn((80 * density).toInt(), (240 * density).toInt())
+                    if (newHeightPx != layoutMainFrame.height) {
+                        layoutMainFrame.layoutParams.height = newHeightPx
+                        layoutMainFrame.requestLayout()
+                        floatingHeightDp = (newHeightPx / density).toInt()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    PreferencesRepository.setFloatingWidthDp(this, floatingWidthDp)
+                    PreferencesRepository.setFloatingHeightDp(this, floatingHeightDp)
+                    triggerHapticFeedback()
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // 3. 左下角雙向縮放錨點 (長寬分別可調、向左變寬)
+        btnFloatingResizeLeft.setOnTouchListener { _, event ->
+            val density = resources.displayMetrics.density
+            val screenWidthPx = resources.displayMetrics.widthPixels
+            val maxAllowedWidthDp = (screenWidthPx / density).toInt()
+
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    resizeStartX = event.rawX
+                    resizeStartY = event.rawY
+                    startWidthDp = floatingWidthDp
+                    startHeightPx = layoutMainFrame.height
+                    triggerHapticFeedback()
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val deltaX = resizeStartX - event.rawX // 向左拉變寬
+                    val deltaY = event.rawY - resizeStartY
+
+                    val newWidthDp = (startWidthDp + (deltaX / density).toInt()).coerceIn(240, maxAllowedWidthDp)
+                    if (newWidthDp != floatingWidthDp) {
+                        floatingWidthDp = newWidthDp
+                        val targetWidthPx = (floatingWidthDp * density).toInt()
+                        val remainingPx = (screenWidthPx - targetWidthPx).coerceAtLeast(0)
+                        val (leftPad, rightPad) = when (currentOneHandedMode) {
+                            OneHandedMode.LEFT -> Pair(0, remainingPx)
+                            OneHandedMode.FULL, OneHandedMode.RIGHT -> Pair(remainingPx, 0)
+                        }
+                        root.setPadding(leftPad, 2, rightPad, 2)
+                    }
+
+                    val newHeightPx = (startHeightPx + deltaY).toInt().coerceIn((80 * density).toInt(), (240 * density).toInt())
+                    if (newHeightPx != layoutMainFrame.height) {
+                        layoutMainFrame.layoutParams.height = newHeightPx
+                        layoutMainFrame.requestLayout()
+                        floatingHeightDp = (newHeightPx / density).toInt()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    PreferencesRepository.setFloatingWidthDp(this, floatingWidthDp)
+                    PreferencesRepository.setFloatingHeightDp(this, floatingHeightDp)
+                    triggerHapticFeedback()
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // 4. 收進邊緣 (Dock) 與喚出 (Undock)
+        btnFloatingDock.setOnClickListener {
+            triggerHapticFeedback(HapticType.MODE_SWITCH)
+            PreferencesRepository.setFloatingDocked(this, true)
+            applyOneHandedMode()
+        }
+
+        layoutFloatingDockedHandle.setOnClickListener {
+            triggerHapticFeedback(HapticType.MODE_SWITCH)
+            PreferencesRepository.setFloatingDocked(this, false)
+            applyOneHandedMode()
+        }
 
         // 候選字展開格柵 (Grid Expansion)
         btnCandidateExpand = root.findViewById(R.id.btn_candidate_expand)
@@ -943,11 +1249,15 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
             row1?.addView(createQwertyKey(pair.first, 1f, pair.second))
         }
+        // 在直版模式下，退格鍵移至第一排右側（P 的右邊）
+        if (!isLand) {
+            row1?.addView(createQwertyDelKey(1.3f))
+        }
 
         row2?.removeAllViews()
         if (!isLand) {
-            val pad16Px = (16 * resources.displayMetrics.density).toInt()
-            row2?.setPadding(pad16Px, 0, pad16Px, 0)
+            val pad12Px = (12 * resources.displayMetrics.density).toInt()
+            row2?.setPadding(pad12Px, 0, pad12Px, 0)
         } else {
             row2?.setPadding(0, 0, 0, 0)
         }
@@ -963,11 +1273,16 @@ class ZhuyinInputMethodService : InputMethodService() {
         row3?.removeAllViews()
 
         // 1. Shift 大小寫切換鍵 (左側)
+        val shiftWeight = if (isLand) 1.5f else 1.35f
         val btnShift = Button(this).apply {
             tag = "shift"
-            textSize = 18f
-            val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.5f).apply {
-                setMargins(2, 2, 2, 2)
+            textSize = if (isLand) 15f else 18f
+            isAllCaps = false
+            includeFontPadding = false
+            minHeight = 0
+            setPadding(0, 0, 0, 0)
+            val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, shiftWeight).apply {
+                setMargins(1, 1, 1, 1)
             }
             layoutParams = params
             setOnClickListener {
@@ -989,13 +1304,18 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
 
         // 3. ENTER 換行鍵
+        val enterWeight = if (isLand) 1.5f else 1.65f
         val btnQwertyEnter = Button(this).apply {
             text = "↵"
-            textSize = 18f
+            textSize = if (isLand) 15f else 18f
+            isAllCaps = false
+            includeFontPadding = false
+            minHeight = 0
+            setPadding(0, 0, 0, 0)
             setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
             setBackgroundResource(R.drawable.bg_key_action)
-            val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.5f).apply {
-                setMargins(2, 2, 2, 2)
+            val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, enterWeight).apply {
+                setMargins(1, 1, 1, 1)
             }
             layoutParams = params
             setOnClickListener {
@@ -1005,14 +1325,25 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
         row3?.addView(btnQwertyEnter)
 
-        // 4. 26 鍵專屬退格鍵 (右側)
-        val btnQwertyDel = Button(this).apply {
+        // 4. 26 鍵專屬退格鍵 (橫向模式時保留在 Row 3 最右側)
+        if (isLand) {
+            row3?.addView(createQwertyDelKey(1.5f))
+        }
+    }
+
+    private fun createQwertyDelKey(weight: Float): Button {
+        val isLand = isPhoneLandscapeMode()
+        return Button(this).apply {
             text = "⌫"
-            textSize = 18f
+            textSize = if (isLand) 15f else 17f
+            isAllCaps = false
+            includeFontPadding = false
+            minHeight = 0
+            setPadding(0, 0, 0, 0)
             setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
             setBackgroundResource(R.drawable.bg_key_action)
-            val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.5f).apply {
-                setMargins(2, 2, 2, 2)
+            val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight).apply {
+                setMargins(1, 1, 1, 1)
             }
             layoutParams = params
             setOnTouchListener { v, event ->
@@ -1034,17 +1365,21 @@ class ZhuyinInputMethodService : InputMethodService() {
                 }
             }
         }
-        row3?.addView(btnQwertyDel)
     }
 
     private fun createQwertySymbolKey(sym: String, weight: Float): Button {
+        val isLand = isPhoneLandscapeMode()
         return Button(this).apply {
             text = sym
-            textSize = 16f
+            textSize = if (isLand) 14f else 16f
+            isAllCaps = false
+            includeFontPadding = false
+            minHeight = 0
+            setPadding(0, 0, 0, 0)
             setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
             setBackgroundResource(R.drawable.bg_key_action)
             val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight).apply {
-                setMargins(2, 2, 2, 2)
+                setMargins(1, 1, 1, 1)
             }
             layoutParams = params
             setOnClickListener {
@@ -1086,14 +1421,19 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun createQwertyKey(text: String, weight: Float, longClickChar: String? = null): Button {
+        val isLand = isPhoneLandscapeMode()
         return Button(this).apply {
             tag = text.lowercase()
             this.text = if (isCapsLock) text.uppercase() else text.lowercase()
-            textSize = 18f
+            textSize = if (isLand) 15f else 18f
+            isAllCaps = false
+            includeFontPadding = false
+            minHeight = 0
+            setPadding(0, 0, 0, 0)
             setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
             setBackgroundResource(R.drawable.bg_key)
             val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight).apply {
-                setMargins(2, 2, 2, 2)
+                setMargins(1, 1, 1, 1)
             }
             layoutParams = params
             setOnClickListener {
@@ -1221,16 +1561,37 @@ class ZhuyinInputMethodService : InputMethodService() {
         addRowKeys(row2, r2.map { it to null }, 5, false)
         addRowKeys(row3, r3.map { it to null }, 5, false)
         addRowKeys(row4, r4.map { it to null }, 5, false)
+
+        val currentTheme = ThemeManager.getCurrentTheme(this)
+        ThemeManager.applyTheme(layoutZhuyinFull, currentTheme)
     }
 
     private fun createZhuyinFullKey(ch: Char, weight: Float, longClickChar: String? = null): Button {
+        val bopomofoTypeface = try {
+            androidx.core.content.res.ResourcesCompat.getFont(this, R.font.bopomofo_font)
+        } catch (e: Exception) {
+            null
+        }
+        val isLand = isPhoneLandscapeMode()
         return Button(this).apply {
             text = ch.toString()
-            textSize = 17f
+            textSize = if (isLand) 15f else 17f
+            isAllCaps = false
+            includeFontPadding = false
+            minHeight = 0
+            setPadding(0, 0, 0, 0)
+            compoundDrawablePadding = 0
+            if (bopomofoTypeface != null) {
+                typeface = android.graphics.Typeface.create(bopomofoTypeface, android.graphics.Typeface.BOLD)
+            } else {
+                typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
+            }
+            paint.isFakeBoldText = true
+            textLocale = java.util.Locale.TRADITIONAL_CHINESE
             setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
             setBackgroundResource(R.drawable.bg_key)
             val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight).apply {
-                setMargins(1, 2, 1, 2)
+                setMargins(1, 1, 1, 1)
             }
             layoutParams = params
             setOnClickListener {
@@ -1248,13 +1609,18 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun createZhuyinFullDelKey(weight: Float): Button {
+        val isLand = isPhoneLandscapeMode()
         return Button(this).apply {
             text = "⌫"
-            textSize = 17f
+            textSize = if (isLand) 15f else 17f
+            isAllCaps = false
+            includeFontPadding = false
+            minHeight = 0
+            setPadding(0, 0, 0, 0)
             setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
             setBackgroundResource(R.drawable.bg_key_action)
             val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight).apply {
-                setMargins(1, 2, 1, 2)
+                setMargins(1, 1, 1, 1)
             }
             layoutParams = params
             setOnTouchListener { v, event ->
@@ -1870,11 +2236,12 @@ class ZhuyinInputMethodService : InputMethodService() {
 
         updateSymbolsDisplay()
 
-        // @ 位置：中文模式下改為確認/換行(ENTER)鍵，英文/數字模式保留 @
+        // @ / Enter 按鈕 (最下排右側按鈕)：
+        // 在注音/手寫/數字模式下均為換行 (ENTER) 鍵，其他模式輸出 @
         btnSymAt.setOnClickListener {
             triggerHapticFeedback()
             when (currentMode) {
-                KeyboardMode.ZHUYIN, KeyboardMode.HANDWRITING -> {
+                KeyboardMode.ZHUYIN, KeyboardMode.HANDWRITING, KeyboardMode.NUMBER_SYM -> {
                     performEnterAction()
                 }
                 else -> commitSymbol("@")
@@ -1901,13 +2268,13 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
         }
 
-        // 清空按鈕：NUMBER_SYM 模式下改為換行鍵
+        // 清空 / @ 按鈕 (中間排右側按鈕)：NUMBER_SYM 模式下改為 @ 符號輸入，注音模式下為清空
         btnClear = root.findViewById(R.id.btn_clear)
         btnClear?.setOnClickListener {
             triggerHapticFeedback()
             when (currentMode) {
                 KeyboardMode.NUMBER_SYM -> {
-                    performEnterAction()
+                    commitSymbol("@")
                 }
                 else -> {
                     engine.clear()
@@ -2166,14 +2533,26 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun formatMode123Label(mainText: String): CharSequence {
         val isLand = isPhoneLandscapeMode()
+        if (isLand) {
+            // 橫向模式下使用單行標籤，避免因上下換行而裁切文字
+            val fullText = "$mainText⚙"
+            val spannable = SpannableString(fullText)
+            val primaryColor = ContextCompat.getColor(this, R.color.kb_text_primary)
+            val secondaryColor = ContextCompat.getColor(this, R.color.kb_text_secondary)
+            spannable.setSpan(StyleSpan(Typeface.BOLD), 0, mainText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            spannable.setSpan(ForegroundColorSpan(primaryColor), 0, mainText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            spannable.setSpan(RelativeSizeSpan(0.70f), mainText.length, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            spannable.setSpan(ForegroundColorSpan(secondaryColor), mainText.length, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            return spannable
+        }
         val fullText = "$mainText\n⚙"
         val spannable = SpannableString(fullText)
         val split = mainText.length
         val primaryColor = ContextCompat.getColor(this, R.color.kb_text_primary)
         val secondaryColor = ContextCompat.getColor(this, R.color.kb_text_secondary)
 
-        val mainSize = if (isLand) 0.72f else 0.88f
-        val iconSize = if (isLand) 0.45f else 0.55f
+        val mainSize = 0.88f
+        val iconSize = 0.55f
 
         spannable.setSpan(RelativeSizeSpan(mainSize), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         spannable.setSpan(StyleSpan(Typeface.BOLD), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -2189,7 +2568,20 @@ class ZhuyinInputMethodService : InputMethodService() {
         isCompact: Boolean = false
     ): CharSequence {
         val isLand = isPhoneLandscapeMode()
-        // 極簡清爽版面：第一行中央主語言（中 / English / 手寫），第二行空白標記
+        if (isLand) {
+            // 橫向模式使用單行「中文 空白」，徹底消除垂直裁切
+            val line2 = if (current == "English") "Space" else "空白"
+            val fullText = "$current  $line2"
+            val spannable = SpannableString(fullText)
+            val primaryColor = ContextCompat.getColor(this, R.color.kb_text_primary)
+            val secondaryColor = ContextCompat.getColor(this, R.color.kb_text_secondary)
+            spannable.setSpan(StyleSpan(Typeface.BOLD), 0, current.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            spannable.setSpan(ForegroundColorSpan(primaryColor), 0, current.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            spannable.setSpan(RelativeSizeSpan(0.68f), current.length, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            spannable.setSpan(ForegroundColorSpan(secondaryColor), current.length, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            return spannable
+        }
+        // 直向模式保持簡潔雙行
         val line1 = current
         val line2 = if (current == "English") "Space" else "空白"
         val fullText = "$line1\n$line2"
@@ -2198,17 +2590,16 @@ class ZhuyinInputMethodService : InputMethodService() {
         val primaryColor = ContextCompat.getColor(this, R.color.kb_text_primary)
         val secondaryColor = ContextCompat.getColor(this, R.color.kb_text_secondary)
 
+        // 精緻化字級：避免「空白」、「Space」過大超出按鈕邊界
         val mainSize = when {
-            isLand && isCompact -> 0.95f
-            isLand -> 1.05f
-            isCompact -> 1.15f
-            else -> 1.35f
+            isCompact -> 1.05f
+            current == "English" -> 1.05f
+            else -> 1.15f
         }
         val line2Size = when {
-            isLand && isCompact -> 0.52f
-            isLand -> 0.58f
-            isCompact -> 0.65f
-            else -> 0.75f
+            isCompact -> 0.50f
+            current == "English" -> 0.52f
+            else -> 0.55f
         }
 
         // 第一行主語言：大號、加粗、主色
@@ -2226,25 +2617,34 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun formatFullZhuyinEnterLabel(): CharSequence {
         val isLand = isPhoneLandscapeMode()
-        val line1 = "↵"
         val line2 = if (isSimplified) "9鍵·簡" else "9鍵·繁"
+        if (isLand) {
+            val fullText = "↵ $line2"
+            val spannable = SpannableString(fullText)
+            val primaryColor = ContextCompat.getColor(this, R.color.kb_text_primary)
+            val secondaryColor = ContextCompat.getColor(this, R.color.kb_text_secondary)
+            spannable.setSpan(StyleSpan(Typeface.BOLD), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            spannable.setSpan(ForegroundColorSpan(primaryColor), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            spannable.setSpan(RelativeSizeSpan(0.80f), 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            spannable.setSpan(ForegroundColorSpan(secondaryColor), 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            return spannable
+        }
+        val line1 = "↵"
         val fullText = "$line1\n$line2"
         val spannable = SpannableString(fullText)
-        val split = line1.length
         val primaryColor = ContextCompat.getColor(this, R.color.kb_text_primary)
         val secondaryColor = ContextCompat.getColor(this, R.color.kb_text_secondary)
 
-        val mainSize = if (isLand) 1.05f else 1.30f
-        val subSize = if (isLand) 0.48f else 0.55f
+        spannable.setSpan(RelativeSizeSpan(1.20f), 0, line1.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        spannable.setSpan(StyleSpan(Typeface.BOLD), 0, line1.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        spannable.setSpan(ForegroundColorSpan(primaryColor), 0, line1.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
 
-        spannable.setSpan(RelativeSizeSpan(mainSize), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        spannable.setSpan(StyleSpan(Typeface.BOLD), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        spannable.setSpan(ForegroundColorSpan(primaryColor), 0, split, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-
-        spannable.setSpan(RelativeSizeSpan(subSize), split + 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        spannable.setSpan(ForegroundColorSpan(secondaryColor), split + 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val line2Start = line1.length + 1
+        spannable.setSpan(RelativeSizeSpan(0.68f), line2Start, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        spannable.setSpan(ForegroundColorSpan(secondaryColor), line2Start, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         return spannable
     }
+
 
     private fun formatAbbrevLabel(): CharSequence {
         val isLand = isPhoneLandscapeMode()
@@ -2298,6 +2698,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun updateKeyboardModeUI() {
+        applyAdaptiveKeyboardHeight()
         if (::layoutSymbolPanel.isInitialized) layoutSymbolPanel.visibility = View.GONE
         if (::btnSymbolDrawer.isInitialized) btnSymbolDrawer.text = "✛"
 
@@ -2343,7 +2744,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
                 btnMode123.text = formatMode123Label("123")
                 btnLangToggle.text = if (isSimplified) "全鍵·簡" else "全鍵·繁"
-                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 14f else 17f)
+                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 13f else 15f)
                 btnSpaceSwipe.text = formatSpaceChineseSubModeLabel("中文", isCompact = false)
                 btnQwertyToggle.visibility = View.GONE
                 if (::btnComma.isInitialized) btnComma.text = if (isTraditionalMode()) "，" else ","
@@ -2379,7 +2780,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 val chineseLabel = if (lastChineseMode == KeyboardMode.ZHUYIN_FULL) "全鍵" else "注音"
                 btnMode123.text = formatMode123Label(chineseLabel)
                 btnLangToggle.text = "英文"
-                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 14f else 17f)
+                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 13f else 15f)
                 btnSpaceSwipe.text = "空格"
                 btnQwertyToggle.visibility = View.VISIBLE
                 btnQwertyToggle.text = "( )"
@@ -2388,10 +2789,10 @@ class ZhuyinInputMethodService : InputMethodService() {
 
                 update12KeyLabelsNumbers()
                 if (::btnSymAt.isInitialized) {
-                    btnSymAt.text = "@"
+                    btnSymAt.text = "↵"
                     btnSymAt.visibility = View.VISIBLE
                 }
-                btnClear?.text = "↵"
+                btnClear?.text = "@"
             }
             KeyboardMode.ENGLISH_QWERTY -> {
                 layout12Key.visibility = View.GONE
@@ -2401,7 +2802,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
                 btnMode123.text = formatMode123Label("123")
                 btnLangToggle.text = formatAbbrevLabel()
-                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 14f else 17f)
+                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 12f else 14f)
                 btnSpaceSwipe.text = formatSpaceChineseSubModeLabel("English", isCompact = false)
                 btnQwertyToggle.visibility = View.GONE
                 if (::btnComma.isInitialized) btnComma.text = ","
@@ -2441,7 +2842,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                         else -> false
                     }
                 }
-                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 14f else 17f)
+                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 12f else 14f)
                 btnSpaceSwipe.text = formatSpaceChineseSubModeLabel("手寫", isCompact = false)
                 btnQwertyToggle.visibility = View.GONE
                 if (::btnSymAt.isInitialized) {
@@ -3003,15 +3404,176 @@ class ZhuyinInputMethodService : InputMethodService() {
 
         val density = resources.displayMetrics.density
         val isLandscape = isPhoneLandscapeMode()
+        val currentTheme = ThemeManager.getCurrentTheme(this)
+        val themeColors = ThemeManager.getThemeColors(this, currentTheme)
 
-        // 方案 A：在手機橫向手持模式下，9 鍵模式（注音九宮格、數字符號九宮格）限制最大寬度約 480dp 並置中
+        // 方案 A（Gboard 樣式橫向懸浮小鍵盤）：
+        // 在手機橫向模式下，9 鍵模式（注音九宮格、數字符號九宮格）變為靠邊的緊湊懸浮小鍵盤（約 330dp）
+        // 剩餘螢幕完全透明不遮擋內容，支援單手左右切換（預設靠右便於右手拇指單手輸入）
         val is9KeyMode = currentMode == KeyboardMode.ZHUYIN || currentMode == KeyboardMode.NUMBER_SYM
-        if (isLandscape && is9KeyMode && currentOneHandedMode == OneHandedMode.FULL) {
+        if (isLandscape && is9KeyMode) {
             val screenWidthPx = resources.displayMetrics.widthPixels
-            val targetWidthPx = (480 * density).toInt()
-            val sideInset = ((screenWidthPx - targetWidthPx) / 2).coerceAtLeast(0)
-            root.setPadding(sideInset + 4, 4, sideInset + 4, 4)
+            floatingWidthDp = PreferencesRepository.getFloatingWidthDp(this).coerceIn(240, (screenWidthPx / density).toInt())
+            floatingHeightDp = PreferencesRepository.getFloatingHeightDp(this).coerceIn(80, 240)
+            isFloatingDocked = PreferencesRepository.isFloatingDocked(this)
+
+            if (isFloatingDocked) {
+                // 收進邊緣狀態：鍵盤主體隱藏，僅邊緣留存浮標
+                if (::layoutCandidateBar.isInitialized) layoutCandidateBar.visibility = View.GONE
+                if (::layoutMainFrame.isInitialized) layoutMainFrame.visibility = View.GONE
+                if (::layoutBottomBar.isInitialized) layoutBottomBar.visibility = View.GONE
+                if (::layoutResizeHandle.isInitialized) layoutResizeHandle.visibility = View.GONE
+                if (::layoutFloatingDragBar.isInitialized) layoutFloatingDragBar.visibility = View.GONE
+                if (::layoutFloatingDockedHandle.isInitialized) {
+                    layoutFloatingDockedHandle.visibility = View.VISIBLE
+                }
+
+                root.setPadding(8, 8, 8, 8)
+                root.setBackgroundColor(Color.TRANSPARENT)
+                root.translationX = 0f
+                root.translationY = 0f
+                return
+            }
+
+            // 展開懸浮鍵盤狀態
+            if (::layoutCandidateBar.isInitialized) layoutCandidateBar.visibility = View.VISIBLE
+            if (::layoutMainFrame.isInitialized) layoutMainFrame.visibility = View.VISIBLE
+            if (::layoutBottomBar.isInitialized) layoutBottomBar.visibility = View.VISIBLE
+            if (::layoutResizeHandle.isInitialized) layoutResizeHandle.visibility = View.GONE
+            if (::layoutFloatingDragBar.isInitialized) layoutFloatingDragBar.visibility = View.VISIBLE
+            if (::btnFloatingDock.isInitialized) btnFloatingDock.visibility = View.VISIBLE
+            if (::layoutFloatingDockedHandle.isInitialized) layoutFloatingDockedHandle.visibility = View.GONE
+
+            val targetWidthPx = (floatingWidthDp * density).toInt()
+            val remainingPx = (screenWidthPx - targetWidthPx).coerceAtLeast(0)
+
+            val (leftPad, rightPad) = when (currentOneHandedMode) {
+                OneHandedMode.LEFT -> Pair(0, remainingPx)
+                OneHandedMode.FULL, OneHandedMode.RIGHT -> Pair(remainingPx, 0)
+            }
+
+            root.setPadding(leftPad, 2, rightPad, 2)
+            // 將多餘空間設為完全透明，僅小鍵盤本體帶有底色與圓角
+            root.setBackgroundColor(Color.TRANSPARENT)
+
+            // 恢復儲存的浮動偏移量並限制於螢幕有效範圍內
+            val rawOffsetX = PreferencesRepository.getFloatingOffsetXDp(this) * density
+            val rawOffsetY = PreferencesRepository.getFloatingOffsetYDp(this) * density
+
+            val baseLeft = when (currentOneHandedMode) {
+                OneHandedMode.LEFT -> 0f
+                OneHandedMode.FULL, OneHandedMode.RIGHT -> remainingPx.toFloat()
+            }
+            val minTransX = -baseLeft
+            val maxTransX = (screenWidthPx - targetWidthPx - baseLeft).toFloat()
+
+            val screenHeightPx = resources.displayMetrics.heightPixels
+            val kbContentHeight = getFloatingContentHeightPx(density)
+
+            val loc = IntArray(2)
+            root.getLocationInWindow(loc)
+            val baseTopY = (loc[1] - root.translationY).coerceAtLeast(0f)
+            val minTransY = -baseTopY
+            val maxTransY = (screenHeightPx - baseTopY - kbContentHeight).coerceAtLeast(minTransY)
+
+            floatingOffsetX = rawOffsetX.coerceIn(minTransX, maxTransX)
+            floatingOffsetY = rawOffsetY.coerceIn(minTransY, maxTransY)
+            root.translationX = floatingOffsetX
+            root.translationY = floatingOffsetY
+
+            if (::layoutCandidateBar.isInitialized) {
+                val candidateBgDrawable = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(themeColors.candidateBg)
+                    cornerRadii = floatArrayOf(
+                        10f * density, 10f * density,
+                        10f * density, 10f * density,
+                        0f, 0f, 0f, 0f
+                    )
+                }
+                layoutCandidateBar.background = candidateBgDrawable
+            }
+            if (::layoutMainFrame.isInitialized) {
+                layoutMainFrame.setBackgroundColor(themeColors.bg)
+            }
+            if (::layoutBottomBar.isInitialized) {
+                layoutBottomBar.setBackgroundColor(themeColors.bg)
+            }
+            if (::layoutFloatingDragBar.isInitialized) {
+                val dragBgDrawable = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(themeColors.bg)
+                    cornerRadii = floatArrayOf(
+                        0f, 0f, 0f, 0f,
+                        0f, 0f, 0f, 0f,
+                        10f * density, 10f * density,
+                        10f * density, 10f * density
+                    )
+                }
+                layoutFloatingDragBar.background = dragBgDrawable
+            }
+            // 橫向 9 鍵懸浮模式：視窗擴展為全螢幕，突破邊界裁剪，可自由拉至螢幕頂部或底部
+            window?.window?.let { win ->
+                win.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+                win.decorView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                win.setDimAmount(0f)
+                win.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                win.navigationBarColor = android.graphics.Color.TRANSPARENT
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    win.isNavigationBarContrastEnforced = false
+                }
+                win.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                win.setGravity(Gravity.TOP or Gravity.START)
+                if (win.decorView is ViewGroup) {
+                    (win.decorView as ViewGroup).clipChildren = false
+                    (win.decorView as ViewGroup).clipToPadding = false
+                }
+            }
+            // 核心關鍵：解除所有父級容器（parentPanel, mInputFrame, DecorView 等）的裁剪限制與尺寸限制
+            // 避免小鍵盤向下拖曳超出原本預設高度時被父容器裁剪（彷彿被背景遮住）
+            var p: android.view.ViewParent? = root.parent
+            while (p != null) {
+                if (p is ViewGroup) {
+                    p.clipChildren = false
+                    p.clipToPadding = false
+                    val lp = p.layoutParams
+                    if (lp != null && lp.height != ViewGroup.LayoutParams.MATCH_PARENT) {
+                        lp.height = ViewGroup.LayoutParams.MATCH_PARENT
+                        p.layoutParams = lp
+                    }
+                }
+                if (p is View) {
+                    p.setBackgroundColor(Color.TRANSPARENT)
+                }
+                p = p.parent
+            }
             return
+        }
+
+        // 非橫向 9 鍵模式：恢復原本的主題全幅背景與重設位移
+        window?.window?.let { win ->
+            win.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            win.setGravity(Gravity.BOTTOM)
+        }
+        isFloatingDocked = false
+        if (::layoutFloatingDockedHandle.isInitialized) layoutFloatingDockedHandle.visibility = View.GONE
+        if (::btnFloatingDock.isInitialized) btnFloatingDock.visibility = View.GONE
+        if (::layoutCandidateBar.isInitialized) layoutCandidateBar.visibility = View.VISIBLE
+        if (::layoutMainFrame.isInitialized) layoutMainFrame.visibility = View.VISIBLE
+        if (::layoutBottomBar.isInitialized) layoutBottomBar.visibility = View.VISIBLE
+        if (::layoutResizeHandle.isInitialized) layoutResizeHandle.visibility = View.VISIBLE
+        root.translationX = 0f
+        root.translationY = 0f
+        if (::layoutFloatingDragBar.isInitialized) {
+            layoutFloatingDragBar.visibility = View.GONE
+        }
+        root.setBackgroundColor(themeColors.bg)
+        if (::layoutCandidateBar.isInitialized) {
+            layoutCandidateBar.setBackgroundColor(themeColors.candidateBg)
+        }
+        if (::layoutMainFrame.isInitialized) {
+            layoutMainFrame.setBackgroundColor(Color.TRANSPARENT)
+        }
+        if (::layoutBottomBar.isInitialized) {
+            layoutBottomBar.setBackgroundColor(Color.TRANSPARENT)
         }
 
         val sidePaddingPx = (75 * density).toInt()
@@ -4094,12 +4656,33 @@ class ZhuyinInputMethodService : InputMethodService() {
     private var isPhysicalSelecting = false
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        // 0. 返回鍵 (Back Key) 優先處理：嚴禁呼叫 requestShowSelf，徹底解決瀏覽器返回鍵失效或重複彈出鍵盤問題
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (isCandidateGridOpen) {
+                closeCandidateGrid()
+                return true
+            }
+            if (isSentenceSelecting) {
+                sentenceCursor = composingSentence.length
+                isSentenceSelecting = false
+                updateComposingDisplay()
+                return true
+            }
+            if (fullZhuyinBuffer.isNotEmpty() || composingSentence.isNotEmpty() || engine.hasComposing()) {
+                cancelComposing()
+                return true
+            }
+            // 無組字中：直接收起虛擬鍵盤，並放行由系統處理返回上一頁
+            requestHideSelf(0)
+            return super.onKeyDown(keyCode, event)
+        }
+
         // 收到實體鍵盤事件時，確保標記為已連接並折疊面板保留操作視野
         if (!isHardwareKeyboardConnected) {
             isHardwareKeyboardConnected = true
             updateHardwareKeyboardState()
         }
-        if (!isInputViewShown) {
+        if (!isInputViewShown && keyCode != KeyEvent.KEYCODE_BACK) {
             requestShowSelf(0)
         }
 

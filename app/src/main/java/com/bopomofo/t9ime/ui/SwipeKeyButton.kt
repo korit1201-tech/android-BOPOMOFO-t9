@@ -24,6 +24,23 @@ class SwipeKeyButton @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : androidx.appcompat.widget.AppCompatButton(context, attrs, defStyleAttr) {
 
+    init {
+        isAllCaps = false
+        includeFontPadding = false
+        textLocale = java.util.Locale.TRADITIONAL_CHINESE
+        try {
+            val f = androidx.core.content.res.ResourcesCompat.getFont(context, R.font.bopomofo_font)
+            typeface = if (f != null) {
+                android.graphics.Typeface.create(f, android.graphics.Typeface.BOLD)
+            } else {
+                android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
+            }
+        } catch (_: Exception) {
+            typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
+        }
+        paint.isFakeBoldText = true
+    }
+
     enum class Direction {
         LEFT, RIGHT, UP, DOWN
     }
@@ -77,6 +94,21 @@ class SwipeKeyButton @JvmOverloads constructor(
 
             val density = resources.displayMetrics.density
             val sizePx = (132 * density).toInt()
+            val bopomofoTypeface = try {
+                androidx.core.content.res.ResourcesCompat.getFont(context, R.font.bopomofo_font)
+            } catch (_: Exception) {
+                null
+            }
+            val boldTf = if (bopomofoTypeface != null) {
+                android.graphics.Typeface.create(bopomofoTypeface, android.graphics.Typeface.BOLD)
+            } else {
+                android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
+            }
+            listOf(tvUp, tvDown, tvLeft, tvRight).forEach { tv ->
+                tv?.typeface = boldTf
+                tv?.paint?.isFakeBoldText = true
+            }
+
             previewPopup = PopupWindow(view, sizePx, sizePx, false).apply {
                 setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
                 isClippingEnabled = false

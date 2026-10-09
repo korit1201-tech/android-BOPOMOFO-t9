@@ -238,6 +238,22 @@ class UserDictionaryManager private constructor(private val context: Context) {
     }
 
     /**
+     * 刪除指定單筆個人詞彙
+     */
+    fun removeEntry(word: String): Boolean {
+        val removed = synchronized(memoryDict) {
+            memoryDict.remove(word) != null
+        }
+        if (removed) {
+            executor.execute {
+                saveToFile()
+            }
+            onDictionaryChangedListener?.invoke()
+        }
+        return removed
+    }
+
+    /**
      * 清空本機個人詞庫記錄
      */
     fun clearDictionary() {

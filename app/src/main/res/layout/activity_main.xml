@@ -295,6 +295,16 @@
             </LinearLayout>
 
             <Button
+                android:id="@+id/btn_view_dict"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_key_action"
+                android:text="🔍 檢視與編輯專屬詞彙清單"
+                android:textColor="@color/kb_text_primary"
+                android:textSize="14sp" />
+
+            <Button
                 android:id="@+id/btn_clear_dict"
                 style="?android:attr/borderlessButtonStyle"
                 android:layout_width="match_parent"

@@ -19,16 +19,26 @@ object PreferencesRepository {
     const val KEY_ONE_HANDED_MODE = "pref_one_handed_mode"
     const val KEY_THEME = "pref_theme"
     const val KEY_TOLERANT_INPUT_ENABLED = "pref_tolerant_input_enabled"
+    const val KEY_FLOATING_OFFSET_X_DP = "pref_floating_offset_x_dp"
+    const val KEY_FLOATING_OFFSET_Y_DP = "pref_floating_offset_y_dp"
+    const val KEY_FLOATING_WIDTH_DP = "pref_floating_width_dp"
+    const val KEY_FLOATING_HEIGHT_DP = "pref_floating_height_dp"
+    const val KEY_FLOATING_DOCKED = "pref_floating_docked"
 
     // 預設值
     const val DEFAULT_VIBRATION_ENABLED = true
     const val DEFAULT_VIBRATION_STRENGTH = 30
     const val DEFAULT_VIBRATION_MS = 25
     const val DEFAULT_KEYBOARD_HEIGHT_DP = 240
-    const val DEFAULT_KEYBOARD_HEIGHT_LANDSCAPE_DP = 145
+    const val DEFAULT_KEYBOARD_HEIGHT_LANDSCAPE_DP = 115
     const val DEFAULT_ONE_HANDED_MODE = "full"
     const val DEFAULT_THEME = "system"
     const val DEFAULT_TOLERANT_INPUT_ENABLED = true
+    const val DEFAULT_FLOATING_OFFSET_X_DP = 0
+    const val DEFAULT_FLOATING_OFFSET_Y_DP = 0
+    const val DEFAULT_FLOATING_WIDTH_DP = 330
+    const val DEFAULT_FLOATING_HEIGHT_DP = 115
+    const val DEFAULT_FLOATING_DOCKED = false
 
     private fun getPrefs(context: Context): SharedPreferences? {
         return try {
@@ -147,6 +157,76 @@ object PreferencesRepository {
     fun setTolerantInputEnabled(context: Context, enabled: Boolean) {
         try {
             getPrefs(context)?.edit()?.putBoolean(KEY_TOLERANT_INPUT_ENABLED, enabled)?.apply()
+        } catch (_: Exception) {}
+    }
+
+    fun getFloatingOffsetXDp(context: Context): Int {
+        return try {
+            getPrefs(context)?.getInt(KEY_FLOATING_OFFSET_X_DP, DEFAULT_FLOATING_OFFSET_X_DP) ?: DEFAULT_FLOATING_OFFSET_X_DP
+        } catch (_: Exception) {
+            DEFAULT_FLOATING_OFFSET_X_DP
+        }
+    }
+
+    fun setFloatingOffsetXDp(context: Context, dp: Int) {
+        try {
+            getPrefs(context)?.edit()?.putInt(KEY_FLOATING_OFFSET_X_DP, dp)?.apply()
+        } catch (_: Exception) {}
+    }
+
+    fun getFloatingOffsetYDp(context: Context): Int {
+        return try {
+            getPrefs(context)?.getInt(KEY_FLOATING_OFFSET_Y_DP, DEFAULT_FLOATING_OFFSET_Y_DP) ?: DEFAULT_FLOATING_OFFSET_Y_DP
+        } catch (_: Exception) {
+            DEFAULT_FLOATING_OFFSET_Y_DP
+        }
+    }
+
+    fun setFloatingOffsetYDp(context: Context, dp: Int) {
+        try {
+            getPrefs(context)?.edit()?.putInt(KEY_FLOATING_OFFSET_Y_DP, dp)?.apply()
+        } catch (_: Exception) {}
+    }
+
+    fun getFloatingWidthDp(context: Context): Int {
+        return try {
+            getPrefs(context)?.getInt(KEY_FLOATING_WIDTH_DP, DEFAULT_FLOATING_WIDTH_DP) ?: DEFAULT_FLOATING_WIDTH_DP
+        } catch (_: Exception) {
+            DEFAULT_FLOATING_WIDTH_DP
+        }
+    }
+
+    fun setFloatingWidthDp(context: Context, dp: Int) {
+        try {
+            getPrefs(context)?.edit()?.putInt(KEY_FLOATING_WIDTH_DP, dp)?.apply()
+        } catch (_: Exception) {}
+    }
+
+    fun getFloatingHeightDp(context: Context): Int {
+        return try {
+            getPrefs(context)?.getInt(KEY_FLOATING_HEIGHT_DP, DEFAULT_FLOATING_HEIGHT_DP) ?: DEFAULT_FLOATING_HEIGHT_DP
+        } catch (_: Exception) {
+            DEFAULT_FLOATING_HEIGHT_DP
+        }
+    }
+
+    fun setFloatingHeightDp(context: Context, dp: Int) {
+        try {
+            getPrefs(context)?.edit()?.putInt(KEY_FLOATING_HEIGHT_DP, dp)?.apply()
+        } catch (_: Exception) {}
+    }
+
+    fun isFloatingDocked(context: Context): Boolean {
+        return try {
+            getPrefs(context)?.getBoolean(KEY_FLOATING_DOCKED, DEFAULT_FLOATING_DOCKED) ?: DEFAULT_FLOATING_DOCKED
+        } catch (_: Exception) {
+            DEFAULT_FLOATING_DOCKED
+        }
+    }
+
+    fun setFloatingDocked(context: Context, docked: Boolean) {
+        try {
+            getPrefs(context)?.edit()?.putBoolean(KEY_FLOATING_DOCKED, docked)?.apply()
         } catch (_: Exception) {}
     }
 }

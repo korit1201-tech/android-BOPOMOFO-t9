@@ -56,6 +56,28 @@ object ThemeManager {
         R.id.btn_handwriting_clear
     )
 
+    private val ZHUYIN_KEY_IDS = setOf(
+        R.id.key_k1,
+        R.id.key_k2,
+        R.id.key_k3,
+        R.id.key_k4,
+        R.id.key_k5,
+        R.id.key_k6,
+        R.id.key_k7,
+        R.id.key_k8,
+        R.id.key_k9,
+        R.id.key_k10,
+        R.id.key_k11,
+        R.id.key_k12
+    )
+
+    private fun isZhuyinText(text: CharSequence?): Boolean {
+        if (text.isNullOrEmpty()) return false
+        return text.any { ch ->
+            ch in '\u3105'..'\u312F' || ch in "\u02CA\u02C7\u02CB\u02D9" || ch in "ˇˋˊ˙"
+        }
+    }
+
     fun getCurrentTheme(context: Context): AppTheme {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val id = prefs.getString(PREF_THEME, AppTheme.FOLLOW_SYSTEM.id) ?: AppTheme.FOLLOW_SYSTEM.id
@@ -196,6 +218,12 @@ object ThemeManager {
     }
 
     private fun applyRecursive(view: View, colors: ThemeColors, radiusPx: Float) {
+        val bopomofoTypeface = try {
+            androidx.core.content.res.ResourcesCompat.getFont(view.context, R.font.bopomofo_font)
+        } catch (e: Exception) {
+            null
+        }
+
         when {
             view.id == R.id.candidate_scroll || view.id == R.id.candidate_container -> {
                 view.setBackgroundColor(colors.candidateBg)
@@ -205,11 +233,43 @@ object ThemeManager {
                 val bg = if (isAction) colors.actionKeyBg else colors.keyBg
                 view.background = createKeyDrawable(bg, colors.keyPressed, colors.stroke, radiusPx)
                 view.setTextColor(colors.textPrimary)
+                view.isAllCaps = false
+                view.includeFontPadding = false
+                val isZhuyinKey = view.id in ZHUYIN_KEY_IDS || view is com.bopomofo.t9ime.ui.SwipeKeyButton || isZhuyinText(view.text)
+                val isBold = isZhuyinKey || view.typeface?.isBold == true || view.paint.isFakeBoldText
+                if (bopomofoTypeface != null) {
+                    view.typeface = if (isBold) {
+                        android.graphics.Typeface.create(bopomofoTypeface, android.graphics.Typeface.BOLD)
+                    } else {
+                        bopomofoTypeface
+                    }
+                } else if (isBold) {
+                    view.typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
+                }
+                if (isBold) {
+                    view.paint.isFakeBoldText = true
+                }
+                view.textLocale = java.util.Locale.TRADITIONAL_CHINESE
             }
             view is TextView -> {
                 if (view.id == R.id.candidate_more_indicator) {
                     view.setTextColor(colors.accent)
                 }
+                val isZhuyin = isZhuyinText(view.text)
+                val isBold = isZhuyin || view.typeface?.isBold == true || view.paint.isFakeBoldText
+                if (bopomofoTypeface != null) {
+                    view.typeface = if (isBold) {
+                        android.graphics.Typeface.create(bopomofoTypeface, android.graphics.Typeface.BOLD)
+                    } else {
+                        bopomofoTypeface
+                    }
+                } else if (isBold) {
+                    view.typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
+                }
+                if (isBold) {
+                    view.paint.isFakeBoldText = true
+                }
+                view.textLocale = java.util.Locale.TRADITIONAL_CHINESE
             }
         }
 
