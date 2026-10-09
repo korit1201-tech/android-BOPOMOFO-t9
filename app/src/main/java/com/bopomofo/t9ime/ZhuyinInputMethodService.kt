@@ -2781,7 +2781,12 @@ class ZhuyinInputMethodService : InputMethodService() {
                 btnMode123.text = formatMode123Label(chineseLabel)
                 btnLangToggle.text = "英文"
                 btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 13f else 15f)
-                btnSpaceSwipe.text = "空格"
+                val spaceText = "空格"
+                val spaceSpannable = SpannableString(spaceText).apply {
+                    setSpan(StyleSpan(Typeface.BOLD), 0, spaceText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    setSpan(ForegroundColorSpan(ContextCompat.getColor(this@ZhuyinInputMethodService, R.color.kb_text_primary)), 0, spaceText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                btnSpaceSwipe.text = spaceSpannable
                 btnQwertyToggle.visibility = View.VISIBLE
                 btnQwertyToggle.text = "( )"
                 if (::btnComma.isInitialized) btnComma.text = ","

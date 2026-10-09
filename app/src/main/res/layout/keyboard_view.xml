@@ -853,7 +853,8 @@
             android:background="@drawable/bg_key"
             android:text="繁"
             android:textColor="@color/kb_text_secondary"
-            android:textSize="18sp" />
+            android:textSize="18sp"
+            android:textStyle="bold" />
 
         <!-- 手機橫向分離式鍵盤中央間隙 (Split Keyboard Spacer) -->
         <View
