@@ -18,6 +18,7 @@
 
         <!-- 最左側常駐特殊符號/方向鍵盤呼叫按鈕 -->
         <Button
+            android:textAllCaps="false"
             android:id="@+id/btn_symbol_drawer"
             style="?android:attr/borderlessButtonStyle"
             android:layout_width="42dp"
@@ -53,6 +54,7 @@
 
             <!-- 展開候選字多列格柵按鈕 (▼) -->
             <Button
+            android:textAllCaps="false"
                 android:id="@+id/btn_candidate_expand"
                 style="?android:attr/borderlessButtonStyle"
                 android:layout_width="38dp"
@@ -77,6 +79,19 @@
                 android:textSize="22sp"
                 android:textStyle="bold"
                 android:background="@drawable/bg_candidate_more"
+                android:visibility="gone" />
+            <!-- 橫向懸浮小鍵盤收進邊緣按鈕 (⇲ 收起) -->
+            <Button
+                android:textAllCaps="false"
+                android:id="@+id/btn_floating_dock"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="32dp"
+                android:layout_height="match_parent"
+                android:layout_gravity="end|center_vertical"
+                android:background="@drawable/bg_key_action"
+                android:text="⇲"
+                android:textColor="@color/kb_text_secondary"
+                android:textSize="14sp"
                 android:visibility="gone" />
         </FrameLayout>
     </LinearLayout>
@@ -126,6 +141,7 @@
                     android:visibility="visible">
 
                     <Button
+            android:textAllCaps="false"
                         android:id="@+id/btn_sym_1"
                         style="?android:attr/borderlessButtonStyle"
                         android:layout_width="match_parent"
@@ -138,6 +154,7 @@
                         android:textSize="18sp" />
 
                     <Button
+            android:textAllCaps="false"
                         android:id="@+id/btn_sym_2"
                         style="?android:attr/borderlessButtonStyle"
                         android:layout_width="match_parent"
@@ -150,6 +167,7 @@
                         android:textSize="18sp" />
 
                     <Button
+            android:textAllCaps="false"
                         android:id="@+id/btn_sym_3"
                         style="?android:attr/borderlessButtonStyle"
                         android:layout_width="match_parent"
@@ -162,6 +180,7 @@
                         android:textSize="18sp" />
 
                     <Button
+            android:textAllCaps="false"
                         android:id="@+id/btn_sym_4"
                         style="?android:attr/borderlessButtonStyle"
                         android:layout_width="match_parent"
@@ -174,6 +193,7 @@
                         android:textSize="18sp" />
 
                     <Button
+            android:textAllCaps="false"
                         android:id="@+id/btn_sym_5"
                         style="?android:attr/borderlessButtonStyle"
                         android:layout_width="match_parent"
@@ -225,8 +245,10 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_key"
                         android:text="ㄅ ㄉ ㄚ"
+                        android:textAllCaps="false"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="16sp" />
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
 
                     <com.bopomofo.t9ime.ui.SwipeKeyButton
                         android:id="@+id/key_k2"
@@ -237,8 +259,10 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_key"
                         android:text="ㄍ ㄐ ㄞ"
+                        android:textAllCaps="false"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="16sp" />
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
 
                     <com.bopomofo.t9ime.ui.SwipeKeyButton
                         android:id="@+id/key_k3"
@@ -249,8 +273,10 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_key"
                         android:text="ㄓ ㄗ ㄢ ㄦ"
+                        android:textAllCaps="false"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="15sp" />
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
                 </LinearLayout>
 
                 <!-- 第 2 列: K4, K5, K6 -->
@@ -269,8 +295,10 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_key"
                         android:text="ㄆ ㄊ ㄛ"
+                        android:textAllCaps="false"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="16sp" />
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
 
                     <com.bopomofo.t9ime.ui.SwipeKeyButton
                         android:id="@+id/key_k5"
@@ -281,8 +309,10 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_key"
                         android:text="ㄎ ㄑ ㄟ"
+                        android:textAllCaps="false"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="16sp" />
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
 
                     <com.bopomofo.t9ime.ui.SwipeKeyButton
                         android:id="@+id/key_k6"
@@ -293,8 +323,10 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_key"
                         android:text="ㄔ ㄘ ㄣ ㄧ"
+                        android:textAllCaps="false"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="15sp" />
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
                 </LinearLayout>
 
                 <!-- 第 3 列: K7, K8, K9 -->
@@ -313,8 +345,10 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_key"
                         android:text="ㄇ ㄋ ㄜ"
+                        android:textAllCaps="false"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="16sp" />
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
 
                     <com.bopomofo.t9ime.ui.SwipeKeyButton
                         android:id="@+id/key_k8"
@@ -325,8 +359,10 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_key"
                         android:text="ㄏ ㄒ ㄠ ㄡ"
+                        android:textAllCaps="false"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="15sp" />
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
 
                     <com.bopomofo.t9ime.ui.SwipeKeyButton
                         android:id="@+id/key_k9"
@@ -337,8 +373,10 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_key"
                         android:text="ㄕ ㄙ ㄤ ㄨ"
+                        android:textAllCaps="false"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="15sp" />
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
                 </LinearLayout>
 
                 <!-- 第 4 列: K10, K11, K12 -->
@@ -357,8 +395,10 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_key"
                         android:text="ㄈ ㄌ ㄝ"
+                        android:textAllCaps="false"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="16sp" />
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
 
                     <com.bopomofo.t9ime.ui.SwipeKeyButton
                         android:id="@+id/key_k11"
@@ -369,8 +409,10 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_key"
                         android:text="ˇ ˋ ˊ ˙"
+                        android:textAllCaps="false"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="18sp" />
+                        android:textSize="18sp"
+                        android:textStyle="bold" />
 
                     <com.bopomofo.t9ime.ui.SwipeKeyButton
                         android:id="@+id/key_k12"
@@ -381,8 +423,10 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_key"
                         android:text="ㄖ ㄥ ㄩ"
+                        android:textAllCaps="false"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="16sp" />
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
                 </LinearLayout>
 
             </LinearLayout>
@@ -395,6 +439,7 @@
                 android:orientation="vertical">
 
                 <Button
+            android:textAllCaps="false"
                     android:id="@+id/btn_backspace"
                     style="?android:attr/borderlessButtonStyle"
                     android:layout_width="match_parent"
@@ -407,6 +452,7 @@
                     android:textSize="18sp" />
 
                 <Button
+            android:textAllCaps="false"
                     android:id="@+id/btn_clear"
                     style="?android:attr/borderlessButtonStyle"
                     android:layout_width="match_parent"
@@ -419,6 +465,7 @@
                     android:textSize="14sp" />
 
                 <Button
+            android:textAllCaps="false"
                     android:id="@+id/btn_sym_at"
                     style="?android:attr/borderlessButtonStyle"
                     android:layout_width="match_parent"
@@ -487,6 +534,7 @@
                 android:background="@drawable/bg_key" />
 
             <Button
+            android:textAllCaps="false"
                 android:id="@+id/btn_handwriting_clear"
                 style="?android:attr/borderlessButtonStyle"
                 android:layout_width="64dp"
@@ -568,6 +616,7 @@
                         android:orientation="horizontal">
 
                         <Button
+            android:textAllCaps="false"
                             android:id="@+id/tab_sym_fullwidth"
                             style="?android:attr/borderlessButtonStyle"
                             android:layout_width="wrap_content"
@@ -578,6 +627,7 @@
                             android:textColor="@color/kb_text_primary" />
 
                         <Button
+            android:textAllCaps="false"
                             android:id="@+id/tab_sym_halfwidth"
                             style="?android:attr/borderlessButtonStyle"
                             android:layout_width="wrap_content"
@@ -588,6 +638,7 @@
                             android:textColor="@color/kb_text_primary" />
 
                         <Button
+            android:textAllCaps="false"
                             android:id="@+id/tab_sym_dpad"
                             style="?android:attr/borderlessButtonStyle"
                             android:layout_width="wrap_content"
@@ -598,6 +649,7 @@
                             android:textColor="@color/kb_text_primary" />
 
                         <Button
+            android:textAllCaps="false"
                             android:id="@+id/tab_sym_math"
                             style="?android:attr/borderlessButtonStyle"
                             android:layout_width="wrap_content"
@@ -608,6 +660,7 @@
                             android:textColor="@color/kb_text_primary" />
 
                         <Button
+            android:textAllCaps="false"
                             android:id="@+id/tab_sym_clipboard"
                             style="?android:attr/borderlessButtonStyle"
                             android:layout_width="wrap_content"
@@ -618,6 +671,7 @@
                             android:textColor="@color/kb_text_primary" />
 
                         <Button
+            android:textAllCaps="false"
                             android:id="@+id/tab_sym_emoji"
                             style="?android:attr/borderlessButtonStyle"
                             android:layout_width="wrap_content"
@@ -628,6 +682,7 @@
                             android:textColor="@color/kb_text_primary" />
 
                         <Button
+            android:textAllCaps="false"
                             android:id="@+id/tab_sym_kaomoji"
                             style="?android:attr/borderlessButtonStyle"
                             android:layout_width="wrap_content"
@@ -638,6 +693,7 @@
                             android:textColor="@color/kb_text_primary" />
 
                         <Button
+            android:textAllCaps="false"
                             android:id="@+id/tab_sym_snippet"
                             style="?android:attr/borderlessButtonStyle"
                             android:layout_width="wrap_content"
@@ -691,6 +747,7 @@
 
 
                 <Button
+            android:textAllCaps="false"
                     android:id="@+id/btn_candidate_grid_close"
                     style="?android:attr/borderlessButtonStyle"
                     android:layout_width="48dp"
@@ -730,6 +787,7 @@
         android:orientation="horizontal">
 
         <Button
+            android:textAllCaps="false"
             android:id="@+id/btn_mode_123"
             style="?android:attr/borderlessButtonStyle"
             android:layout_width="0dp"
@@ -746,6 +804,7 @@
             android:textSize="16sp" />
 
         <com.bopomofo.t9ime.ui.SwipeKeyButton
+            android:textAllCaps="false"
             android:id="@+id/btn_qwerty_toggle"
             style="?android:attr/borderlessButtonStyle"
             android:layout_width="0dp"
@@ -762,6 +821,7 @@
             android:textSize="16sp" />
 
         <Button
+            android:textAllCaps="false"
             android:id="@+id/btn_comma"
             style="?android:attr/borderlessButtonStyle"
             android:layout_width="0dp"
@@ -779,6 +839,7 @@
 
         <!-- 繁/簡 空白鍵 (支援滑動切換繁簡) -->
         <com.bopomofo.t9ime.ui.SwipeKeyButton
+            android:textAllCaps="false"
             android:id="@+id/btn_space_swipe"
             style="?android:attr/borderlessButtonStyle"
             android:layout_width="0dp"
@@ -803,6 +864,7 @@
             android:visibility="gone" />
 
         <Button
+            android:textAllCaps="false"
             android:id="@+id/btn_period"
             style="?android:attr/borderlessButtonStyle"
             android:layout_width="0dp"
@@ -820,6 +882,7 @@
 
         <!-- 中/英 切換鍵 (取代原來的放大鏡) -->
         <Button
+            android:textAllCaps="false"
             android:id="@+id/btn_lang_toggle"
             style="?android:attr/borderlessButtonStyle"
             android:layout_width="0dp"
@@ -837,6 +900,7 @@
 
         <!-- 全鍵盤專用獨立換行鍵 (方案 A) -->
         <Button
+            android:textAllCaps="false"
             android:id="@+id/btn_full_enter"
             style="?android:attr/borderlessButtonStyle"
             android:layout_width="0dp"
@@ -852,6 +916,86 @@
             android:textColor="@color/kb_text_primary"
             android:textSize="18sp"
             android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- 橫向 9 鍵專屬懸浮底條 (包含拖曳把手與雙向/四角自由縮放錨點) -->
+    <RelativeLayout
+        android:id="@+id/layout_floating_drag_bar"
+        android:layout_width="match_parent"
+        android:layout_height="22dp"
+        android:layout_marginTop="2dp"
+        android:visibility="gone">
+
+        <!-- 左下角縮放錨點 (向左/向下拖曳縮放長寬，指向左下↔右上) -->
+        <TextView
+            android:id="@+id/btn_floating_resize_left"
+            android:layout_width="32dp"
+            android:layout_height="match_parent"
+            android:layout_alignParentStart="true"
+            android:layout_centerVertical="true"
+            android:gravity="center"
+            android:text="⤢"
+            android:textColor="@color/kb_text_secondary"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:clickable="true"
+            android:focusable="true" />
+
+        <!-- 中央拖曳移動把手條 -->
+        <FrameLayout
+            android:id="@+id/floating_drag_handle"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_toEndOf="@id/btn_floating_resize_left"
+            android:layout_toStartOf="@+id/btn_floating_resize_right"
+            android:clickable="true"
+            android:focusable="true">
+
+            <View
+                android:layout_width="60dp"
+                android:layout_height="4dp"
+                android:layout_gravity="center"
+                android:background="@drawable/bg_resize_pill" />
+        </FrameLayout>
+
+        <!-- 右下角縮放錨點 (向右/向下拖曳自由調整長寬，指向左上↔右下) -->
+        <TextView
+            android:id="@+id/btn_floating_resize_right"
+            android:layout_width="32dp"
+            android:layout_height="match_parent"
+            android:layout_alignParentEnd="true"
+            android:layout_centerVertical="true"
+            android:gravity="center"
+            android:text="⤡"
+            android:textColor="@color/kb_text_secondary"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:clickable="true"
+            android:focusable="true" />
+    </RelativeLayout>
+
+    <!-- 橫向懸浮小鍵盤收進邊緣後的迷你浮標 (點擊立即還原展開鍵盤) -->
+    <LinearLayout
+        android:id="@+id/layout_floating_docked_handle"
+        android:layout_width="wrap_content"
+        android:layout_height="36dp"
+        android:background="@drawable/bg_key_action"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tv_floating_docked_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⌨ 喚出注音鍵盤"
+            android:textColor="@color/kb_text_primary"
+            android:textSize="13sp"
+            android:textStyle="bold" />
     </LinearLayout>
 
 </LinearLayout>
