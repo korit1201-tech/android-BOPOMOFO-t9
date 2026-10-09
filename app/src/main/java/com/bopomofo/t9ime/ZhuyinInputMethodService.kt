@@ -1249,10 +1249,6 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
             row1?.addView(createQwertyKey(pair.first, 1f, pair.second))
         }
-        // 在直版模式下，退格鍵移至第一排右側（P 的右邊）
-        if (!isLand) {
-            row1?.addView(createQwertyDelKey(1.3f))
-        }
 
         row2?.removeAllViews()
         if (!isLand) {
@@ -1303,30 +1299,30 @@ class ZhuyinInputMethodService : InputMethodService() {
             row3?.addView(createQwertyKey(pair.first, 1f, pair.second))
         }
 
-        // 3. ENTER 換行鍵
-        val enterWeight = if (isLand) 1.5f else 1.65f
-        val btnQwertyEnter = Button(this).apply {
-            text = "↵"
-            textSize = if (isLand) 15f else 18f
-            isAllCaps = false
-            includeFontPadding = false
-            minHeight = 0
-            setPadding(0, 0, 0, 0)
-            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-            setBackgroundResource(R.drawable.bg_key_action)
-            val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, enterWeight).apply {
-                setMargins(1, 1, 1, 1)
+        // 3. 右側按鍵：直向模式下此處為退格鍵 ⌫；橫向分離模式下為 ↵ Enter ＋ ⌫
+        if (!isLand) {
+            row3?.addView(createQwertyDelKey(1.5f))
+        } else {
+            val enterWeight = 1.5f
+            val btnQwertyEnter = Button(this).apply {
+                text = "↵"
+                textSize = 15f
+                isAllCaps = false
+                includeFontPadding = false
+                minHeight = 0
+                setPadding(0, 0, 0, 0)
+                setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
+                setBackgroundResource(R.drawable.bg_key_action)
+                val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, enterWeight).apply {
+                    setMargins(1, 1, 1, 1)
+                }
+                layoutParams = params
+                setOnClickListener {
+                    triggerHapticFeedback()
+                    performEnterAction()
+                }
             }
-            layoutParams = params
-            setOnClickListener {
-                triggerHapticFeedback()
-                performEnterAction()
-            }
-        }
-        row3?.addView(btnQwertyEnter)
-
-        // 4. 26 鍵專屬退格鍵 (橫向模式時保留在 Row 3 最右側)
-        if (isLand) {
+            row3?.addView(btnQwertyEnter)
             row3?.addView(createQwertyDelKey(1.5f))
         }
     }
@@ -2715,11 +2711,19 @@ class ZhuyinInputMethodService : InputMethodService() {
         btnSpaceSwipe.includeFontPadding = false
         btnSpaceSwipe.setLineSpacing(0f, 0.9f)
 
-        if (::btnFullEnter.isInitialized) {
-            btnFullEnter.visibility = if (currentMode == KeyboardMode.ZHUYIN_FULL) View.VISIBLE else View.GONE
-        }
-
         val isLand = isPhoneLandscapeMode()
+
+        if (::btnFullEnter.isInitialized) {
+            val showFullEnter = currentMode == KeyboardMode.ZHUYIN_FULL || (!isLand && currentMode == KeyboardMode.ENGLISH_QWERTY)
+            btnFullEnter.visibility = if (showFullEnter) View.VISIBLE else View.GONE
+            if (showFullEnter) {
+                if (currentMode == KeyboardMode.ZHUYIN_FULL) {
+                    btnFullEnter.text = formatFullZhuyinEnterLabel()
+                } else {
+                    btnFullEnter.text = "↵"
+                }
+            }
+        }
         val defaultBtnTextSize = if (isLand) 13.5f else 16f
         val langBtnTextSize = if (isLand) 11.5f else 14f
 
@@ -2808,7 +2812,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 btnMode123.text = formatMode123Label("123")
                 btnLangToggle.text = formatAbbrevLabel()
                 btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 12f else 14f)
-                btnSpaceSwipe.text = formatSpaceChineseSubModeLabel("English", isCompact = false)
+                btnSpaceSwipe.text = formatSpaceChineseSubModeLabel("English", isCompact = !isLand)
                 btnQwertyToggle.visibility = View.GONE
                 if (::btnComma.isInitialized) btnComma.text = ","
                 if (::btnPeriod.isInitialized) btnPeriod.text = "."
