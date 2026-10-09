@@ -4683,11 +4683,42 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
 
         // 收到實體鍵盤事件時，確保標記為已連接並折疊面板保留操作視野
-        if (!isHardwareKeyboardConnected) {
+        // 系統控制鍵、音量鍵、媒體鍵等一律直接放行，絕不喚醒輸入法
+        if (KeyEvent.isModifierKey(keyCode) && keyCode != KeyEvent.KEYCODE_SHIFT_LEFT && keyCode != KeyEvent.KEYCODE_SHIFT_RIGHT) {
+            return super.onKeyDown(keyCode, event)
+        }
+        val isSystemOrMediaKey = when (keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE,
+            KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_MEDIA_STOP, KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+            KeyEvent.KEYCODE_MEDIA_REWIND, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MUTE,
+            KeyEvent.KEYCODE_HEADSETHOOK, KeyEvent.KEYCODE_POWER, KeyEvent.KEYCODE_CAMERA,
+            KeyEvent.KEYCODE_CALL, KeyEvent.KEYCODE_ENDCALL, KeyEvent.KEYCODE_BRIGHTNESS_UP,
+            KeyEvent.KEYCODE_BRIGHTNESS_DOWN, KeyEvent.KEYCODE_APP_SWITCH, KeyEvent.KEYCODE_HOME,
+            KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_SEARCH, KeyEvent.KEYCODE_WAKEUP, KeyEvent.KEYCODE_SLEEP -> true
+            else -> false
+        }
+        if (isSystemOrMediaKey) {
+            return super.onKeyDown(keyCode, event)
+        }
+
+        // 僅當按鍵為文字輸入鍵、注音鍵、功能編輯鍵時才作為外接打字喚起輸入法
+        val isTypingKey = event.isPrintingKey ||
+                keyCode in KeyEvent.KEYCODE_1..KeyEvent.KEYCODE_9 ||
+                keyCode in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9 ||
+                keyCode == KeyEvent.KEYCODE_DEL || keyCode == KeyEvent.KEYCODE_FORWARD_DEL ||
+                keyCode == KeyEvent.KEYCODE_SPACE || keyCode == KeyEvent.KEYCODE_ENTER ||
+                keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER || keyCode == KeyEvent.KEYCODE_TAB ||
+                keyCode == KeyEvent.KEYCODE_GRAVE || keyCode == KeyEvent.KEYCODE_ESCAPE ||
+                keyCode in KeyEvent.KEYCODE_DPAD_UP..KeyEvent.KEYCODE_DPAD_RIGHT ||
+                keyCode == KeyEvent.KEYCODE_SHIFT_LEFT || keyCode == KeyEvent.KEYCODE_SHIFT_RIGHT ||
+                DAQIAN_KEY_MAP.containsKey(keyCode)
+
+        if (!isHardwareKeyboardConnected && isTypingKey) {
             isHardwareKeyboardConnected = true
             updateHardwareKeyboardState()
         }
-        if (!isInputViewShown && keyCode != KeyEvent.KEYCODE_BACK) {
+        if (!isInputViewShown && isTypingKey) {
             requestShowSelf(0)
         }
 
