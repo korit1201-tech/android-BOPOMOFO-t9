@@ -4129,11 +4129,28 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     /**
+     * 實體鍵盤整句上屏：以片語（實際讀音）學習，而非把整句當成一個詞學進詞庫。
+     */
+    private fun commitPhysicalSentence(sentence: String) {
+        val syllables = composingSyllables.toList()
+        val pinned = pinnedSentenceChars.toMap()
+        if (isPersonalizedLearningAllowed() && !sentence.startsWith("【")) {
+            val words = engine.learnCommittedSentence(sentence, syllables, pinned, lastCommittedWord)
+            for ((_, pair) in replacedCharsMap) engine.learnWord(pair.first, pair.second)
+            // 上下文記為最後一個詞，其餘重設交給 commit 流程（learn=false 避免再學整句）
+            commitProcessedWordWithUserDict(sentence, learn = false)
+            words.lastOrNull()?.let { lastCommittedWord = it; engine.currentContextWord = it }
+        } else {
+            commitProcessedWordWithUserDict(sentence, learn = false)
+        }
+    }
+
+    /**
      * 詞彙確認上屏與個人詞庫記憶（等確定出去才紀錄成優選）
      */
-    private fun commitProcessedWordWithUserDict(word: String, zhuyin: String = "") {
+    private fun commitProcessedWordWithUserDict(word: String, zhuyin: String = "", learn: Boolean = true) {
         if (word.startsWith("【")) return
-        if (isPersonalizedLearningAllowed()) {
+        if (learn && isPersonalizedLearningAllowed()) {
             // 1. 記錄選定確認的整組詞彙，並即時注入 Trie 字典賦予絕對首選優選
             engine.learnWord(word, zhuyin)
 
@@ -4584,7 +4601,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
         if (composingSentence.isNotEmpty()) {
             val finalWord = composingSentence.toString()
-            commitProcessedWordWithUserDict(finalWord)
+            commitPhysicalSentence(finalWord)
             composingSentence.clear()
             composingSyllables.clear()
             pinnedSentenceChars.clear()
@@ -4634,7 +4651,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 }
             }
             val finalWord = composingSentence.toString()
-            commitProcessedWordWithUserDict(finalWord)
+            commitPhysicalSentence(finalWord)
             composingSentence.clear()
             composingSyllables.clear()
             pinnedSentenceChars.clear()
@@ -4661,7 +4678,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 }
             }
             val finalWord = composingSentence.toString()
-            commitProcessedWordWithUserDict(finalWord)
+            commitPhysicalSentence(finalWord)
             composingSentence.clear()
             composingSyllables.clear()
             pinnedSentenceChars.clear()
