@@ -185,7 +185,7 @@ object ThemeManager {
         }
     }
 
-    private fun createKeyDrawable(bgColor: Int, pressedColor: Int, strokeColor: Int, radiusPx: Float): StateListDrawable {
+    fun createKeyDrawable(bgColor: Int, pressedColor: Int, strokeColor: Int, radiusPx: Float): StateListDrawable {
         val normal = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = radiusPx
@@ -229,7 +229,11 @@ object ThemeManager {
                 view.setBackgroundColor(colors.candidateBg)
             }
             view is Button -> {
-                val isAction = view.id in ACTION_KEY_IDS
+                val isAction = view.id in ACTION_KEY_IDS ||
+                        view.tag == "shift" ||
+                        view.text == "⌫" ||
+                        view.text == "↵" ||
+                        (view.parent as? View)?.id == R.id.qwerty_row_symbols
                 val bg = if (isAction) colors.actionKeyBg else colors.keyBg
                 view.background = createKeyDrawable(bg, colors.keyPressed, colors.stroke, radiusPx)
                 view.setTextColor(colors.textPrimary)
