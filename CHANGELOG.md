@@ -2,6 +2,20 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.5.1] - 2026-10-12
+
+### 🎨 修正：英文全鍵盤主題顏色跟隨與 Action 按鍵樣式 (Build 81)
+
+- **根因**：
+  1. `setupQwertyLayout` 動態建立按鈕後未呼叫 `ThemeManager.applyTheme`，按鈕背景停留在預設 XML Drawable。
+  2. `ThemeManager` 未將 QWERTY 的動態功能鍵（Shift、退格 ⌫、換行 ↵、頂部常用符號列）識別為 Action 按鍵。
+  3. `applyShiftStyle` 切換大小寫狀態時寫死了靜態 Drawable，蓋掉主題色。
+  4. 底欄縮寫鍵文字顏色硬編碼為預設色彩。
+- **修正**：
+  1. `setupQwertyLayout` 與切換至英文模式時自動套用當前主題顏色。
+  2. `ThemeManager` 新增對動態 Shift、退格、Enter 與符號列的辨識，套用正確功能鍵色彩。
+  3. `applyShiftStyle` 與 `formatAbbrevLabel` 改採動態主題色彩。
+
 ## [v2.5.0] - 2026-10-12
 
 ### 🧠 九鍵斷詞與注音組合重構：不再冒出怪詞，連打整句可逐詞修正 (Build 80)

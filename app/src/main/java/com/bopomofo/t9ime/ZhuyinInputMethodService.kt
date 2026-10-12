@@ -1325,6 +1325,9 @@ class ZhuyinInputMethodService : InputMethodService() {
             row3?.addView(btnQwertyEnter)
             row3?.addView(createQwertyDelKey(1.5f))
         }
+
+        val currentTheme = ThemeManager.getCurrentTheme(this)
+        ThemeManager.applyTheme(layoutQwerty, currentTheme)
     }
 
     private fun createQwertyDelKey(weight: Float): Button {
@@ -1453,21 +1456,25 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun applyShiftStyle(btn: Button) {
+        val currentTheme = ThemeManager.getCurrentTheme(this)
+        val colors = ThemeManager.getThemeColors(this, currentTheme)
+        val density = resources.displayMetrics.density
+        val radiusPx = 6f * density
         when (englishCaseState) {
             EnglishCaseState.LOWER -> {
                 btn.text = "⇧"
-                btn.setTextColor(ContextCompat.getColor(this, R.color.kb_text_primary))
-                btn.setBackgroundResource(R.drawable.bg_key_action)
+                btn.setTextColor(colors.textPrimary)
+                btn.background = ThemeManager.createKeyDrawable(colors.actionKeyBg, colors.keyPressed, colors.stroke, radiusPx)
             }
             EnglishCaseState.FIRST_UPPER -> {
                 btn.text = "⬆"
-                btn.setTextColor(ContextCompat.getColor(this, R.color.kb_accent))
-                btn.setBackgroundResource(R.drawable.bg_key_action)
+                btn.setTextColor(colors.accent)
+                btn.background = ThemeManager.createKeyDrawable(colors.actionKeyBg, colors.keyPressed, colors.stroke, radiusPx)
             }
             EnglishCaseState.ALL_UPPER -> {
                 btn.text = "⇪"
-                btn.setTextColor(Color.WHITE)
-                btn.setBackgroundResource(R.drawable.bg_key_active)
+                btn.setTextColor(android.graphics.Color.WHITE)
+                btn.background = ThemeManager.createKeyDrawable(colors.accent, colors.keyPressed, colors.stroke, radiusPx)
             }
         }
     }
@@ -2619,8 +2626,10 @@ class ZhuyinInputMethodService : InputMethodService() {
         val fullText = "$line1\n$line2"
         val spannable = SpannableString(fullText)
         val split = line1.length
-        val primaryColor = ContextCompat.getColor(this, R.color.kb_text_primary)
-        val secondaryColor = ContextCompat.getColor(this, R.color.kb_text_secondary)
+        val currentTheme = ThemeManager.getCurrentTheme(this)
+        val themeColors = ThemeManager.getThemeColors(this, currentTheme)
+        val primaryColor = themeColors.textPrimary
+        val secondaryColor = themeColors.textSecondary
 
         val mainSize = if (isLand) 1.10f else 1.40f
         val subSize = if (isLand) 0.48f else 0.55f
@@ -2774,6 +2783,9 @@ class ZhuyinInputMethodService : InputMethodService() {
                 if (::layoutZhuyinFull.isInitialized) layoutZhuyinFull.visibility = View.GONE
                 layoutQwerty.visibility = View.VISIBLE
                 if (::layoutHandwriting.isInitialized) layoutHandwriting.visibility = View.GONE
+
+                val currentTheme = ThemeManager.getCurrentTheme(this)
+                ThemeManager.applyTheme(layoutQwerty, currentTheme)
 
                 btnMode123.text = formatMode123Label("123")
                 btnLangToggle.text = formatAbbrevLabel()
