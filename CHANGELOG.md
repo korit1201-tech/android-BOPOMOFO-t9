@@ -2,6 +2,14 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.5.2] - 2026-10-13
+
+### 🐛 修正：實體鍵盤整句上屏不再把整句當成一個詞學進個人詞庫 (Build 82)
+
+- **根因**：實體鍵盤按 Space/Enter/Ctrl+Enter 上屏整句時，以 `learnWord(整句, "")` 學習，讀音取每字「第一讀音」，多音字學錯，且整句變成單一 Trie 詞條並佔用個人詞庫名額。
+- **修正**：新增 `ZhuyinT9Engine.learnCommittedSentence`：依輸入音節與最終分詞，把 2~4 字片語以**實際讀音**（`resolveReading`，依使用者所打聲調挑選讀音）各自學習；單字只在使用者手動改字時學習；讀音無法確定（簡拼、詞庫無此詞）時略過，不污染詞庫；並學習相鄰片語的 bigram。
+- 影響範圍：僅實體鍵盤整句上屏。九鍵與全鍵盤行為不變。
+
 ## [v2.5.1] - 2026-10-12
 
 ### 🎨 修正：英文全鍵盤主題顏色跟隨與 Action 按鍵樣式 (Build 81)

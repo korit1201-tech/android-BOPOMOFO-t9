@@ -1113,6 +1113,63 @@ class ZhuyinT9Engine(private val context: Context) {
         }
     }
 
+    private fun toneOf(s: String): Char? = s.find { it in "ˇˋˊ˙" }
+
+    /**
+     * 依使用者實際輸入的音節，找出該詞在詞庫中的「真實讀音」（多音字不再取第一讀音）。
+     * 找不到（例如音節只是聲母簡拼、詞庫沒有此詞）回傳 null，呼叫端應略過學習，避免污染個人詞庫。
+     */
+    fun resolveReading(word: String, syllables: List<String>): String? {
+        if (word.isEmpty() || syllables.size != word.length) return null
+        val clean = syllables.joinToString("") { it.filter { c -> c !in "ˇˋˊ˙ " } }
+        val userTones = syllables.map { toneOf(it) }
+        fun toneMisses(zhuyin: String): Int {
+            val parts = if (zhuyin.contains(' ')) zhuyin.split(' ').filter { it.isNotEmpty() }
+                        else if (word.length == 1) listOf(zhuyin)
+                        else SyllableManager.splitFullZhuyin(zhuyin, word.length) ?: return 0
+            if (parts.size != word.length) return 0
+            return parts.indices.count { userTones[it] != null && userTones[it] != toneOf(parts[it]) }
+        }
+        val exact = fullZhuyinWordMap[clean]?.filter { it.word == word }
+        if (!exact.isNullOrEmpty()) return exact.minByOrNull { toneMisses(it.zhuyin) }!!.zhuyin
+        if (word.length == 1) {
+            val readings = charZhuyinMap[word[0]] ?: return null
+            val matched = readings.filter { it.filter { c -> c !in "ˇˋˊ˙ " } == clean }
+            if (matched.isNotEmpty()) return matched.minByOrNull { toneMisses(it) }
+            return readings.firstOrNull { it.filter { c -> c !in "ˇˋˊ˙ " }.startsWith(clean) }
+        }
+        return null
+    }
+
+    /**
+     * 實體鍵盤整句上屏時的學習（取代「整句當一個詞學」）：
+     * 依音節與最終分詞，把 2~4 字片語以實際讀音各自學習；單字只在使用者手動改字（pinned）時學習；
+     * 並學習相鄰片語的 bigram。回傳最終分詞，供呼叫端更新上下文。
+     */
+    fun learnCommittedSentence(
+        sentence: String,
+        syllables: List<String>,
+        pinned: Map<Int, String>,
+        previousWord: String?
+    ): List<String> {
+        var words = if (syllables.size == sentence.length) findBestSentenceFromSyllables(syllables, pinned) else emptyList()
+        if (words.joinToString("") != sentence) words = sentence.map { it.toString() }
+        var prev = previousWord
+        var pos = 0
+        for (w in words) {
+            val span = pos until pos + w.length
+            val learnable = if (w.length == 1) pinned.containsKey(pos) else w.length in 2..4
+            if (learnable && syllables.size == sentence.length) {
+                val reading = resolveReading(w, syllables.subList(span.first, span.last + 1))
+                if (reading != null) learnWord(w, reading)
+            }
+            if (prev != null && prev != w && prev.length in 1..8 && w.length in 1..8) learnBigram(prev, w)
+            prev = w
+            pos += w.length
+        }
+        return words
+    }
+
     /**
      * 41 鍵大千注音全鍵盤專屬預測與候選檢索引擎（支援聲母簡拼、混合簡打與全拼聯想）
      */
