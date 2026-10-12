@@ -7,7 +7,12 @@ data class DictEntry(
     val word: String,
     val zhuyin: String,
     val weight: Int,
-    val isTolerant: Boolean = false
+    val isTolerant: Boolean = false,
+    /**
+     * 九鍵專用：此候選只涵蓋目前輸入的前 N 個注音鍵（選取後先上屏此詞，其餘按鍵繼續組字）。
+     * -1 表示涵蓋全部按鍵（一般候選，其他輸入模式一律使用預設值）。
+     */
+    val consumedKeys: Int = -1
 )
 
 /**
@@ -18,10 +23,39 @@ class TrieNode {
     // LinkedHashMap<word, DictEntry>：插入時去重，相同詞取 weight 最大者，
     // 避免 searchExact 每次執行昂貴的 distinctBy 操作
     val exactEntries = LinkedHashMap<String, DictEntry>()
+
+    /** 依權重排序的前 [TOP_ENTRIES_SIZE] 名詞條快取（九鍵斷詞使用），插入新詞時失效 */
+    @Volatile
+    var topEntriesCache: List<DictEntry>? = null
+
+    /**
+     * 此節點權重最高的幾個詞條。一個節點常有上百個詞條（九鍵一鍵對應多個注音），
+     * 斷詞只需要其中最常用的幾個，避免每次按鍵都對所有詞條計算成本。
+     */
+    fun topEntries(): List<DictEntry> {
+        val cached = topEntriesCache
+        if (cached != null) return cached
+        val computed = if (exactEntries.size <= TOP_ENTRIES_SIZE) {
+            exactEntries.values.toList()
+        } else {
+            exactEntries.values.sortedByDescending { it.weight }.take(TOP_ENTRIES_SIZE)
+        }
+        topEntriesCache = computed
+        return computed
+    }
+
+    companion object {
+        const val TOP_ENTRIES_SIZE = 16
+    }
 }
 
 class TrieDictionary {
     val root = TrieNode()
+
+    private companion object {
+        /** searchPrefixBest 每個子節點只取權重最高的前幾名 */
+        const val PREFIX_PER_NODE_LIMIT = 6
+    }
 
     fun insert(entry: DictEntry) {
         val seqNoTone = KeyMapping.getSequence(entry.zhuyin, ignoreTones = true)
@@ -60,6 +94,7 @@ class TrieDictionary {
         val existing = curr.exactEntries[entry.word]
         if (existing == null || entry.weight > existing.weight) {
             curr.exactEntries[entry.word] = entry
+            curr.topEntriesCache = null
         }
     }
 
@@ -115,6 +150,83 @@ class TrieDictionary {
                 compareByDescending<DictEntry> { !it.isTolerant }
                     .thenByDescending { it.weight }
             )
+    }
+
+    /**
+     * 延伸詞：比目前輸入更長的詞。extraKeys 為尚未輸入的按鍵數（含聲調鍵）。
+     */
+    class Extension(val entry: DictEntry, val extraKeys: Int)
+
+    /**
+     * 九鍵專用前綴查詢：走訪整個子樹（深度 <= maxDepth），依權重取最佳 limit 個延伸詞。
+     * 與 searchPrefix 不同：不以走訪順序截斷，先插入的分支不會佔滿名額、擠掉更常用的詞。
+     */
+    fun searchPrefixBest(
+        sequence: List<Int>,
+        maxDepth: Int,
+        includeTolerant: Boolean,
+        limit: Int
+    ): List<DictEntry> {
+        if (sequence.isEmpty()) return emptyList()
+        val targetNode = searchNode(sequence) ?: return emptyList()
+        return collectExtensions(
+            targetNode, maxDepth, includeTolerant, targetNode.exactEntries.keys, PREFIX_PER_NODE_LIMIT
+        )
+            .values
+            .map { it.entry }
+            .sortedWith(
+                compareByDescending<DictEntry> { !it.isTolerant }
+                    .thenByDescending { it.weight }
+            )
+            .take(limit)
+    }
+
+    /**
+     * 蒐集 node 之下（相對層級 1..maxDepth+1）的延伸詞；同一個詞保留權重最高的詞條與最少缺鍵數。
+     * perNodeLimit：每個子節點只取權重最高的前幾名（子樹很大時避免掃描所有詞條）。
+     */
+    fun collectExtensions(
+        node: TrieNode,
+        maxDepth: Int,
+        includeTolerant: Boolean,
+        excludeWords: Set<String>? = null,
+        perNodeLimit: Int = Int.MAX_VALUE
+    ): Map<String, Extension> {
+        val result = HashMap<String, Extension>()
+        collectExtensionsRec(node, 1, maxDepth + 1, includeTolerant, excludeWords, perNodeLimit, result)
+        return result
+    }
+
+    private fun collectExtensionsRec(
+        node: TrieNode,
+        level: Int,
+        maxLevel: Int,
+        includeTolerant: Boolean,
+        excludeWords: Set<String>?,
+        perNodeLimit: Int,
+        result: MutableMap<String, Extension>
+    ) {
+        if (level > maxLevel) return
+        for (child in node.children.values) {
+            val entries: Collection<DictEntry> =
+                if (perNodeLimit == Int.MAX_VALUE) child.exactEntries.values
+                else child.topEntries().let { if (it.size > perNodeLimit) it.subList(0, perNodeLimit) else it }
+            for (e in entries) {
+                if (!includeTolerant && e.isTolerant) continue
+                if (excludeWords != null && e.word in excludeWords) continue
+                val old = result[e.word]
+                if (old == null) {
+                    result[e.word] = Extension(e, level)
+                } else {
+                    val bestEntry = if (e.weight > old.entry.weight) e else old.entry
+                    val bestExtra = minOf(level, old.extraKeys)
+                    if (bestEntry !== old.entry || bestExtra != old.extraKeys) {
+                        result[e.word] = Extension(bestEntry, bestExtra)
+                    }
+                }
+            }
+            collectExtensionsRec(child, level + 1, maxLevel, includeTolerant, excludeWords, perNodeLimit, result)
+        }
     }
 
     private fun collectPrefix(

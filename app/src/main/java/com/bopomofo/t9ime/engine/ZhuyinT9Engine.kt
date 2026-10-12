@@ -63,6 +63,32 @@ class ZhuyinT9Engine(private val context: Context) {
 
     companion object {
         val TONE_SYMBOLS = listOf(' ', 'ˇ', 'ˋ', 'ˊ', '˙')
+
+        // ── 九鍵專用斷詞參數（成本 = -ln(詞頻/總詞頻) + 每詞固定成本，越低越好） ──
+        /** 每多一個詞的固定成本：偏好用較少、較長的詞組成整句 */
+        private const val T9_WORD_PENALTY = 3.5
+        /** 容錯（跨鍵位模糊音）詞條的額外成本 */
+        private const val T9_TOLERANT_PENALTY = 8.0
+        /** 尾端未打完的詞，每缺一個按鍵的成本 */
+        private const val T9_TAIL_MISS = 2.5
+        /** 尾端未完成詞向下蒐集的深度（缺 1~2 鍵） */
+        private const val T9_TAIL_DEPTH = 1
+        /** 尾端未完成詞每個節點只看權重最高的前幾名 */
+        private const val T9_TAIL_PER_NODE = 3
+        /** 整句 n-best 每個位置保留的路徑數 */
+        private const val T9_BEAM = 4
+        /** 斷詞時單一詞條權重上限，避免個人學習詞（5000 萬級權重）讓成本趨近 0 而綁架斷詞 */
+        private const val T9_DP_WEIGHT_CAP = 600_000
+        /** 超過此鍵數不做整句斷詞（效能保護） */
+        private const val T9_MAX_DP_KEYS = 40
+        /** 左側組合：先放幾個詞庫衍生的組合，再放音節切分組合 */
+        private const val T9_WORD_COMBOS_FIRST = 5
+        /** 左側組合：音節切分組合的數量 */
+        private const val T9_SPLIT_COMBO_LIMIT = 6
+        /** 提供給使用者的「部分上屏」候選數量 */
+        private const val T9_PARTIAL_LIMIT = 8
+        /** 部分上屏候選插在整詞候選之後的位置（保證第一順位永遠是涵蓋全部按鍵的候選） */
+        private const val T9_PARTIAL_INSERT_AT = 4
     }
 
     init {
@@ -419,6 +445,31 @@ class ZhuyinT9Engine(private val context: Context) {
 
     fun getCurrentKeys(): List<Int> = currentKeys.toList()
 
+    /** 目前輸入中的注音鍵數（不含聲調鍵） */
+    fun cleanKeyCount(): Int = currentKeys.count { it != 11 }
+
+    /**
+     * 部分上屏：使用者確認了前 [count] 個注音鍵所對應的詞之後，
+     * 從輸入序列移除這些按鍵（連同緊接其後、屬於該詞的聲調鍵），其餘按鍵保留繼續組字。
+     */
+    fun consumePrefixKeys(count: Int): List<DictEntry> {
+        var consumed = 0
+        var idx = 0
+        while (idx < currentKeys.size && consumed < count) {
+            if (currentKeys[idx] != 11) consumed++
+            idx++
+        }
+        if (idx < currentKeys.size && currentKeys[idx] == 11) idx++
+        val rest = currentKeys.subList(idx, currentKeys.size).toList()
+        currentKeys.clear()
+        currentKeys.addAll(rest)
+        currentToneIndex = 0
+        lockedZhuyinCombo = null
+        previousTopWord = null
+        recalculate()
+        return cachedCandidates
+    }
+
     fun selectZhuyinCombo(zhuyin: String): List<DictEntry> {
         // 點選同一個音節按鈕支援切換解除鎖定 (Toggle)
         lockedZhuyinCombo = if (lockedZhuyinCombo == zhuyin) null else zhuyin
@@ -498,7 +549,19 @@ class ZhuyinT9Engine(private val context: Context) {
 
         val isTolerantEnabled = com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(context)
         val exactResults = trie.searchExact(currentKeys, includeTolerant = isTolerantEnabled)
-        val prefixResults = trie.searchPrefix(currentKeys, maxDepth = 3, includeTolerant = isTolerantEnabled)
+        // 前綴預測：鍵數少時子樹很大（1 鍵約 7 千個節點），深度隨鍵數遞增；鍵數足夠後子樹小，可看更深
+        val prefixDepth = when (currentKeys.count { it != 11 }) {
+            1 -> 1
+            2 -> 2
+            3 -> 3
+            else -> 4
+        }
+        val prefixResults = trie.searchPrefixBest(
+            currentKeys,
+            maxDepth = prefixDepth,
+            includeTolerant = isTolerantEnabled,
+            limit = 60
+        )
 
         // 聲調過濾
         val toneChar = if (currentToneIndex > 0) TONE_SYMBOLS[currentToneIndex] else null
@@ -524,19 +587,6 @@ class ZhuyinT9Engine(private val context: Context) {
             pool[e.word] = Pair(e, score)
         }
 
-        // 長句智慧分詞預測（4 鍵以上長度，當能組合成高機率連詞時，納入評分池作為完整句子候選）
-        if (phonemeKeyLen >= 4) {
-            val sentenceEntry = findBestSentence(cleanKeys)
-            if (sentenceEntry != null) {
-                // 作為完全匹配全句，賦予相當於 exact match 的高置信度評分
-                val sentenceScore = sentenceEntry.weight.toDouble() * 2.5 * 2.0
-                val existing = pool[sentenceEntry.word]
-                if (existing == null || sentenceScore > existing.second) {
-                    pool[sentenceEntry.word] = Pair(sentenceEntry, sentenceScore)
-                }
-            }
-        }
-
         for (p in filteredPrefix) {
             val score = getEffectiveWeight(p, phonemeKeyLen, isExact = false, prevTopWord = prevTop)
             val existing = pool[p.word]
@@ -553,7 +603,16 @@ class ZhuyinT9Engine(private val context: Context) {
             )
             .map { it.first }
 
-        val candidateList = ArrayList(rankedList)
+        var candidateList = ArrayList(rankedList)
+
+        // 長句斷詞（4 鍵以上）：整句 n-best 依成本與一般候選合併；另提供「部分上屏」候選（先選第一個詞，其餘按鍵繼續組字）
+        if (phonemeKeyLen in 4..T9_MAX_DP_KEYS) {
+            val exactWords = HashSet<String>(filteredExact.size)
+            for (e in filteredExact) exactWords.add(e.word)
+            candidateList = t9MergeSentenceCandidates(
+                candidateList, exactWords, cleanKeys, isTolerantEnabled
+            )
+        }
 
         previousTopWord = candidateList.firstOrNull()?.word
 
@@ -571,32 +630,43 @@ class ZhuyinT9Engine(private val context: Context) {
         }
 
         // 2. 從「精確非容錯」候選字詞列表提取前綴注音走向（長詞或多字詞走向）
+        //    - 整句候選的注音以空白分隔各詞，必須先去掉空白再依按鍵數截取，否則會得到 `ㄞㄧㄣ ` 這種殘缺組合
+        //    - 「部分上屏」候選只涵蓋前幾個按鍵，不代表目前整串輸入的注音走向，不納入
+        val wordCombos = LinkedHashSet<String>()
         for (entry in candidateList) {
             if (entry.isTolerant) continue
-            val clean = entry.zhuyin.filter { it !in "ˇˋˊ˙" }
+            if (entry.consumedKeys in 1 until phonemeKeyLen) continue
+            val clean = entry.zhuyin.filter { it !in "ˇˋˊ˙ " }
             val prefix = if (clean.length >= phonemeKeyLen) clean.substring(0, phonemeKeyLen) else clean
             if (prefix.isNotEmpty()) {
-                val label = if (toneChar != null) "$prefix$toneChar" else prefix
-                comboSet.add(label)
+                wordCombos.add(if (toneChar != null) "$prefix$toneChar" else prefix)
             }
-            if (comboSet.size >= 16) break
+            if (wordCombos.size >= 16) break
+        }
+        var wordComboIndex = 0
+        val wordComboList = wordCombos.toList()
+        while (wordComboIndex < wordComboList.size && wordComboIndex < T9_WORD_COMBOS_FIRST) {
+            comboSet.add(wordComboList[wordComboIndex++])
         }
 
-        // 3. 【多音節組合候補】：對於 4~6 鍵序列，若候選詞庫前綴組合不足，才調用合法多音節組合生成器（如 [4,6,2,3] -> ㄊㄧㄍㄢ）
-        if (phonemeKeyLen in 4..6 && comboSet.size < 6) {
-            val multiCombos = SyllableManager.getMultiSyllableCombinations(cleanKeys, maxCount = 8)
-            for (combo in multiCombos) {
-                val label = if (toneChar != null) "$combo$toneChar" else combo
-                comboSet.add(label)
-                if (comboSet.size >= 8) break
+        // 3. 【音節切分組合】詞庫沒有收錄的詞（如「幫我」ㄅㄤㄨㄛ）不會出現在上面的詞庫衍生組合裡，
+        //    改用真實音節頻率把按鍵切成合法音節（與詞庫衍生的組合交錯排列，才不會被排到列表最底下）。
+        //    舊的「多音節合成」實測 97% 不是任何真實詞的開頭、正確注音命中率約 2%，已不再使用。
+        if (phonemeKeyLen in 4..8) {
+            for (combo in SyllableManager.getSyllableSplitCombinations(cleanKeys, T9_SPLIT_COMBO_LIMIT)) {
+                comboSet.add(if (toneChar != null) "$combo$toneChar" else combo)
+                if (comboSet.size >= 16) break
             }
+        }
+        while (wordComboIndex < wordComboList.size && comboSet.size < 16) {
+            comboSet.add(wordComboList[wordComboIndex++])
         }
 
         // 4. 【容錯音節候補】：若容錯開關啟用且尚有空間，才提取容錯詞的前綴音節（如 ㄓㄥ，嚴格排在精確音節之後作為候補）
         if (isTolerantEnabled && comboSet.size < 16) {
             for (entry in candidateList) {
                 if (!entry.isTolerant) continue
-                val clean = entry.zhuyin.filter { it !in "ˇˋˊ˙" }
+                val clean = entry.zhuyin.filter { it !in "ˇˋˊ˙ " }
                 val prefix = if (clean.length >= phonemeKeyLen) clean.substring(0, phonemeKeyLen) else clean
                 if (prefix.isNotEmpty()) {
                     val label = if (toneChar != null) "$prefix$toneChar" else prefix
@@ -618,6 +688,209 @@ class ZhuyinT9Engine(private val context: Context) {
 
         cachedZhuyinCombos = comboSet.toList()
         applyLockFilter(candidateList)
+    }
+
+    // ───────── 九鍵專用：整句斷詞 n-best 與「部分上屏」候選 ─────────
+    //
+    // 九鍵一個鍵對應多個注音，連打時又沒有音節邊界，同一串按鍵有很多種合理切法，
+    // 純詞頻模型無法保證第一名一定正確。所以除了整句最佳解，還提供：
+    //   - 整句 n-best（第 2 名等替代切法）
+    //   - 部分上屏候選：先確認第一個詞，其餘按鍵繼續組字，由使用者逐詞修正
+    // 此區塊只供九鍵 (recalculate) 使用；全鍵盤 / 實體鍵盤的 searchFullZhuyin 仍使用下方原本的 findBestSentence。
+
+    private class T9Path(val cost: Double, val prev: T9Path?, val entry: DictEntry?, val keyLen: Int)
+
+    /** 單一詞條的成本：-ln(詞頻 / 總詞頻) + 每詞固定成本。越低越好。 */
+    private fun t9SegmentCost(entry: DictEntry): Double {
+        val boost = userDict.getBoost(entry.word)
+        val base = minOf(entry.weight, T9_DP_WEIGHT_CAP)
+        val weight = if (entry.word.length == 1) base + minOf(boost, 50_000) else base + minOf(boost, 200_000)
+        val logTotal = if (logTotalWeight > 0) logTotalWeight else 17.91
+        val tolerantPenalty = if (entry.isTolerant) T9_TOLERANT_PENALTY else 0.0
+        return logTotal - Math.log(maxOf(weight, 1).toDouble()) + T9_WORD_PENALTY + tolerantPenalty
+    }
+
+    private fun t9PathSegments(path: T9Path): List<Pair<DictEntry, Int>> {
+        val segments = ArrayList<Pair<DictEntry, Int>>()
+        var p: T9Path? = path
+        while (p != null) {
+            val e = p.entry ?: break
+            segments.add(Pair(e, p.keyLen))
+            p = p.prev
+        }
+        segments.reverse()
+        return segments
+    }
+
+    private fun t9PathText(path: T9Path): String {
+        val words = ArrayList<String>()
+        var p: T9Path? = path
+        while (p != null) {
+            val e = p.entry ?: break
+            words.add(e.word)
+            p = p.prev
+        }
+        val sb = StringBuilder()
+        for (i in words.indices.reversed()) sb.append(words[i])
+        return sb.toString()
+    }
+
+    /**
+     * 前向 DP：hyp[i] = 涵蓋 keys[0, i) 的前 T9_BEAM 條最低成本路徑（以整串文字去重）
+     */
+    private fun t9ForwardPaths(keys: List<Int>, includeTolerant: Boolean): Array<List<T9Path>> {
+        val n = keys.size
+        val hyp = Array<List<T9Path>>(n + 1) { emptyList() }
+        hyp[0] = listOf(T9Path(0.0, null, null, 0))
+        for (i in 1..n) {
+            val cands = ArrayList<T9Path>()
+            for (len in 1..minOf(12, i)) {
+                val prevPaths = hyp[i - len]
+                if (prevPaths.isEmpty()) continue
+                val node = trie.searchNode(keys.subList(i - len, i)) ?: continue
+                for (entry in node.topEntries()) {
+                    if (entry.isTolerant && !includeTolerant) continue
+                    val segCost = t9SegmentCost(entry)
+                    for (p in prevPaths) {
+                        cands.add(T9Path(p.cost + segCost, p, entry, len))
+                    }
+                }
+            }
+            if (cands.isEmpty()) continue
+            cands.sortBy { it.cost }
+            val kept = ArrayList<T9Path>(T9_BEAM)
+            val seenText = HashSet<String>()
+            for (p in cands) {
+                if (seenText.add(t9PathText(p))) {
+                    kept.add(p)
+                    if (kept.size >= T9_BEAM) break
+                }
+            }
+            hyp[i] = kept
+        }
+        return hyp
+    }
+
+    /**
+     * 後向 DP：suffix[k] = 涵蓋 keys[k, n) 的最低成本（最後一個詞允許尚未打完）。
+     * 無法涵蓋時為 +∞。
+     */
+    private fun t9SuffixCosts(keys: List<Int>, includeTolerant: Boolean): DoubleArray {
+        val n = keys.size
+        val suffix = DoubleArray(n + 1) { Double.POSITIVE_INFINITY }
+        suffix[n] = 0.0
+        for (k in n - 1 downTo 0) {
+            var best = Double.POSITIVE_INFINITY
+            for (len in 1..minOf(12, n - k)) {
+                val rest = suffix[k + len]
+                if (rest == Double.POSITIVE_INFINITY) continue
+                val node = trie.searchNode(keys.subList(k, k + len)) ?: continue
+                for (entry in node.topEntries()) {
+                    if (entry.isTolerant && !includeTolerant) continue
+                    val c = t9SegmentCost(entry) + rest
+                    if (c < best) best = c
+                }
+            }
+            // 尾端未打完的詞：避免被迫把尚未打完的按鍵硬湊成單獨的韻母字（如 喔、額、愛）
+            val tailNode = trie.searchNode(keys.subList(k, n))
+            if (tailNode != null) {
+                for (ext in trie.collectExtensions(tailNode, T9_TAIL_DEPTH, false, null, T9_TAIL_PER_NODE).values) {
+                    val c = t9SegmentCost(ext.entry) + T9_TAIL_MISS * ext.extraKeys
+                    if (c < best) best = c
+                }
+            }
+            suffix[k] = best
+        }
+        return suffix
+    }
+
+    /**
+     * 「部分上屏」候選：枚舉每個切點 k 之前可以成詞的詞，以「詞本身成本 + 剩餘按鍵的最佳成本」排序。
+     * 選取後只上屏該詞，其餘按鍵繼續組字（consumedKeys = k）。
+     */
+    private fun t9PartialCandidates(keys: List<Int>, includeTolerant: Boolean): List<DictEntry> {
+        val n = keys.size
+        val suffix = t9SuffixCosts(keys, includeTolerant)
+        val best = HashMap<String, Triple<Double, DictEntry, Int>>()
+        for (k in 1 until n) {
+            val rest = suffix[k]
+            if (rest == Double.POSITIVE_INFINITY) continue
+            val node = trie.searchNode(keys.subList(0, k)) ?: continue
+            for (entry in node.topEntries()) {
+                if (entry.isTolerant && !includeTolerant) continue
+                val cost = t9SegmentCost(entry) + rest
+                val old = best[entry.word]
+                if (old == null || cost < old.first) {
+                    best[entry.word] = Triple(cost, entry, k)
+                }
+            }
+        }
+        return best.values
+            .sortedBy { it.first }
+            .take(T9_PARTIAL_LIMIT)
+            .map { (_, entry, k) -> entry.copy(consumedKeys = k) }
+    }
+
+    /**
+     * 把整句 n-best 與部分上屏候選併入一般候選列：
+     * - 整句依成本插入（成本比一般候選低才會排前面，不再無條件灌分搶第一）
+     * - 部分上屏候選插在整詞候選之後，第一順位永遠是涵蓋全部按鍵的候選
+     */
+    private fun t9MergeSentenceCandidates(
+        base: ArrayList<DictEntry>,
+        exactWords: Set<String>,
+        keys: List<Int>,
+        includeTolerant: Boolean
+    ): ArrayList<DictEntry> {
+        val keyLen = keys.size
+        val out = ArrayList<DictEntry>(base)
+        val costs = ArrayList<Double>(base.size)
+        for (e in base) {
+            val miss = if (e.word in exactWords) 0
+            else maxOf(0, KeyMapping.getSequence(e.zhuyin, ignoreTones = true).size - keyLen)
+            costs.add(t9SegmentCost(e) + T9_TAIL_MISS * miss)
+        }
+        val present = HashSet<String>()
+        for (e in out) present.add(e.word)
+
+        // 1. 涵蓋全部按鍵的 n-best 路徑，取前 2 名。
+        //    單一詞的路徑只會在「精確比對沒找到、但忽略聲調鍵後找得到」時才會出現（例如只在最後一個音節打了聲調），
+        //    聲調本來就是軟性偏好（找不到符合聲調的詞時退回全部），這種情況也應該顯示。
+        val sentences = ArrayList<Pair<DictEntry, Double>>()
+        for (path in t9ForwardPaths(keys, includeTolerant)[keyLen]) {
+            val segments = t9PathSegments(path)
+            if (segments.isEmpty()) continue
+            val word = segments.joinToString("") { it.first.word }
+            if (word in present) continue
+            val zhuyin = segments.joinToString(" ") { it.first.zhuyin }
+            val avgLog = segments.map { Math.log(maxOf(it.first.weight, 1).toDouble()) }.average()
+            val weight = minOf(Math.exp(avgLog).toInt(), 100_000_000)
+            sentences.add(Pair(DictEntry(word, zhuyin, weight), path.cost))
+            if (sentences.size >= 2) break
+        }
+        // 由後往前插入，迴圈結束時 bestSentencePos 即為最佳整句所在位置
+        var bestSentencePos = -1
+        for ((entry, cost) in sentences.asReversed()) {
+            var pos = 0
+            while (pos < costs.size && costs[pos] <= cost) pos++
+            out.add(pos, entry)
+            costs.add(pos, cost)
+            present.add(entry.word)
+            bestSentencePos = pos
+        }
+
+        // 2. 部分上屏候選：整句候選通常很長、會占滿候選列寬度，部分上屏要緊接在最佳整句之後才看得到
+        //    （第 2 名整句多半只是同音字變體，如 再/在、那/哪，價值較低，排在部分上屏之後）。
+        //    沒有整句時（輸入的是單一詞）維持插在第 T9_PARTIAL_INSERT_AT 位之後。
+        var insertAt = if (bestSentencePos >= 0) minOf(bestSentencePos + 1, out.size)
+        else minOf(T9_PARTIAL_INSERT_AT, out.size)
+        for (entry in t9PartialCandidates(keys, includeTolerant)) {
+            if (entry.word in present) continue
+            out.add(insertAt, entry)
+            present.add(entry.word)
+            insertAt++
+        }
+        return out
     }
 
     /**
@@ -748,7 +1021,8 @@ class ZhuyinT9Engine(private val context: Context) {
         if (locked != null) {
             val cleanLock = locked.filter { it !in "ˇˋˊ˙" }
             val filtered = baseList.filter { entry ->
-                entry.zhuyin.filter { it !in "ˇˋˊ˙" }.startsWith(cleanLock)
+                // 整句候選的注音以空白分隔各詞，比對前需先去掉
+                entry.zhuyin.filter { it !in "ˇˋˊ˙ " }.startsWith(cleanLock)
             }
             if (filtered.isNotEmpty()) {
                 cachedCandidates = filtered
