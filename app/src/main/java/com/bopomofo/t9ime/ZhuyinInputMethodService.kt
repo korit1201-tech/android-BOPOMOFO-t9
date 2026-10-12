@@ -2611,36 +2611,6 @@ class ZhuyinInputMethodService : InputMethodService() {
         return spannable
     }
 
-    private fun formatFullZhuyinEnterLabel(): CharSequence {
-        val isLand = isPhoneLandscapeMode()
-        val line2 = if (isSimplified) "9鍵·簡" else "9鍵·繁"
-        if (isLand) {
-            val fullText = "↵ $line2"
-            val spannable = SpannableString(fullText)
-            val primaryColor = ContextCompat.getColor(this, R.color.kb_text_primary)
-            val secondaryColor = ContextCompat.getColor(this, R.color.kb_text_secondary)
-            spannable.setSpan(StyleSpan(Typeface.BOLD), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            spannable.setSpan(ForegroundColorSpan(primaryColor), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            spannable.setSpan(RelativeSizeSpan(0.80f), 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            spannable.setSpan(ForegroundColorSpan(secondaryColor), 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            return spannable
-        }
-        val line1 = "↵"
-        val fullText = "$line1\n$line2"
-        val spannable = SpannableString(fullText)
-        val primaryColor = ContextCompat.getColor(this, R.color.kb_text_primary)
-        val secondaryColor = ContextCompat.getColor(this, R.color.kb_text_secondary)
-
-        spannable.setSpan(RelativeSizeSpan(1.20f), 0, line1.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        spannable.setSpan(StyleSpan(Typeface.BOLD), 0, line1.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        spannable.setSpan(ForegroundColorSpan(primaryColor), 0, line1.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-
-        val line2Start = line1.length + 1
-        spannable.setSpan(RelativeSizeSpan(0.68f), line2Start, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        spannable.setSpan(ForegroundColorSpan(secondaryColor), line2Start, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        return spannable
-    }
-
 
     private fun formatAbbrevLabel(): CharSequence {
         val isLand = isPhoneLandscapeMode()
@@ -2717,11 +2687,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             val showFullEnter = currentMode == KeyboardMode.ZHUYIN_FULL || (!isLand && currentMode == KeyboardMode.ENGLISH_QWERTY)
             btnFullEnter.visibility = if (showFullEnter) View.VISIBLE else View.GONE
             if (showFullEnter) {
-                if (currentMode == KeyboardMode.ZHUYIN_FULL) {
-                    btnFullEnter.text = formatFullZhuyinEnterLabel()
-                } else {
-                    btnFullEnter.text = "↵"
-                }
+                btnFullEnter.text = "↵"
             }
         }
         val defaultBtnTextSize = if (isLand) 13.5f else 16f
@@ -4079,12 +4045,51 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun selectCandidate(entry: DictEntry) {
         if (entry.word.startsWith("【")) return
+        // 九鍵「部分上屏」候選：只涵蓋前幾個按鍵，先上屏此詞，其餘按鍵繼續組字
+        if (entry.consumedKeys > 0 &&
+            currentMode == KeyboardMode.ZHUYIN &&
+            customComposingWord == null &&
+            !isHomophoneSelectionMode &&
+            entry.consumedKeys < engine.cleanKeyCount()
+        ) {
+            commitPartialWord(entry)
+            return
+        }
         val wordToCommit = if (customComposingWord != null && (entry.word == engine.getTopComposingWord() || entry.word == customComposingWord)) {
             customComposingWord!!
         } else {
             entry.word
         }
         commitProcessedWordWithUserDict(wordToCommit, entry.zhuyin)
+    }
+
+    /**
+     * 九鍵「部分上屏」：確認第一個詞並上屏，剩下的按鍵留在輸入序列繼續組字。
+     * 學習行為與一般選字相同（密碼欄位 / 無痕模式不學習）。
+     */
+    private fun commitPartialWord(entry: DictEntry) {
+        val word = entry.word
+        lastUserTypingTime = SystemClock.uptimeMillis()
+        if (isPersonalizedLearningAllowed()) {
+            engine.learnWord(word, entry.zhuyin)
+            val prev = lastCommittedWord
+            if (prev != null && prev != word && prev.length in 1..8 && word.length in 1..8) {
+                engine.learnBigram(prev, word)
+            }
+        }
+        lastCommittedWord = word
+        engine.currentContextWord = word
+
+        val remaining = engine.consumePrefixKeys(entry.consumedKeys)
+
+        replacedCharsMap.clear()
+        lastComposingStart = -1
+        lastComposingEnd = -1
+        physicalCandidatePageIndex = 0
+
+        val finalText = if (isSimplified) ChineseConverter.toSimplified(word) else word
+        safeCommitText(finalText)
+        refreshUI(remaining)
     }
 
     /**
