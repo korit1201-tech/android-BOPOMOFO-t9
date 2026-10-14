@@ -2688,6 +2688,15 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
         val btnHeightPx = (targetHeightDp * density).toInt()
 
+        val currentTheme = ThemeManager.getCurrentTheme(this)
+        val themeColors = ThemeManager.getThemeColors(this, currentTheme)
+        val radiusPx = 6f * density
+        val bopomofoTypeface = try {
+            androidx.core.content.res.ResourcesCompat.getFont(this, R.font.bopomofo_font)
+        } catch (e: Exception) {
+            null
+        }
+
         for (i in 0 until count) {
             val combo = combos[i]
             val btn = if (i < comboButtonPool.size) {
@@ -2699,8 +2708,6 @@ class ZhuyinInputMethodService : InputMethodService() {
                 existing
             } else {
                 Button(this).apply {
-                    setTextColor(Color.parseColor("#E65100"))
-                    setBackgroundResource(R.drawable.bg_zhuyin_combo)
                     gravity = Gravity.CENTER
                     isAllCaps = false
                     includeFontPadding = false
@@ -2708,6 +2715,15 @@ class ZhuyinInputMethodService : InputMethodService() {
                     containerZhuyinCombos.addView(this)
                     comboButtonPool.add(this)
                 }
+            }
+
+            // 套用當前主題顏色與圓角邊框（徹底去除寫死橘色 #E65100，完全融合主題配色）
+            btn.background = ThemeManager.createKeyDrawable(themeColors.actionKeyBg, themeColors.keyPressed, themeColors.stroke, radiusPx)
+            btn.setTextColor(themeColors.accent)
+            if (bopomofoTypeface != null) {
+                btn.typeface = android.graphics.Typeface.create(bopomofoTypeface, android.graphics.Typeface.BOLD)
+            } else {
+                btn.typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
             }
 
             // 動態依字數與音節長度微縮字級，避免字串擠在一起、換行或被截斷

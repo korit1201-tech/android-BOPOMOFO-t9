@@ -229,14 +229,17 @@ object ThemeManager {
                 view.setBackgroundColor(colors.candidateBg)
             }
             view is Button -> {
-                val isAction = view.id in ACTION_KEY_IDS ||
+                val isZhuyinCombo = (view.parent as? View)?.id == R.id.container_zhuyin_combos
+                val isAction = isZhuyinCombo ||
+                        view.id in ACTION_KEY_IDS ||
                         view.tag == "shift" ||
                         view.text == "⌫" ||
                         view.text == "↵" ||
                         (view.parent as? View)?.id == R.id.qwerty_row_symbols
                 val bg = if (isAction) colors.actionKeyBg else colors.keyBg
                 view.background = createKeyDrawable(bg, colors.keyPressed, colors.stroke, radiusPx)
-                view.setTextColor(colors.textPrimary)
+                val textColor = if (isZhuyinCombo) colors.accent else colors.textPrimary
+                view.setTextColor(textColor)
                 view.isAllCaps = false
                 view.includeFontPadding = false
                 val isZhuyinKey = view.id in ZHUYIN_KEY_IDS || view is com.bopomofo.t9ime.ui.SwipeKeyButton || isZhuyinText(view.text)
