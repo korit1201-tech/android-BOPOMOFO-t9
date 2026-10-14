@@ -882,7 +882,7 @@ class ZhuyinT9Engine(private val context: Context? = null) {
             val node = trie.searchNode(keys.subList(0, k)) ?: continue
             for (entry in node.topEntries()) {
                 if (entry.isTolerant && !includeTolerant) continue
-                val cost = t9SegmentCost(entry) + rest
+                val cost = t9SegmentCost(entry, currentContextWord) + rest
                 val old = best[entry.word]
                 if (old == null || cost < old.first) {
                     best[entry.word] = Triple(cost, entry, k)
@@ -912,7 +912,7 @@ class ZhuyinT9Engine(private val context: Context? = null) {
         for (e in base) {
             val miss = if (e.word in exactWords) 0
             else maxOf(0, KeyMapping.getSequence(e.zhuyin, ignoreTones = true).size - keyLen)
-            costs.add(t9SegmentCost(e) + T9_TAIL_MISS * miss)
+            costs.add(t9SegmentCost(e, currentContextWord) + T9_TAIL_MISS * miss)
         }
         val present = HashSet<String>()
         for (e in out) present.add(e.word)
@@ -1127,6 +1127,7 @@ class ZhuyinT9Engine(private val context: Context? = null) {
      */
     fun searchFullZhuyin(inputZhuyin: String, contextWord: String? = null): List<DictEntry> {
         if (inputZhuyin.isEmpty()) return emptyList()
+        val effectiveContext = contextWord ?: currentContextWord
 
         val results = mutableListOf<DictEntry>()
         val seenWords = hashSetOf<String>()
@@ -1235,15 +1236,10 @@ class ZhuyinT9Engine(private val context: Context? = null) {
         // 1.2 全拼精確詞庫匹配 (Exact Full Zhuyin Match, 如 ㄓㄉㄠ -> 知道, ㄊㄧㄢㄑㄧ -> 天氣, ㄐㄧㄣㄊㄧㄢ -> 今天)
         val exactZhuyinWords = fullZhuyinWordMap[cleanInput]
         if (!exactZhuyinWords.isNullOrEmpty()) {
-            val sortedExact = if (toneChar != null) {
-                exactZhuyinWords.sortedByDescending {
-                    val toneScore = if (it.zhuyin.contains(toneChar)) 20_000_000L else 0L
-                    toneScore + it.weight + userDict.getBoost(it.word)
-                }
-            } else {
-                exactZhuyinWords.sortedByDescending {
-                    it.weight + userDict.getBoost(it.word)
-                }
+            val sortedExact = exactZhuyinWords.sortedByDescending {
+                val toneScore = if (toneChar != null && it.zhuyin.contains(toneChar)) 20_000_000L else 0L
+                val bgScore = getBigramBoost(effectiveContext, it.word) * 500L
+                toneScore + bgScore + it.weight + userDict.getBoost(it.word)
             }
             for (e in sortedExact) {
                 if (seenWords.add(e.word)) {
@@ -1646,11 +1642,11 @@ class ZhuyinT9Engine(private val context: Context? = null) {
     }
 
     /**
-     * 新酷音 / PIME 標準音節序列動態規劃組句 (Viterbi 最優路徑)
-     * 支援跨音節詞庫匹配 (例如 ㄓ + ㄉㄠˋ -> 知道, ㄐㄧㄣ + ㄊㄧㄢ -> 今天)
-     * @param syllables 輸入的音節序列列表 (如 ["ㄓ", "ㄉㄠˋ"])
-     * @param pinnedWords 使用者手動選字釘住的位置與漢字 (如 mapOf(0 to "之"))
-     * @return 分詞後的漢字列表 (如 ["知道"])
+     * 新酷音 / PIME 標準音節序列動態規劃組句 (Bigram Viterbi 最優路徑)
+     * 由 41 鍵螢幕全鍵盤與外接實體鍵盤共用：
+     * - 支援跨音節詞庫匹配 (例如 ㄓ + ㄉㄠˋ -> 知道, ㄐㄧㄣ + ㄊㄧㄢ -> 今天)
+     * - 支援聲母簡拼匹配 (例如 ㄐ + ㄊ -> 今天)
+     * - 結合 currentContextWord 與前後詞 Bigram 轉移機率，解決同音異字詞組句歧義
      */
     fun findBestSentenceFromSyllables(
         syllables: List<String>,
@@ -1663,7 +1659,7 @@ class ZhuyinT9Engine(private val context: Context? = null) {
         dp[0] = 0.0
         val bestPrev = arrayOfNulls<Pair<Int, String>>(n + 1)
 
-        val wordBonus = 2.0 // 均衡長詞偏好獎勵，避免冷門詞生硬壓制高頻常見詞組合
+        val wordBonus = 2.0
         val logTotal = if (logTotalWeight > 0) logTotalWeight else 17.91
 
         for (i in 1..n) {
@@ -1672,7 +1668,6 @@ class ZhuyinT9Engine(private val context: Context? = null) {
                 val j = i - len
                 if (dp[j] == Double.NEGATIVE_INFINITY) continue
 
-                // 檢查區間 [j, i) 內是否有被 pinned 的字
                 var pinnedConflict = false
                 var singlePinnedChar: String? = null
                 if (len == 1 && pinnedWords.containsKey(j)) {
@@ -1687,9 +1682,8 @@ class ZhuyinT9Engine(private val context: Context? = null) {
                 }
                 if (pinnedConflict) continue
 
-                // 若單字被手動釘住
                 if (singlePinnedChar != null) {
-                    val score = dp[j] + 1000.0 // 最高優先
+                    val score = dp[j] + 1000.0
                     if (score > dp[i]) {
                         dp[i] = score
                         bestPrev[i] = Pair(j, singlePinnedChar)
@@ -1699,18 +1693,28 @@ class ZhuyinT9Engine(private val context: Context? = null) {
 
                 val subSyllables = syllables.subList(j, i)
                 val subClean = subSyllables.joinToString("") { it.filter { c -> c !in "ˇˋˊ˙ " } }
-                val subTone = subSyllables.joinToString("")
+                val prevWord = if (j == 0) currentContextWord else bestPrev[j]?.second
 
-                val words = fullZhuyinWordMap[subClean]
+                // 優先查詢完整注音詞庫；若該區間全部皆為單一聲母（如 ["ㄐ", "ㄊ"]），允許退回查詢簡拼詞庫 initialMap
+                var words = fullZhuyinWordMap[subClean]
+                var isInitialAbbrev = false
+                if (words.isNullOrEmpty() && len >= 2 && subSyllables.all { it.length == 1 && it[0] in "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙ" }) {
+                    words = initialMap[subClean]
+                    isInitialAbbrev = true
+                }
+
                 if (!words.isNullOrEmpty()) {
                     for (entry in words) {
-                        if (entry.word.length != len) continue // 詞長必須與音節數一致
+                        if (entry.word.length != len) continue
                         val boost = userDict.getBoost(entry.word)
                         val effectiveWeight = entry.weight + boost
                         val logProb = Math.log(maxOf(effectiveWeight.toDouble(), 1.0)) - logTotal
-                        val bonus = (entry.word.length - 1) * wordBonus
+                        val bonus = (entry.word.length - 1) * wordBonus - (if (isInitialAbbrev) 1.5 else 0.0)
 
-                        // 計算音節聲調相符度與衝突懲罰
+                        // Bigram 上下文語境加分
+                        val bigramBoost = getBigramBoost(prevWord, entry.word)
+                        val bigramBonus = if (bigramBoost > 0) minOf(6.0, Math.log1p(bigramBoost / 50.0) * 1.8) else 0.0
+
                         var hasToneMismatch = false
                         var exactToneMatchCount = 0
                         val entryZhuyinList = if (entry.zhuyin.contains(' ')) {
@@ -1721,14 +1725,12 @@ class ZhuyinT9Engine(private val context: Context? = null) {
                             SyllableManager.splitFullZhuyin(entry.zhuyin, len) ?: emptyList()
                         }
 
-                        if (entryZhuyinList.size == len) {
+                        if (!isInitialAbbrev && entryZhuyinList.size == len) {
                             for (idx in 0 until len) {
                                 val userSyll = subSyllables[idx]
                                 val userTone = userSyll.find { it in "ˇˋˊ˙" }
                                 val entryTone = entryZhuyinList[idx].find { it in "ˇˋˊ˙" }
-
                                 if (userTone != null) {
-                                    // 使用者明確指定聲調
                                     if (userTone == entryTone) {
                                         exactToneMatchCount++
                                     } else {
@@ -1736,7 +1738,7 @@ class ZhuyinT9Engine(private val context: Context? = null) {
                                     }
                                 }
                             }
-                        } else if (len == 1) {
+                        } else if (!isInitialAbbrev && len == 1) {
                             val userTone = subSyllables[0].find { it in "ˇˋˊ˙" }
                             val entryTone = entry.zhuyin.find { it in "ˇˋˊ˙" }
                             if (userTone != null) {
@@ -1748,17 +1750,15 @@ class ZhuyinT9Engine(private val context: Context? = null) {
                             }
                         }
 
-                        // 若使用者明確指定聲調，聲調不符給予重罰 (-25.0)，聲調吻合大幅加權 (+8.0/字)
                         val tonePenalty = if (hasToneMismatch) -25.0 else 0.0
                         val toneBonus = exactToneMatchCount * 8.0
-                        val score = dp[j] + logProb + bonus + toneBonus + tonePenalty
+                        val score = dp[j] + logProb + bonus + bigramBonus + toneBonus + tonePenalty
                         if (score > dp[i]) {
                             dp[i] = score
                             bestPrev[i] = Pair(j, entry.word)
                         }
                     }
                 } else if (len == 1) {
-                    // 若字典無完全相符詞條，以單字音節索引或音節本身兜底
                     val userSyll = subSyllables[0]
                     val userTone = userSyll.find { it in "ˇˋˊ˙" }
                     val soundMatches = soundToCharMap[subClean]
@@ -1777,7 +1777,6 @@ class ZhuyinT9Engine(private val context: Context? = null) {
         }
 
         if (dp[n] == Double.NEGATIVE_INFINITY) {
-            // 保底返回各音節單字
             return syllables.map { s ->
                 val clean = s.filter { it !in "ˇˋˊ˙ " }
                 val tone = s.find { it in "ˇˋˊ˙" }

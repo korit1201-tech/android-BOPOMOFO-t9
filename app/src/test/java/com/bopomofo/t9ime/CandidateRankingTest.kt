@@ -128,4 +128,22 @@ class CandidateRankingTest {
         val topSentence = results.first().word
         assertEquals("全注音連打「ㄉㄚˋㄐㄧㄚㄏㄠˇ」應正確組出「大家好」", "大家好", topSentence)
     }
+
+    @Test
+    fun testFullKeyboardAndPhysicalSharedViterbiWithBigram() {
+        val engine = ZhuyinT9Engine()
+        engine.loadDictionaryForTest()
+
+        // 1. 驗證實體鍵盤/全鍵盤共用的 findBestSentenceFromSyllables 支援聲母簡拼 (如 ["ㄐ", "ㄊ"] -> 今天)
+        val abbrevSentence = engine.findBestSentenceFromSyllables(listOf("ㄐ", "ㄊ"))
+        assertEquals("今天", abbrevSentence.joinToString(""))
+
+        // 2. 驗證 findBestSentenceFromSyllables 支援跨詞 Bigram 語境逆轉同音詞
+        repeat(4) {
+            engine.learnBigram("高畫質", "影像")
+        }
+        val syllables = listOf("ㄍㄠ", "ㄏㄨㄚˋ", "ㄓˊ", "ㄧㄥˇ", "ㄒㄧㄤˋ")
+        val sentenceWords = engine.findBestSentenceFromSyllables(syllables)
+        assertEquals("高畫質影像", sentenceWords.joinToString(""))
+    }
 }
