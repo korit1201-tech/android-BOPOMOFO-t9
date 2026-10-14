@@ -494,6 +494,11 @@ class ZhuyinInputMethodService : InputMethodService() {
                 engine.clear()
             }
             fullZhuyinBuffer.clear()
+            composingSentence.clear()
+            composingSyllables.clear()
+            pinnedSentenceChars.clear()
+            sentenceCursor = 0
+            isSentenceSelecting = false
             customComposingWord = null
             isHomophoneSelectionMode = false
             homophoneCharIndex = -1
@@ -3159,7 +3164,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 DictEntry("～(按 `)", "", 999_991)
             )
         } else if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty() && !isHomophoneSelectionMode && !isHardwareKeyboardConnected) {
-            val zhuyinEntry = DictEntry(fullZhuyinBuffer.toString(), fullZhuyinBuffer.toString(), 999_999_999)
+            val zhuyinEntry = DictEntry("【$fullZhuyinBuffer】", fullZhuyinBuffer.toString(), 999_999_999)
             listOf(zhuyinEntry) + candidates
         } else {
             candidates
@@ -3199,7 +3204,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             val isPageIndicator = (i == count && pageIndicatorText != null)
             val entry = if (!isPageIndicator) displayCandidates[i] else DictEntry(pageIndicatorText!!, "", 0)
 
-            val isZhuyinHeader = (!isHardwareKeyboardConnected && currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty() && i == 0) || (isSymbolLeadMode && i == 0)
+            val isZhuyinHeader = (!isHardwareKeyboardConnected && currentMode == KeyboardMode.ZHUYIN_FULL && entry.word.startsWith("【") && entry.word.endsWith("】")) || (isSymbolLeadMode && i == 0)
             val rawWord = if (isSimplified && !isPageIndicator) ChineseConverter.toSimplified(entry.word) else entry.word
             val isSelectingState = isSentenceSelecting || isCandidateGridOpen || isHomophoneSelectionMode || isSymbolLeadMode
             val displayWord = if (isPhysicalMode && isSelectingState && !isZhuyinHeader && !isPageIndicator && !isSymbolLeadMode && i < 9) {
@@ -3754,8 +3759,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         sb.append(composingSentence.substring(cursor))
 
         val displayText = if (isSimplified) ChineseConverter.toSimplified(sb.toString()) else sb.toString()
-        val cursorOffset = cursor + fullZhuyinBuffer.length
-        currentInputConnection?.setComposingText(displayText, cursorOffset)
+        currentInputConnection?.setComposingText(displayText, 1)
 
         // 候選列更新
         if (isSentenceSelecting && cursor < composingSentence.length) {
@@ -3771,12 +3775,12 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
             updateCandidateBar(candidates)
         } else if (fullZhuyinBuffer.isNotEmpty()) {
-            // 若前面已有結算音節（如連打聲母 ㄐ + ㄊ，或已打 ㄐㄧㄣ + 正在打 ㄊㄧㄢ），合併整串查詢複合詞與整句
-            val allSyllables = composingSyllables + listOf(fullZhuyinBuffer.toString())
-            val combinedCandidates = mutableListOf<DictEntry>()
-
+            val tailCandidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString(), lastCommittedWord)
             if (composingSyllables.isNotEmpty()) {
-                val bestSentence = engine.findBestSentenceFromSyllables(allSyllables, pinnedSentenceChars).joinToString("")
+                val allSyllables = composingSyllables + listOf(fullZhuyinBuffer.toString())
+                val combinedCandidates = mutableListOf<DictEntry>()
+                val evalSyllables = if (allSyllables.size > 4) allSyllables.takeLast(4) else allSyllables
+                val bestSentence = engine.findBestSentenceFromSyllables(evalSyllables, pinnedSentenceChars).joinToString("")
                 if (bestSentence.isNotEmpty()) {
                     combinedCandidates.add(DictEntry(bestSentence, allSyllables.joinToString(" "), 999_999_999))
                 }
@@ -3784,15 +3788,17 @@ class ZhuyinInputMethodService : InputMethodService() {
                 if (cleanCombined.isNotEmpty()) {
                     val exact = engine.getExactZhuyinWords(cleanCombined)
                     if (exact.isNotEmpty()) combinedCandidates.addAll(exact)
-                    if (cleanCombined.length in 2..6) {
+                    if (cleanCombined.length in 2..4) {
                         val initials = engine.searchInitials(cleanCombined)
                         if (initials.isNotEmpty()) combinedCandidates.addAll(initials)
                     }
                 }
+                val finalCandidates = (combinedCandidates + tailCandidates).distinctBy { it.word }.take(40)
+                updateCandidateBar(finalCandidates)
+            } else {
+                // 單音節輸入直通，零額外負擔，超輕量流暢響應
+                updateCandidateBar(tailCandidates)
             }
-            val tailCandidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString(), lastCommittedWord)
-            val finalCandidates = (combinedCandidates + tailCandidates).distinctBy { it.word }.take(40)
-            updateCandidateBar(finalCandidates)
         } else if (composingSentence.isNotEmpty()) {
             val currentSentenceStr = composingSentence.toString()
             val topEntry = DictEntry(currentSentenceStr, composingSyllables.joinToString(" "), 999_999_999)

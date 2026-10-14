@@ -333,6 +333,7 @@ class ZhuyinT9Engine(private val context: Context? = null) {
         customStream: java.io.InputStream? = null
     ) {
         val nextWordTrack = mutableMapOf<String, HashSet<String>>()
+        val initialToCharTrack = mutableMapOf<Char, HashSet<String>>()
         var accumulatedWeight = 0L
         try {
             SyllableManager.resetWeights()
@@ -386,8 +387,9 @@ class ZhuyinT9Engine(private val context: Context? = null) {
                             }
                             if (cleanZhuyin.isNotEmpty()) {
                                 val firstInitial = cleanZhuyin[0]
-                                val initList = targetInitialToCharMap.getOrPut(firstInitial) { ArrayList(30) }
-                                if (initList.none { it.word == word }) {
+                                val initSet = initialToCharTrack.getOrPut(firstInitial) { HashSet(64) }
+                                if (initSet.add(word)) {
+                                    val initList = targetInitialToCharMap.getOrPut(firstInitial) { ArrayList(64) }
                                     initList.add(entry)
                                 }
                             }
@@ -1810,8 +1812,11 @@ class ZhuyinT9Engine(private val context: Context? = null) {
 
         val result = mutableListOf<String>()
         var curr = n
-        while (curr > 0) {
+        var safetyCounter = 0
+        while (curr > 0 && safetyCounter <= n) {
+            safetyCounter++
             val prev = bestPrev[curr] ?: break
+            if (prev.first >= curr) break // 嚴格防禦：指針必須向前推進，防止任何死迴圈
             result.add(prev.second)
             curr = prev.first
         }
