@@ -2,6 +2,28 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.6.0] - 2026-10-14
+
+### 🚀 核心重構：Bigram Viterbi 智慧語境、純注音預計算效能躍升 ＆ 符號面板模組化 (Build 83)
+
+- **⚡ DictEntry cleanZhuyin 預計算與查詢零 GC 負擔**：
+  - `DictEntry` 預先計算並去除聲調與空白（`cleanZhuyin`），徹底消除在 `recalculate()`、前綴預測與動態規劃迴圈中的頻繁字串過濾與物件配置，大幅提升打字響應速度。
+- **🛡️ SyllableManager 執行緒安全與 41 鍵全注音自動切音節**：
+  - 音節權重與計數全面改用 `ConcurrentHashMap` 與 `AtomicLong`，杜絕背景字典非同步載入時的 Race Condition，並提供載入前重設 `resetWeights()`。
+  - 新增 `splitFullZhuyinAuto(rawZhuyin)`，支援 41 鍵全鍵盤長注音連續打字時依教育部 429 個合法音節自動切分，免手動空白隔詞。
+- **🧠 ZhuyinT9Engine 智慧語境（Bigram Viterbi）與長句組句升級**：
+  - 核心字典預載入與使用者自學 Bigram 二元語法轉移機率，首選詞推薦優先命中當前上下文接續詞。
+  - 前向 DP（Bigram Viterbi）納入二元轉移折扣，並新增尾端未打完前綴詞延伸機制（Tail Extension），打字中途不再冒出怪異單鍵韻母字。
+  - 全注音搜尋（`searchFullZhuyin`）結合自動音節切分與動態規劃長句合成（如「ㄉㄚˋㄐㄧㄚㄏㄠˇ」直接出「大家好」）。
+  - 清理舊有未用斷詞邏輯與死碼，並實作 `close()` 釋放執行緒池與排程資源。
+- **🧹 長句學習修正與主服務死碼清理**：
+  - 修正九鍵長句上屏邏輯：超過 4 字的合成整句拆分為合法音節與片語學習，避免將整句當作單一詞塞進 Trie 污染詞庫。
+  - 清理 `ZhuyinInputMethodService` 中 11 個從未被呼叫的 private 死碼函式。
+- **🧩 模組化重構（SymbolPanelController）**：
+  - 抽離符號、方向鍵、剪貼簿歷史、顏文字與常用短語等 9 個面板 UI 實作至獨立 `SymbolPanelController` 類別，透過 Callback 與主服務互動，主服務程式碼精簡逾 440 行。
+- **🧪 補齊真引擎單元測試**：
+  - 在 `CandidateRankingTest` 新增 `testBigramContextBoostInT9` 與 `testSplitFullZhuyinAutoAndLongSentence` 測試案例，鎖定語境加成與長句斷詞成果。
+
 ## [v2.5.2] - 2026-10-13
 
 ### 🐛 修正：實體鍵盤整句上屏不再把整句當成一個詞學進個人詞庫 (Build 82)

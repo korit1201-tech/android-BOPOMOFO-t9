@@ -54,7 +54,8 @@ object SyllableManager {
     )
 
     private val EXACT_KEY_MAP = mutableMapOf<List<Int>, MutableList<String>>()
-    private val SYLLABLE_WEIGHTS = mutableMapOf<String, Long>()
+    private val SYLLABLE_WEIGHTS = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val totalSyllableWeight = java.util.concurrent.atomic.AtomicLong(0L)
 
     init {
         for (syl in VALID_SYLLABLES) {
@@ -66,18 +67,25 @@ object SyllableManager {
     }
 
     /**
-     * 在載入字典時，累計單字的詞頻到對應音節，用於音節排序
+     * 重新載入字典前重置音節權重與快取，避免重複累加
      */
-    fun addSyllableWeight(cleanZhuyin: String, weight: Int) {
-        if (cleanZhuyin.isEmpty()) return
-        val current = SYLLABLE_WEIGHTS[cleanZhuyin] ?: 0L
-        SYLLABLE_WEIGHTS[cleanZhuyin] = current + weight
-        totalSyllableWeight += weight
+    fun resetWeights() {
+        SYLLABLE_WEIGHTS.clear()
+        totalSyllableWeight.set(0L)
+        synchronized(splitComboCache) {
+            splitComboCache.clear()
+            splitCacheTotal = 0L
+        }
     }
 
-    /** 所有單字音節權重總和（九鍵音節切分排序用；載入字典時累計，避免每次遍歷 map） */
-    @Volatile
-    private var totalSyllableWeight = 0L
+    /**
+     * 在載入字典時，累計單字的詞頻到對應音節，用於音節排序（執行緒安全）
+     */
+    fun addSyllableWeight(cleanZhuyin: String, weight: Int) {
+        if (cleanZhuyin.isEmpty() || weight <= 0) return
+        SYLLABLE_WEIGHTS.merge(cleanZhuyin, weight.toLong()) { old, new -> old + new }
+        totalSyllableWeight.addAndGet(weight.toLong())
+    }
 
     fun getSyllableWeight(syl: String): Long {
         return SYLLABLE_WEIGHTS[syl] ?: 100L
@@ -107,73 +115,6 @@ object SyllableManager {
         return results.distinct().sortedByDescending { getSyllableWeight(it) }.take(maxCount)
     }
 
-    private val multiComboCache = LinkedHashMap<List<Int>, List<String>>()
-
-    /**
-     * 多音節組合生成：當輸入按鍵序列達到 4~6 鍵時，
-     * 採用高效 DP (Beam Search) 動態規劃與記憶化快取，以 O(1) 毫秒級流暢生成合法自然音節組合（如 ㄊㄧㄍㄢ），
-     * 徹底根除遞迴回溯造成的輸入卡頓與掉幀。
-     */
-    fun getMultiSyllableCombinations(keys: List<Int>, maxCount: Int = 12): List<String> {
-        val n = keys.size
-        if (n < 4 || n > 6) return emptyList()
-
-        synchronized(multiComboCache) {
-            multiComboCache[keys]?.let { return it }
-        }
-
-        // 動態規劃 (DP Beam Search)：每步保留 top 4 候選組合
-        val dp = Array(n + 1) { mutableListOf<Pair<String, Double>>() }
-        dp[0].add(Pair("", 0.0))
-
-        fun isFullSyllable(syl: String): Boolean {
-            return syl !in "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙ"
-        }
-
-        for (i in 1..n) {
-            val candidates = mutableListOf<Pair<String, Double>>()
-            for (len in 1..minOf(3, i)) {
-                val j = i - len
-                val prevList = dp[j]
-                if (prevList.isEmpty()) continue
-
-                val sub = keys.subList(j, i)
-                val matches = EXACT_KEY_MAP[sub] ?: continue
-                val topMatches = matches.take(4) // 取前 4 高頻音節
-                val lenBonus = if (len > 1) (len - 1) * 8.0 else -5.0
-
-                for (syl in topMatches) {
-                    val fullBonus = if (isFullSyllable(syl)) 10.0 else 0.0
-                    val sylScore = Math.log(maxOf(getSyllableWeight(syl).toDouble(), 10.0)) + lenBonus + fullBonus
-                    for (prev in prevList) {
-                        val newText = prev.first + syl
-                        val newScore = prev.second + sylScore
-                        candidates.add(Pair(newText, newScore))
-                    }
-                }
-            }
-            // 排序並只保留前 8 個最佳路徑 (Beam Width = 8)
-            candidates.sortByDescending { it.second }
-            val seen = HashSet<String>()
-            val pruned = mutableListOf<Pair<String, Double>>()
-            for (item in candidates) {
-                if (seen.add(item.first)) {
-                    pruned.add(item)
-                    if (pruned.size >= 8) break
-                }
-            }
-            dp[i] = pruned
-        }
-
-        val finalResults = dp[n].map { it.first }
-        synchronized(multiComboCache) {
-            if (multiComboCache.size > 128) {
-                multiComboCache.clear()
-            }
-            multiComboCache[keys] = finalResults
-        }
-        return finalResults.take(maxCount)
-    }
 
     private val splitComboCache = LinkedHashMap<List<Int>, List<String>>()
     private var splitCacheTotal = 0L
@@ -187,7 +128,7 @@ object SyllableManager {
      */
     fun getSyllableSplitCombinations(keys: List<Int>, maxCount: Int = 6): List<String> {
         val n = keys.size
-        val total = totalSyllableWeight
+        val total = totalSyllableWeight.get()
         if (n < 4 || n > 8 || total <= 0L) return emptyList()
 
         synchronized(splitComboCache) {
@@ -341,5 +282,49 @@ object SyllableManager {
             return out
         }
         return null
+    }
+
+    /**
+     * 自動將連續輸入的完整注音字串（可含聲調或無聲調）切分為合法音節列表，不需預先指定字數。
+     * 採用動態規劃（偏好較少音節數，即最長匹配優先，且聲調符號必須緊接在合法音節後）。
+     * 例："ㄉㄚˋㄐㄧㄚㄏㄠˇ" -> ["ㄉㄚˋ", "ㄐㄧㄚ", "ㄏㄠˇ"]
+     * 例："ㄐㄧㄣㄊㄧㄢ" -> ["ㄐㄧㄣ", "ㄊㄧㄢ"]
+     */
+    fun splitFullZhuyinAuto(rawZhuyin: String): List<String>? {
+        if (rawZhuyin.isBlank()) return null
+        if (rawZhuyin.contains(" ")) {
+            val parts = rawZhuyin.split(" ").filter { it.isNotEmpty() }
+            if (parts.all { isValidSyllable(it.filter { c -> c !in "ˇˋˊ˙" }) }) {
+                return parts
+            }
+        }
+        val n = rawZhuyin.length
+        val tones = "ˇˋˊ˙"
+        // dp[i] 儲存切分到 index i 的最佳音節列表（音節數越少越優先，同音節數時權重越高越優先）
+        val dp = arrayOfNulls<Pair<List<String>, Double>>(n + 1)
+        dp[0] = Pair(emptyList(), 0.0)
+
+        for (i in 0 until n) {
+            val current = dp[i] ?: continue
+            for (subLen in 3 downTo 1) {
+                if (i + subLen > n) continue
+                val sylPart = rawZhuyin.substring(i, i + subLen)
+                if (sylPart.any { it in tones }) continue
+                if (!VALID_SYLLABLES_SET.contains(sylPart)) continue
+
+                val nextIdx = i + subLen
+                val hasTone = nextIdx < n && rawZhuyin[nextIdx] in tones
+                val endIdx = nextIdx + (if (hasTone) 1 else 0)
+                val fullSyl = rawZhuyin.substring(i, endIdx)
+
+                val sylScore = Math.log(maxOf(getSyllableWeight(sylPart).toDouble(), 10.0)) - 12.0
+                val newScore = current.second + sylScore
+                val existing = dp[endIdx]
+                if (existing == null || newScore > existing.second) {
+                    dp[endIdx] = Pair(current.first + fullSyl, newScore)
+                }
+            }
+        }
+        return dp[n]?.first
     }
 }

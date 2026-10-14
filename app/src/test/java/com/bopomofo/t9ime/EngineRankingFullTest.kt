@@ -14,7 +14,12 @@ class EngineRankingFullTest {
         dictFile.forEachLine { line ->
             val p = line.split("\t")
             if (p.size >= 3) {
-                trie.insert(DictEntry(p[0], p[1], p[2].toIntOrNull() ?: 1))
+                val weight = p[2].toIntOrNull() ?: 1
+                val entry = DictEntry(p[0], p[1], weight)
+                trie.insert(entry)
+                if (p[0].length == 1) {
+                    SyllableManager.addSyllableWeight(entry.cleanZhuyin, weight)
+                }
             }
         }
 
@@ -195,7 +200,7 @@ class EngineRankingFullTest {
         println("Top candidate for [4, 6, 2, 3]: ${tiGanCandidates.firstOrNull()}")
         assertEquals("體感", tiGanCandidates.first())
 
-        val multiCombos = SyllableManager.getMultiSyllableCombinations(listOf(4, 6, 2, 3))
+        val multiCombos = SyllableManager.getSyllableSplitCombinations(listOf(4, 6, 2, 3))
         println("MultiCombos for [4, 6, 2, 3]: $multiCombos")
         assertTrue("MultiCombos should contain ㄊㄧㄍㄢ", multiCombos.contains("ㄊㄧㄍㄢ"))
 
@@ -207,7 +212,7 @@ class EngineRankingFullTest {
             listOf(3, 6, 7, 7, 10, 7)
         )) {
             val start = System.nanoTime()
-            val res = SyllableManager.getMultiSyllableCombinations(testKeys)
+            val res = SyllableManager.getSyllableSplitCombinations(testKeys)
             val costMs = (System.nanoTime() - start) / 1_000_000.0
             println("Keys $testKeys cost: $costMs ms, found ${res.size} combos")
         }

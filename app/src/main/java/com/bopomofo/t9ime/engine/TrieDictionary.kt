@@ -8,12 +8,26 @@ data class DictEntry(
     val zhuyin: String,
     val weight: Int,
     val isTolerant: Boolean = false,
-    /**
-     * 九鍵專用：此候選只涵蓋目前輸入的前 N 個注音鍵（選取後先上屏此詞，其餘按鍵繼續組字）。
-     * -1 表示涵蓋全部按鍵（一般候選，其他輸入模式一律使用預設值）。
-     */
-    val consumedKeys: Int = -1
-)
+    val consumedKeys: Int = 0
+) {
+    /** 預先計算去除聲調與空白的純注音字串，避免在查詢與 DP 迴圈中重複產生垃圾物件 */
+    val cleanZhuyin: String = if (zhuyin.isEmpty()) "" else buildString(zhuyin.length) {
+        for (c in zhuyin) {
+            if (c != 'ˇ' && c != 'ˋ' && c != 'ˊ' && c != '˙' && c != ' ') {
+                append(c)
+            }
+        }
+    }
+}
+
+val UserWordEntry.cleanZhuyin: String
+    get() = if (zhuyin.isEmpty()) "" else buildString(zhuyin.length) {
+        for (c in zhuyin) {
+            if (c != 'ˇ' && c != 'ˋ' && c != 'ˊ' && c != '˙' && c != ' ') {
+                append(c)
+            }
+        }
+    }
 
 /**
  * 前綴樹節點

@@ -11,8 +11,8 @@ android {
         applicationId = "com.bopomofo.t9ime"
         minSdk = 24
         targetSdk = 34
-        versionCode = 82
-        versionName = "2.5.2"
+        versionCode = 83
+        versionName = "2.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -42,6 +42,9 @@ android {
     buildFeatures {
         viewBinding = true
         buildConfig = true
+    }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 }
 

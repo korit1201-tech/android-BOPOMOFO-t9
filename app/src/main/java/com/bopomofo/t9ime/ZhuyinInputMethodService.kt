@@ -46,6 +46,7 @@ import com.bopomofo.t9ime.engine.SnippetManager
 import com.bopomofo.t9ime.engine.ZhuyinT9Engine
 import com.bopomofo.t9ime.theme.AppTheme
 import com.bopomofo.t9ime.theme.ThemeManager
+import com.bopomofo.t9ime.ui.SymbolPanelController
 import com.bopomofo.t9ime.ui.SwipeKeyButton
 
 /**
@@ -104,7 +105,9 @@ class ZhuyinInputMethodService : InputMethodService() {
     private var englishCaseState = EnglishCaseState.LOWER
     private val isCapsLock: Boolean
         get() = englishCaseState != EnglishCaseState.LOWER
-    private var currentSymbolTab = SymbolTab.DPAD
+    private lateinit var symbolPanelController: SymbolPanelController
+    private val currentSymbolTab: SymbolTab
+        get() = if (::symbolPanelController.isInitialized) symbolPanelController.currentSymbolTab else SymbolTab.DPAD
     private var lastCommittedWord: String? = null
     private val fullZhuyinBuffer = StringBuilder()
 
@@ -314,6 +317,9 @@ class ZhuyinInputMethodService : InputMethodService() {
         } catch (_: Exception) {}
         clipListener = null
         googleRecognizer?.close()
+        if (::engine.isInitialized) {
+            engine.close()
+        }
     }
 
     override fun onEvaluateFullscreenMode(): Boolean {
@@ -1091,69 +1097,6 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
     }
 
-    /**
-     * 數字/英文混合模式長按彈窗：顯示該按鍵所屬的所有字符（數字、字母或符號），點擊直出
-     */
-    private fun showCombinedNumberEnglishPopup(anchor: View, keyNum: Int) {
-        val chars = getCombinedNumberEnglishChars(keyNum)
-        if (chars.isEmpty()) return
-
-        val popup = android.widget.PopupMenu(this, anchor)
-        for ((index, item) in chars.withIndex()) {
-            val display = if (isCapsLock && item.length == 1 && item[0].isLetter()) item.uppercase() else item
-            popup.menu.add(0, index, index, display)
-        }
-        popup.setOnMenuItemClickListener { menuItem ->
-            triggerHapticFeedback()
-            val selected = chars[menuItem.itemId]
-            val finalStr = if (isCapsLock && selected.length == 1 && selected[0].isLetter()) selected.uppercase() else selected
-            commitTextDirectly(finalStr)
-            true
-        }
-        popup.show()
-    }
-
-    /**
-     * 9 鍵英文長按彈出該鍵所屬字母/數字選單（所選即所得）
-     */
-    private fun showEnglishKeyPopup(anchor: View, keyNum: Int) {
-        val chars = getT9CharsForKey(keyNum)
-        if (chars.isEmpty()) return
-
-        val popup = android.widget.PopupMenu(this, anchor)
-        for ((index, ch) in chars.withIndex()) {
-            val displayChar = if (isCapsLock && ch.isLetter()) ch.uppercaseChar() else ch
-            popup.menu.add(0, index, index, displayChar.toString())
-        }
-        popup.setOnMenuItemClickListener { item ->
-            triggerHapticFeedback()
-            val selectedChar = chars[item.itemId]
-            val finalChar = if (isCapsLock && selectedChar.isLetter()) selectedChar.uppercaseChar() else selectedChar
-            commitTextDirectly(finalChar.toString())
-            true
-        }
-        popup.show()
-    }
-
-    /**
-     * 長按 12 鍵彈出該鍵所屬注音符號選單（所選即所得）
-     */
-    private fun showZhuyinKeyPopup(anchor: View, keyNum: Int) {
-        val chars = com.bopomofo.t9ime.engine.KeyMapping.getChars(keyNum)
-        if (chars.isEmpty()) return
-
-        val popup = android.widget.PopupMenu(this, anchor)
-        for ((index, ch) in chars.withIndex()) {
-            popup.menu.add(0, index, index, ch.toString())
-        }
-        popup.setOnMenuItemClickListener { item ->
-            triggerHapticFeedback()
-            val selectedChar = chars[item.itemId]
-            commitTextDirectly(selectedChar.toString())
-            true
-        }
-        popup.show()
-    }
 
     /**
      * 空白鍵長按快選常用標點（，。？！）
@@ -1173,44 +1116,6 @@ class ZhuyinInputMethodService : InputMethodService() {
         popup.show()
     }
 
-    /**
-     * 數字/英文混合模式字符表
-     */
-    private fun getCombinedNumberEnglishChars(keyNum: Int): List<String> {
-        return when (keyNum) {
-            1  -> listOf("1", "@", ".", "_")
-            2  -> listOf("2", "a", "b", "c")
-            3  -> listOf("3", "d", "e", "f")
-            4  -> listOf("4", "g", "h", "i")
-            5  -> listOf("5", "j", "k", "l")
-            6  -> listOf("6", "m", "n", "o")
-            7  -> listOf("7", "p", "q", "r", "s")
-            8  -> listOf("8", "t", "u", "v")
-            9  -> listOf("9", "w", "x", "y", "z")
-            10 -> listOf(".", "-", "+", "*")
-            11 -> listOf("0", "/", "=", ")")
-            12 -> listOf("#", "%", "&", "!")
-            else -> emptyList()
-        }
-    }
-
-    private fun getT9CharsForKey(keyNum: Int): List<Char> {
-        return when (keyNum) {
-            1 -> listOf('@', '.', '_', '1')
-            2 -> listOf('a', 'b', 'c', '2')
-            3 -> listOf('d', 'e', 'f', '3')
-            4 -> listOf('g', 'h', 'i', '4')
-            5 -> listOf('j', 'k', 'l', '5')
-            6 -> listOf('m', 'n', 'o', '6')
-            7 -> listOf('p', 'q', 'r', 's', '7')
-            8 -> listOf('t', 'u', 'v', '8')
-            9 -> listOf('w', 'x', 'y', 'z', '9')
-            10 -> listOf('-', '+', '*', '(')
-            11 -> listOf('/', '=', '0', ')')
-            12 -> listOf('%', '&', '#', '!')
-            else -> emptyList()
-        }
-    }
 
     /**
      * 26 鍵英文全鍵盤 (QWERTY Layout - 包含 Shift大小寫切換、退格鍵、逗點、句號)
@@ -1648,43 +1553,6 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
     }
 
-    private fun createZhuyinFullEnterKey(weight: Float): Button {
-        return Button(this).apply {
-            text = "↵"
-            textSize = 18f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-            setBackgroundResource(R.drawable.bg_key_action)
-            val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight).apply {
-                setMargins(1, 2, 1, 2)
-            }
-            layoutParams = params
-            setOnClickListener {
-                triggerHapticFeedback()
-                performEnterAction()
-            }
-        }
-    }
-
-    private fun createZhuyinFullClearKey(weight: Float): Button {
-        return Button(this).apply {
-            text = "清空"
-            textSize = 14f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-            setBackgroundResource(R.drawable.bg_key_action)
-            val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight).apply {
-                setMargins(1, 2, 1, 2)
-            }
-            layoutParams = params
-            setOnClickListener {
-                triggerHapticFeedback()
-                lastUserTypingTime = SystemClock.uptimeMillis()
-                dismissHomophonePopup()
-                fullZhuyinBuffer.clear()
-                currentInputConnection?.finishComposingText()
-                clearCandidateBar()
-            }
-        }
-    }
 
     private fun handleZhuyinFullKey(ch: Char) {
         lastUserTypingTime = SystemClock.uptimeMillis()
@@ -1717,499 +1585,50 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun setupSymbolPanel(root: View) {
-        val tabFull = root.findViewById<Button>(R.id.tab_sym_fullwidth)
-        val tabHalf = root.findViewById<Button>(R.id.tab_sym_halfwidth)
-        val tabDpad = root.findViewById<Button>(R.id.tab_sym_dpad)
-        val tabMath = root.findViewById<Button>(R.id.tab_sym_math)
-        val tabClip = root.findViewById<Button>(R.id.tab_sym_clipboard)
-        val tabEmoji = root.findViewById<Button>(R.id.tab_sym_emoji)
-        val tabKaomoji = root.findViewById<Button>(R.id.tab_sym_kaomoji)
-        val tabSnippet = root.findViewById<Button>(R.id.tab_sym_snippet)
-
-        containerSymbolContent = root.findViewById(R.id.container_symbol_content)
-
-        tabFull?.setOnClickListener { triggerHapticFeedback(HapticType.MODE_SWITCH); switchSymbolTab(SymbolTab.FULLWIDTH) }
-        tabHalf?.setOnClickListener { triggerHapticFeedback(HapticType.MODE_SWITCH); switchSymbolTab(SymbolTab.HALFWIDTH) }
-        tabDpad?.setOnClickListener { triggerHapticFeedback(HapticType.MODE_SWITCH); switchSymbolTab(SymbolTab.DPAD) }
-        tabMath?.setOnClickListener { triggerHapticFeedback(HapticType.MODE_SWITCH); switchSymbolTab(SymbolTab.MATH) }
-        tabClip?.setOnClickListener { triggerHapticFeedback(HapticType.MODE_SWITCH); switchSymbolTab(SymbolTab.CLIPBOARD) }
-        tabEmoji?.setOnClickListener { triggerHapticFeedback(HapticType.MODE_SWITCH); switchSymbolTab(SymbolTab.EMOJI) }
-        tabKaomoji?.setOnClickListener { triggerHapticFeedback(HapticType.MODE_SWITCH); switchSymbolTab(SymbolTab.KAOMOJI) }
-        tabSnippet?.setOnClickListener { triggerHapticFeedback(HapticType.MODE_SWITCH); switchSymbolTab(SymbolTab.SNIPPET) }
-
-        btnSymbolDrawer.setOnClickListener {
-            triggerHapticFeedback(HapticType.MODE_SWITCH)
-            if (layoutSymbolPanel.visibility == View.VISIBLE) {
-                hideSymbolPanel()
-            } else {
-                showSymbolPanel()
+        symbolPanelController = SymbolPanelController(this, object : SymbolPanelController.Callback {
+            override fun onCommitText(text: String) = commitTextDirectly(text)
+            override fun onCommitProcessedText(text: String) = commitProcessedWordWithUserDict(text)
+            override fun onSafeCommitText(text: String) { safeCommitText(text) }
+            override fun onPerformEnter() = performEnterAction()
+            override fun onSendDpadKey(keyCode: Int) = sendDpadKey(keyCode)
+            override fun onPerformContextMenuAction(actionId: Int) {
+                currentInputConnection?.performContextMenuAction(actionId)
             }
-        }
+            override fun onToggleOneHandedMode(): String {
+                toggleOneHandedMode()
+                return currentOneHandedMode.title
+            }
+            override fun getCurrentOneHandedTitle(): String = currentOneHandedMode.title
+            override fun onTriggerHaptic(type: HapticType) = triggerHapticFeedback(type)
+            override fun onShowPanel() {
+                layout12Key.visibility = View.GONE
+                layoutQwerty.visibility = View.GONE
+                if (::layoutHandwriting.isInitialized) layoutHandwriting.visibility = View.GONE
+                if (::layoutZhuyinFull.isInitialized) layoutZhuyinFull.visibility = View.GONE
+            }
+            override fun onHidePanel() {
+                updateKeyboardModeUI()
+            }
+        })
+        symbolPanelController.setup(root)
     }
 
     private fun showSymbolPanel() {
-        layout12Key.visibility = View.GONE
-        layoutQwerty.visibility = View.GONE
-        if (::layoutHandwriting.isInitialized) layoutHandwriting.visibility = View.GONE
-        if (::layoutZhuyinFull.isInitialized) layoutZhuyinFull.visibility = View.GONE
-        layoutSymbolPanel.visibility = View.VISIBLE
-        btnSymbolDrawer.text = "✕"
-        switchSymbolTab(currentSymbolTab)
+        if (::symbolPanelController.isInitialized) {
+            symbolPanelController.showSymbolPanel()
+        }
     }
 
     private fun hideSymbolPanel() {
-        layoutSymbolPanel.visibility = View.GONE
-        btnSymbolDrawer.text = "✛"
-        updateKeyboardModeUI()
+        if (::symbolPanelController.isInitialized) {
+            symbolPanelController.hideSymbolPanel()
+        }
     }
 
     private fun switchSymbolTab(tab: SymbolTab) {
-        currentSymbolTab = tab
-        val tabFull = rootView?.findViewById<Button>(R.id.tab_sym_fullwidth)
-        val tabHalf = rootView?.findViewById<Button>(R.id.tab_sym_halfwidth)
-        val tabDpad = rootView?.findViewById<Button>(R.id.tab_sym_dpad)
-        val tabMath = rootView?.findViewById<Button>(R.id.tab_sym_math)
-        val tabClip = rootView?.findViewById<Button>(R.id.tab_sym_clipboard)
-        val tabEmoji = rootView?.findViewById<Button>(R.id.tab_sym_emoji)
-        val tabKaomoji = rootView?.findViewById<Button>(R.id.tab_sym_kaomoji)
-        val tabSnippet = rootView?.findViewById<Button>(R.id.tab_sym_snippet)
-
-        val activeColor = ContextCompat.getColor(this, R.color.kb_accent)
-        val normalColor = ContextCompat.getColor(this, R.color.kb_text_primary)
-
-        tabFull?.setTextColor(if (tab == SymbolTab.FULLWIDTH) activeColor else normalColor)
-        tabHalf?.setTextColor(if (tab == SymbolTab.HALFWIDTH) activeColor else normalColor)
-        tabDpad?.setTextColor(if (tab == SymbolTab.DPAD) activeColor else normalColor)
-        tabMath?.setTextColor(if (tab == SymbolTab.MATH) activeColor else normalColor)
-        tabClip?.setTextColor(if (tab == SymbolTab.CLIPBOARD) activeColor else normalColor)
-        tabEmoji?.setTextColor(if (tab == SymbolTab.EMOJI) activeColor else normalColor)
-        tabKaomoji?.setTextColor(if (tab == SymbolTab.KAOMOJI) activeColor else normalColor)
-        tabSnippet?.setTextColor(if (tab == SymbolTab.SNIPPET) activeColor else normalColor)
-
-        containerSymbolContent.removeAllViews()
-
-        when (tab) {
-            SymbolTab.DPAD -> containerSymbolContent.addView(createDpadView())
-            SymbolTab.FULLWIDTH -> {
-                val fullSymbols = listOf(
-                    "，", "。", "！", "？", "、", "；", "：", "～",
-                    "…", "「", "」", "『", "』", "《", "》", "（",
-                    "）", "【", "】", "〔", "〕", "“", "”", "‘", "’", "·", "—", "￥"
-                )
-                containerSymbolContent.addView(createSymbolGrid(fullSymbols, 7))
-            }
-            SymbolTab.HALFWIDTH -> {
-                val halfSymbols = listOf(
-                    ",", ".", "!", "?", ":", ";", "/", "\\",
-                    "~", "@", "#", "$", "%", "^", "&", "*",
-                    "-", "_", "+", "=", "(", ")", "[", "]",
-                    "{", "}", "<", ">", "\"", "'", "`", "|"
-                )
-                containerSymbolContent.addView(createSymbolGrid(halfSymbols, 8))
-            }
-            SymbolTab.MATH -> {
-                val mathSymbols = listOf(
-                    "↑", "↓", "←", "→", "±", "×", "÷", "≠",
-                    "≈", "≤", "≥", "℃", "★", "✔", "❤", "☺",
-                    "©", "®", "™", "¥", "€", "£", "§", "¶",
-                    "∞", "π", "√", "°", "‰", "▲", "▼", "◆"
-                )
-                containerSymbolContent.addView(createSymbolGrid(mathSymbols, 8))
-            }
-            SymbolTab.CLIPBOARD -> containerSymbolContent.addView(createClipboardView())
-            SymbolTab.EMOJI -> containerSymbolContent.addView(createSymbolGrid(EmojiKaomojiManager.POPULAR_EMOJIS, 7))
-            SymbolTab.KAOMOJI -> containerSymbolContent.addView(createKaomojiView())
-            SymbolTab.SNIPPET -> containerSymbolContent.addView(createSnippetView())
+        if (::symbolPanelController.isInitialized) {
+            symbolPanelController.switchSymbolTab(tab)
         }
-    }
-
-    private fun createClipboardView(): View {
-        val scrollView = ScrollView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-            isVerticalScrollBarEnabled = true
-        }
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(8, 4, 8, 4)
-        }
-
-        val clips = ClipboardHistoryManager.getHistory()
-        if (clips.isEmpty()) {
-            val emptyTv = TextView(this).apply {
-                text = "剪貼簿目前尚無紀錄\n複製任何文字將自動保存在此"
-                textSize = 14f
-                setTextColor(ContextCompat.getColor(context, R.color.kb_text_secondary))
-                gravity = Gravity.CENTER
-                setPadding(16, 48, 16, 48)
-            }
-            layout.addView(emptyTv)
-        } else {
-            // 頂部列：提示與清空按鈕
-            val topBar = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(4, 2, 4, 6)
-            }
-            val hintTv = TextView(this).apply {
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                text = "保留最近 10 則紀錄（長按可刪除）"
-                textSize = 12f
-                setTextColor(ContextCompat.getColor(context, R.color.kb_text_secondary))
-            }
-            val btnClear = Button(this).apply {
-                text = "清空"
-                textSize = 12f
-                setTextColor(Color.parseColor("#E53935"))
-                setBackgroundResource(R.drawable.bg_key_action)
-                setOnClickListener {
-                    triggerHapticFeedback(HapticType.DELETE)
-                    ClipboardHistoryManager.clearAll(context)
-                    switchSymbolTab(SymbolTab.CLIPBOARD)
-                }
-            }
-            topBar.addView(hintTv)
-            topBar.addView(btnClear)
-            layout.addView(topBar)
-
-            for (clip in clips) {
-                val btn = Button(this).apply {
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        topMargin = 4
-                        bottomMargin = 4
-                    }
-                    text = clip.take(60) + if (clip.length > 60) "..." else ""
-                    textSize = 14f
-                    gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                    setBackgroundResource(R.drawable.bg_key)
-                    setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-                    setOnClickListener {
-                        triggerHapticFeedback(HapticType.COMMIT)
-                        safeCommitText(clip)
-                        hideSymbolPanel()
-                    }
-                    setOnLongClickListener {
-                        triggerHapticFeedback(HapticType.DELETE)
-                        ClipboardHistoryManager.removeClip(context, clip)
-                        switchSymbolTab(SymbolTab.CLIPBOARD)
-                        true
-                    }
-                }
-                layout.addView(btn)
-            }
-        }
-        scrollView.addView(layout)
-        return scrollView
-    }
-
-    private fun createKaomojiView(): View {
-        val scrollView = ScrollView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-            isVerticalScrollBarEnabled = true
-        }
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(6, 4, 6, 4)
-        }
-
-        val rows = EmojiKaomojiManager.KAOMOJI_LIST.chunked(3)
-        for (rowItems in rows) {
-            val rowLayout = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    topMargin = 4
-                    bottomMargin = 4
-                }
-            }
-            for (km in rowItems) {
-                val btn = Button(this).apply {
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                        marginStart = 3
-                        marginEnd = 3
-                    }
-                    text = km
-                    textSize = 13f
-                    setBackgroundResource(R.drawable.bg_key)
-                    setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-                    setOnClickListener {
-                        triggerHapticFeedback(HapticType.COMMIT)
-                        commitProcessedText(km)
-                        hideSymbolPanel()
-                    }
-                }
-                rowLayout.addView(btn)
-            }
-            layout.addView(rowLayout)
-        }
-        scrollView.addView(layout)
-        return scrollView
-    }
-
-    private fun createSnippetView(): View {
-        val scrollView = ScrollView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-            isVerticalScrollBarEnabled = true
-        }
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(8, 4, 8, 4)
-        }
-
-        val snippets = SnippetManager.getAllSnippets()
-        for ((trigger, expansion) in snippets) {
-            val btn = Button(this).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    topMargin = 4
-                    bottomMargin = 4
-                }
-                text = "[$trigger] $expansion"
-                textSize = 14f
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                setBackgroundResource(R.drawable.bg_key)
-                setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-                setOnClickListener {
-                    triggerHapticFeedback(HapticType.COMMIT)
-                    commitProcessedText(expansion)
-                    hideSymbolPanel()
-                }
-            }
-            layout.addView(btn)
-        }
-        scrollView.addView(layout)
-        return scrollView
-    }
-
-    private fun createDpadView(): View {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-            weightSum = 3f
-        }
-
-        // 左側快捷操作
-        val leftActions = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 0.9f)
-        }
-        val btnHome = Button(this).apply {
-            text = "Home"
-            textSize = 14f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-            setBackgroundResource(R.drawable.bg_key_action)
-            val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { setMargins(2, 2, 2, 2) }
-            layoutParams = p
-            setOnClickListener { triggerHapticFeedback(); sendDpadKey(KeyEvent.KEYCODE_MOVE_HOME) }
-        }
-        val btnSelectAll = Button(this).apply {
-            text = "全選"
-            textSize = 14f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-            setBackgroundResource(R.drawable.bg_key_action)
-            val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { setMargins(2, 2, 2, 2) }
-            layoutParams = p
-            setOnClickListener { triggerHapticFeedback(); currentInputConnection?.performContextMenuAction(android.R.id.selectAll) }
-        }
-        val btnCopy = Button(this).apply {
-            text = "複製"
-            textSize = 14f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-            setBackgroundResource(R.drawable.bg_key_action)
-            val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { setMargins(2, 2, 2, 2) }
-            layoutParams = p
-            setOnClickListener { triggerHapticFeedback(); currentInputConnection?.performContextMenuAction(android.R.id.copy) }
-        }
-        leftActions.addView(btnHome)
-        leftActions.addView(btnSelectAll)
-        leftActions.addView(btnCopy)
-
-        // 中間十字方向鍵盤
-        val centerDpad = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.2f)
-        }
-
-        val rowUp = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-            gravity = Gravity.CENTER
-        }
-        val btnUp = Button(this).apply {
-            text = "▲"
-            textSize = 18f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-            setBackgroundResource(R.drawable.bg_key)
-            val p = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply { setMargins(4, 2, 4, 2) }
-            layoutParams = p
-            setOnClickListener { triggerHapticFeedback(); sendDpadKey(KeyEvent.KEYCODE_DPAD_UP) }
-        }
-        rowUp.addView(btnUp)
-
-        val rowMid = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-        }
-        val btnLeft = Button(this).apply {
-            text = "◀"
-            textSize = 18f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-            setBackgroundResource(R.drawable.bg_key)
-            val p = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply { setMargins(2, 2, 2, 2) }
-            layoutParams = p
-            setOnClickListener { triggerHapticFeedback(); sendDpadKey(KeyEvent.KEYCODE_DPAD_LEFT) }
-        }
-        val btnEnter = Button(this).apply {
-            text = "↵"
-            textSize = 18f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-            setBackgroundResource(R.drawable.bg_key_action)
-            val p = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply { setMargins(2, 2, 2, 2) }
-            layoutParams = p
-            setOnClickListener { triggerHapticFeedback(); performEnterAction() }
-        }
-        val btnRight = Button(this).apply {
-            text = "▶"
-            textSize = 18f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-            setBackgroundResource(R.drawable.bg_key)
-            val p = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply { setMargins(2, 2, 2, 2) }
-            layoutParams = p
-            setOnClickListener { triggerHapticFeedback(); sendDpadKey(KeyEvent.KEYCODE_DPAD_RIGHT) }
-        }
-        rowMid.addView(btnLeft)
-        rowMid.addView(btnEnter)
-        rowMid.addView(btnRight)
-
-        val rowDown = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-            gravity = Gravity.CENTER
-        }
-        val btnDown = Button(this).apply {
-            text = "▼"
-            textSize = 18f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-            setBackgroundResource(R.drawable.bg_key)
-            val p = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply { setMargins(4, 2, 4, 2) }
-            layoutParams = p
-            setOnClickListener { triggerHapticFeedback(); sendDpadKey(KeyEvent.KEYCODE_DPAD_DOWN) }
-        }
-        rowDown.addView(btnDown)
-
-        centerDpad.addView(rowUp)
-        centerDpad.addView(rowMid)
-        centerDpad.addView(rowDown)
-
-        // 右側快捷操作
-        val rightActions = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 0.9f)
-        }
-        val btnEnd = Button(this).apply {
-            text = "End"
-            textSize = 14f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-            setBackgroundResource(R.drawable.bg_key_action)
-            val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { setMargins(2, 2, 2, 2) }
-            layoutParams = p
-            setOnClickListener { triggerHapticFeedback(); sendDpadKey(KeyEvent.KEYCODE_MOVE_END) }
-        }
-        val btnCut = Button(this).apply {
-            text = "剪下"
-            textSize = 14f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-            setBackgroundResource(R.drawable.bg_key_action)
-            val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { setMargins(2, 2, 2, 2) }
-            layoutParams = p
-            setOnClickListener { triggerHapticFeedback(); currentInputConnection?.performContextMenuAction(android.R.id.cut) }
-        }
-        val btnPaste = Button(this).apply {
-            text = "貼上"
-            textSize = 14f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-            setBackgroundResource(R.drawable.bg_key_action)
-            val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { setMargins(2, 2, 2, 2) }
-            layoutParams = p
-            setOnClickListener {
-                triggerHapticFeedback()
-                val clipManager = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-                val clipData = clipManager?.primaryClip
-                val clipText = if (clipData != null && clipData.itemCount > 0) {
-                    clipData.getItemAt(0)?.coerceToText(this@ZhuyinInputMethodService)?.toString()
-                } else null
-
-                if (!clipText.isNullOrEmpty()) {
-                    safeCommitText(clipText)
-                } else {
-                    currentInputConnection?.performContextMenuAction(android.R.id.paste)
-                }
-            }
-        }
-        val btnOneHanded = Button(this).apply {
-            text = currentOneHandedMode.title
-            textSize = 12f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_accent))
-            setBackgroundResource(R.drawable.bg_key_action)
-            val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { setMargins(2, 2, 2, 2) }
-            layoutParams = p
-            setOnClickListener {
-                toggleOneHandedMode()
-                text = currentOneHandedMode.title
-            }
-        }
-        rightActions.addView(btnEnd)
-        rightActions.addView(btnCut)
-        rightActions.addView(btnPaste)
-        rightActions.addView(btnOneHanded)
-
-        root.addView(leftActions)
-        root.addView(centerDpad)
-        root.addView(rightActions)
-        return root
-    }
-
-    private fun createSymbolGrid(symbols: List<String>, columns: Int): View {
-        val scrollView = ScrollView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-            isVerticalScrollBarEnabled = false
-        }
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        }
-
-        var currentRow: LinearLayout? = null
-        for ((idx, sym) in symbols.withIndex()) {
-            if (idx % columns == 0) {
-                currentRow = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 46.dpToPx())
-                }
-                container.addView(currentRow)
-            }
-            val btn = Button(this).apply {
-                text = sym
-                textSize = 17f
-                setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
-                setBackgroundResource(R.drawable.bg_key)
-                val p = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply { setMargins(1, 1, 1, 1) }
-                layoutParams = p
-                setOnClickListener {
-                    triggerHapticFeedback()
-                    commitTextDirectly(sym)
-                }
-            }
-            currentRow?.addView(btn)
-        }
-        scrollView.addView(container)
-        return scrollView
     }
 
     private fun Int.dpToPx(): Int = (this * resources.displayMetrics.density).toInt()
@@ -2960,24 +2379,6 @@ class ZhuyinInputMethodService : InputMethodService() {
         set12KeyText(12, "ㄖ ㄥ ㄩ")
     }
 
-    private fun formatNumberKeyLabel(primary: String, secondary: String): CharSequence {
-        val fullText = "$primary\n$secondary"
-        val spannable = SpannableString(fullText)
-        val splitIndex = primary.length
-        val primaryColor = ContextCompat.getColor(this, R.color.kb_text_primary)
-        val secondaryColor = ContextCompat.getColor(this, R.color.kb_text_secondary)
-
-        // 主數字 / 主符號：字體加大、粗體、深色主文字
-        spannable.setSpan(RelativeSizeSpan(1.45f), 0, splitIndex, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        spannable.setSpan(StyleSpan(Typeface.BOLD), 0, splitIndex, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        spannable.setSpan(ForegroundColorSpan(primaryColor), 0, splitIndex, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-
-        // 次要字母 / 符號：縮小、柔和次要文字顏色
-        spannable.setSpan(RelativeSizeSpan(0.68f), splitIndex + 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        spannable.setSpan(ForegroundColorSpan(secondaryColor), splitIndex + 1, fullText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-
-        return spannable
-    }
 
     private fun update12KeyLabelsNumbers() {
         // 純數字模式：僅顯示大號粗體數字與主符號，移除英文字母
@@ -2992,21 +2393,6 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
     }
 
-    private fun update12KeyLabelsT9English() {
-        val caseTransform = { s: String -> if (isCapsLock) s.uppercase() else s.lowercase() }
-        set12KeyText(1,  formatNumberKeyLabel("1", "@ . _"))
-        set12KeyText(2,  formatNumberKeyLabel("2", caseTransform("a b c")))
-        set12KeyText(3,  formatNumberKeyLabel("3", caseTransform("d e f")))
-        set12KeyText(4,  formatNumberKeyLabel("4", caseTransform("g h i")))
-        set12KeyText(5,  formatNumberKeyLabel("5", caseTransform("j k l")))
-        set12KeyText(6,  formatNumberKeyLabel("6", caseTransform("m n o")))
-        set12KeyText(7,  formatNumberKeyLabel("7", caseTransform("p q r s")))
-        set12KeyText(8,  formatNumberKeyLabel("8", caseTransform("t u v")))
-        set12KeyText(9,  formatNumberKeyLabel("9", caseTransform("w x y z")))
-        set12KeyText(10, formatNumberKeyLabel(".", "- + *"))
-        set12KeyText(11, formatNumberKeyLabel("0", "/ = )"))
-        set12KeyText(12, formatNumberKeyLabel("#", "% & !"))
-    }
 
     private fun set12KeyText(keyNum: Int, text: CharSequence) {
         val root = layout12Key
@@ -3034,35 +2420,6 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
     }
 
-    private fun getNumberSwipe(keyNum: Int, dir: SwipeKeyButton.Direction): String? {
-        val chars = getCombinedNumberEnglishChars(keyNum)
-        if (chars.isEmpty()) return null
-        val idx = when (dir) {
-            SwipeKeyButton.Direction.UP -> if (keyNum == 7 || keyNum == 9) 4 else 0
-            SwipeKeyButton.Direction.LEFT -> 1
-            SwipeKeyButton.Direction.DOWN -> 2
-            SwipeKeyButton.Direction.RIGHT -> 3
-        }
-        if (idx < chars.size) {
-            val s = chars[idx]
-            return if (isCapsLock && s.length == 1 && s[0].isLetter()) s.uppercase() else s
-        }
-        return null
-    }
-
-    private fun getT9EnglishSwipe(keyNum: Int, dir: SwipeKeyButton.Direction): Char? {
-        return when (keyNum) {
-            2 -> when (dir) { SwipeKeyButton.Direction.LEFT -> 'a'; SwipeKeyButton.Direction.DOWN -> 'b'; SwipeKeyButton.Direction.RIGHT -> 'c'; else -> null }
-            3 -> when (dir) { SwipeKeyButton.Direction.LEFT -> 'd'; SwipeKeyButton.Direction.DOWN -> 'e'; SwipeKeyButton.Direction.RIGHT -> 'f'; else -> null }
-            4 -> when (dir) { SwipeKeyButton.Direction.LEFT -> 'g'; SwipeKeyButton.Direction.DOWN -> 'h'; SwipeKeyButton.Direction.RIGHT -> 'i'; else -> null }
-            5 -> when (dir) { SwipeKeyButton.Direction.LEFT -> 'j'; SwipeKeyButton.Direction.DOWN -> 'k'; SwipeKeyButton.Direction.RIGHT -> 'l'; else -> null }
-            6 -> when (dir) { SwipeKeyButton.Direction.LEFT -> 'm'; SwipeKeyButton.Direction.DOWN -> 'n'; SwipeKeyButton.Direction.RIGHT -> 'o'; else -> null }
-            7 -> when (dir) { SwipeKeyButton.Direction.LEFT -> 'p'; SwipeKeyButton.Direction.DOWN -> 'q'; SwipeKeyButton.Direction.RIGHT -> 'r'; SwipeKeyButton.Direction.UP -> 's' }
-            8 -> when (dir) { SwipeKeyButton.Direction.LEFT -> 't'; SwipeKeyButton.Direction.DOWN -> 'u'; SwipeKeyButton.Direction.RIGHT -> 'v'; else -> null }
-            9 -> when (dir) { SwipeKeyButton.Direction.LEFT -> 'w'; SwipeKeyButton.Direction.DOWN -> 'x'; SwipeKeyButton.Direction.RIGHT -> 'y'; SwipeKeyButton.Direction.UP -> 'z' }
-            else -> null
-        }
-    }
 
     private fun getSwipeZhuyin(keyId: Int, direction: SwipeKeyButton.Direction): Char? {
         return when (keyId) {
@@ -4151,8 +3508,15 @@ class ZhuyinInputMethodService : InputMethodService() {
     private fun commitProcessedWordWithUserDict(word: String, zhuyin: String = "", learn: Boolean = true) {
         if (word.startsWith("【")) return
         if (learn && isPersonalizedLearningAllowed()) {
-            // 1. 記錄選定確認的整組詞彙，並即時注入 Trie 字典賦予絕對首選優選
-            engine.learnWord(word, zhuyin)
+            // 1. 若為 1~4 字的一般詞彙，直接學習；若為超過 4 字的合成整句，拆分為合法音節與片語學習，避免長句污染單詞 Trie
+            if (word.length <= 4) {
+                engine.learnWord(word, zhuyin)
+            } else {
+                val syls = com.bopomofo.t9ime.engine.SyllableManager.splitFullZhuyin(zhuyin, word.length)
+                if (syls != null && syls.size == word.length) {
+                    engine.learnCommittedSentence(word, syls, emptyMap(), lastCommittedWord)
+                }
+            }
 
             // 1.5 學習 Bigram 語境詞對
             val prev = lastCommittedWord

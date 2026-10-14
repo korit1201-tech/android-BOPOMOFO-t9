@@ -20,12 +20,12 @@ data class UserWordEntry(
  * 3. 匯入匯出：支援標準 TSV 格式純文字檔案匯出備份與跨裝置匯入
  * 4. 100% 離線隱私：所有打字記憶完全保存在手機端，不聯網上傳
  */
-class UserDictionaryManager private constructor(private val context: Context) {
+class UserDictionaryManager private constructor(private val context: Context?) {
 
     private val memoryDict = mutableMapOf<String, UserWordEntry>()
     private val executor = Executors.newSingleThreadExecutor()
-    private val dictFile: File
-        get() = File(context.filesDir, "bopomofo_user_dict.json")
+    private val dictFile: File?
+        get() = try { context?.filesDir?.let { File(it, "bopomofo_user_dict.json") } } catch (_: Exception) { null }
 
     var onDictionaryChangedListener: (() -> Unit)? = null
 
@@ -35,9 +35,9 @@ class UserDictionaryManager private constructor(private val context: Context) {
         @Volatile
         private var instance: UserDictionaryManager? = null
 
-        fun getInstance(context: Context): UserDictionaryManager {
+        fun getInstance(context: Context? = null): UserDictionaryManager {
             return instance ?: synchronized(this) {
-                instance ?: UserDictionaryManager(context.applicationContext).also { instance = it }
+                instance ?: UserDictionaryManager(context?.applicationContext).also { instance = it }
             }
         }
     }
@@ -48,8 +48,9 @@ class UserDictionaryManager private constructor(private val context: Context) {
 
     private fun loadFromFile() {
         try {
-            if (!dictFile.exists()) return
-            val jsonStr = dictFile.readText(Charsets.UTF_8)
+            val file = dictFile ?: return
+            if (!file.exists()) return
+            val jsonStr = file.readText(Charsets.UTF_8)
             val jsonArray = JSONArray(jsonStr)
             synchronized(memoryDict) {
                 memoryDict.clear()
@@ -69,6 +70,7 @@ class UserDictionaryManager private constructor(private val context: Context) {
 
     private fun saveToFile() {
         try {
+            val file = dictFile ?: return
             val jsonArray = JSONArray()
             synchronized(memoryDict) {
                 for (entry in memoryDict.values) {
@@ -81,14 +83,14 @@ class UserDictionaryManager private constructor(private val context: Context) {
                     jsonArray.put(obj)
                 }
             }
-            dictFile.writeText(jsonArray.toString(), Charsets.UTF_8)
+            file.writeText(jsonArray.toString(), Charsets.UTF_8)
         } catch (e: Exception) {
             android.util.Log.e("BopomofoIME", "儲存個人詞庫失敗", e)
         }
     }
 
     private var savePending = false
-    private val saveHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val saveHandler = try { android.os.Looper.getMainLooper()?.let { android.os.Handler(it) } } catch (_: Exception) { null }
     private val saveRunnable = Runnable {
         executor.execute {
             saveToFile()
@@ -117,8 +119,8 @@ class UserDictionaryManager private constructor(private val context: Context) {
         }
 
         // 防抖延遲 2.5 秒儲存，打字期間合併寫檔
-        saveHandler.removeCallbacks(saveRunnable)
-        saveHandler.postDelayed(saveRunnable, 2500L)
+        saveHandler?.removeCallbacks(saveRunnable)
+        saveHandler?.postDelayed(saveRunnable, 2500L)
     }
 
     /**

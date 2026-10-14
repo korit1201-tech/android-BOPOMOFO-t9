@@ -19,7 +19,7 @@ import java.io.InputStreamReader
  * - pollConfirmedPrefix 前綴確認門檻降低（≥6鍵、剩餘≥3鍵），讓連續輸入時「今天」等詞更快自動上屏
  * - getHomophonesFor() 同音字查詢，供候選詞長按替換功能使用
  */
-class ZhuyinT9Engine(private val context: Context) {
+class ZhuyinT9Engine(private val context: Context? = null) {
 
     @Volatile
     private var trie = TrieDictionary()
@@ -59,7 +59,7 @@ class ZhuyinT9Engine(private val context: Context) {
         private set
 
     var onDictionaryLoadedListener: (() -> Unit)? = null
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val mainHandler: Handler? = try { Looper.getMainLooper()?.let { Handler(it) } } catch (_: Exception) { null }
 
     companion object {
         val TONE_SYMBOLS = listOf(' ', 'ˇ', 'ˋ', 'ˊ', '˙')
@@ -93,14 +93,18 @@ class ZhuyinT9Engine(private val context: Context) {
 
     init {
         initDefaultBigrams()
-        loadUserDictionaryEntries(trie, charZhuyinMap, fullZhuyinWordMap)
-        userDict.onDictionaryChangedListener = {
+        if (userDict != null) {
             loadUserDictionaryEntries(trie, charZhuyinMap, fullZhuyinWordMap)
-            if (currentKeys.isNotEmpty()) {
-                recalculate()
+            userDict.onDictionaryChangedListener = {
+                loadUserDictionaryEntries(trie, charZhuyinMap, fullZhuyinWordMap)
+                if (currentKeys.isNotEmpty()) {
+                    recalculate()
+                }
             }
         }
-        startAsyncDictionaryLoading()
+        if (context != null) {
+            startAsyncDictionaryLoading()
+        }
     }
 
     private fun initDefaultBigrams() {
@@ -124,12 +128,26 @@ class ZhuyinT9Engine(private val context: Context) {
         addBigramPair("台灣", "大學", 600)
         addBigramPair("台灣", "高鐵", 700)
         addBigramPair("捷運", "站", 700)
+        val commonPairs = listOf(
+            "我們" to "可以", "我們" to "要", "你們" to "要", "他們" to "在",
+            "現在" to "在", "現在" to "要", "已經" to "在", "已經" to "有",
+            "可以" to "幫我", "可以" to "嗎", "幫我" to "看", "幫我" to "買",
+            "覺得" to "很", "覺得" to "可以", "知道" to "嗎", "知道" to "了",
+            "怎麼" to "辦", "怎麼" to "樣", "什麼" to "時候", "什麼" to "意思",
+            "因為" to "我", "所以" to "我", "如果" to "你", "還是" to "要",
+            "應該" to "是", "應該" to "可以", "真的" to "很", "真的" to "嗎",
+            "沒問題" to "了", "不好意思" to "我", "謝謝" to "你", "辛苦" to "了"
+        )
+        for ((p, n) in commonPairs) {
+            addBigramPair(p, n, 600)
+        }
         loadBigramFromFile()
     }
 
     private fun getBigramFile(): java.io.File? {
         return try {
-            java.io.File(context.filesDir, "user_bigram.json")
+            val ctx = context ?: return null
+            java.io.File(ctx.filesDir, "user_bigram.json")
         } catch (_: Exception) {
             null
         }
@@ -194,8 +212,8 @@ class ZhuyinT9Engine(private val context: Context) {
         synchronized(bigramMap) {
             addBigramPair(prevWord, nextWord, 500)
         }
-        mainHandler.removeCallbacks(bigramSaveRunnable)
-        mainHandler.postDelayed(bigramSaveRunnable, 2500L)
+        mainHandler?.removeCallbacks(bigramSaveRunnable)
+        mainHandler?.postDelayed(bigramSaveRunnable, 2500L)
     }
 
     fun getBigramBoost(prevWord: String?, candidateWord: String): Int {
@@ -216,7 +234,7 @@ class ZhuyinT9Engine(private val context: Context) {
             loadDictionaryInternal(newTrie, newNextWordMap, newCharZhuyinMap, newInitialMap, newSoundToCharMap, newFullZhuyinWordMap)
             loadUserDictionaryEntries(newTrie, newCharZhuyinMap, newFullZhuyinWordMap)
 
-            mainHandler.post {
+            val updateAction = {
                 trie = newTrie
                 nextWordMap = newNextWordMap
                 charZhuyinMap = newCharZhuyinMap
@@ -229,7 +247,32 @@ class ZhuyinT9Engine(private val context: Context) {
                 }
                 onDictionaryLoadedListener?.invoke()
             }
+            if (mainHandler != null) {
+                mainHandler.post { updateAction() }
+            } else {
+                updateAction()
+            }
         }, "ZhuyinT9DictLoader").start()
+    }
+
+    fun loadDictionaryForTest(file: java.io.File = java.io.File("src/main/assets/dict_tw.txt")) {
+        val newTrie = TrieDictionary()
+        val newNextWordMap = mutableMapOf<String, MutableList<DictEntry>>()
+        val newCharZhuyinMap = mutableMapOf<Char, MutableList<String>>()
+        val newInitialMap = mutableMapOf<String, MutableList<DictEntry>>()
+        val newSoundToCharMap = mutableMapOf<String, MutableList<DictEntry>>()
+        val newFullZhuyinWordMap = mutableMapOf<String, MutableList<DictEntry>>()
+        file.inputStream().use { stream ->
+            loadDictionaryInternal(newTrie, newNextWordMap, newCharZhuyinMap, newInitialMap, newSoundToCharMap, newFullZhuyinWordMap, stream)
+        }
+        loadUserDictionaryEntries(newTrie, newCharZhuyinMap, newFullZhuyinWordMap)
+        trie = newTrie
+        nextWordMap = newNextWordMap
+        charZhuyinMap = newCharZhuyinMap
+        initialMap = newInitialMap
+        soundToCharMap = newSoundToCharMap
+        fullZhuyinWordMap = newFullZhuyinWordMap
+        isDictionaryLoaded = true
     }
 
     private fun loadUserDictionaryEntries(
@@ -275,12 +318,15 @@ class ZhuyinT9Engine(private val context: Context) {
         targetCharZhuyinMap: MutableMap<Char, MutableList<String>>,
         targetInitialMap: MutableMap<String, MutableList<DictEntry>>,
         targetSoundToCharMap: MutableMap<String, MutableList<DictEntry>>,
-        targetFullZhuyinWordMap: MutableMap<String, MutableList<DictEntry>>
+        targetFullZhuyinWordMap: MutableMap<String, MutableList<DictEntry>>,
+        customStream: java.io.InputStream? = null
     ) {
         val nextWordTrack = mutableMapOf<String, HashSet<String>>()
         var accumulatedWeight = 0L
         try {
-            context.assets.open("dict_tw.txt").use { inputStream ->
+            SyllableManager.resetWeights()
+            val stream = customStream ?: context?.assets?.open("dict_tw.txt") ?: return
+            stream.use { inputStream ->
                 BufferedReader(InputStreamReader(inputStream), 65536).useLines { lines ->
                     for (line in lines) {
                         val tab1 = line.indexOf('\t')
@@ -491,30 +537,30 @@ class ZhuyinT9Engine(private val context: Context) {
      */
     private fun getEffectiveWeight(entry: DictEntry, inputKeyCount: Int, isExact: Boolean, prevTopWord: String? = null): Double {
         val userBoost = userDict.getBoost(entry.word)
-        // 關鍵防禦：只有「完全匹配 (isExact)」之字詞才享有 10 億級置頂優選！
-        // 尚未拼完的前綴預測詞 (!isExact) 絕對不能享有 10 億特權，嚴禁搶佔已拼完的精確單字！
+        val bigramBoost = getBigramBoost(currentContextWord, entry.word)
+        val bigramBonus = if (bigramBoost > 0) 1.0 + minOf(bigramBoost, 2500) / 800.0 else 1.0
+
+        // 完全匹配且使用者曾選過：給予高優先級，但乘上 Bigram 語境加成讓強上下文可競爭
         if (isExact && userBoost > 0) {
-            return 1_000_000_000.0 + userBoost
+            return (1_000_000_000.0 + userBoost) * bigramBonus
         }
 
         var rawWeight = entry.weight.toDouble()
         if (!isExact && userBoost > 0) {
-            // 未完成前綴預測僅享有適度加權 (最多 3x)，絕不破壞順位
             rawWeight *= (1.0 + minOf(userBoost, 2_000_000) / 1_000_000.0)
         }
 
         val lengthMultiplier = when {
             isExact -> {
                 when (entry.word.length) {
-                    2 -> 2.5      // 雙字詞核心加成
-                    3 -> 2.2      // 三字詞加成
-                    4 -> 2.0      // 四字成語加成
-                    1 -> 1.5      // 單字完全匹配（已完整拼完音節，給予充份基礎加成，絕不懲罰）
+                    2 -> 2.5
+                    3 -> 2.2
+                    4 -> 2.0
+                    1 -> 1.5
                     else -> 1.8
                 }
             }
             else -> {
-                // 尚未完成的預測詞 (Prefix)
                 when (entry.word.length) {
                     2 -> 1.2
                     3 -> 1.0
@@ -525,16 +571,13 @@ class ZhuyinT9Engine(private val context: Context) {
             }
         }
 
-        // 距離折扣模型
         val targetKeyLen = KeyMapping.getSequence(entry.zhuyin, ignoreTones = true).size
         val distance = maxOf(0, targetKeyLen - inputKeyCount)
         val distanceMultiplier = if (isExact) 2.5 else Math.pow(0.65, distance.toDouble())
-
-        // 音節延續加成
         val continuityMultiplier = if (prevTopWord != null && prevTopWord.isNotEmpty() && entry.word.startsWith(prevTopWord)) 1.3 else 1.0
-
         val tolerantMultiplier = if (entry.isTolerant) 0.35 else 1.0
-        return rawWeight * lengthMultiplier * distanceMultiplier * continuityMultiplier * tolerantMultiplier
+
+        return rawWeight * lengthMultiplier * distanceMultiplier * continuityMultiplier * tolerantMultiplier * bigramBonus
     }
 
     // ───────── 核心查詢邏輯 ─────────
@@ -547,7 +590,7 @@ class ZhuyinT9Engine(private val context: Context) {
             return
         }
 
-        val isTolerantEnabled = com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(context)
+        val isTolerantEnabled = context?.let { com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(it) } ?: false
         val exactResults = trie.searchExact(currentKeys, includeTolerant = isTolerantEnabled)
         // 前綴預測：鍵數少時子樹很大（1 鍵約 7 千個節點），深度隨鍵數遞增；鍵數足夠後子樹小，可看更深
         val prefixDepth = when (currentKeys.count { it != 11 }) {
@@ -636,7 +679,7 @@ class ZhuyinT9Engine(private val context: Context) {
         for (entry in candidateList) {
             if (entry.isTolerant) continue
             if (entry.consumedKeys in 1 until phonemeKeyLen) continue
-            val clean = entry.zhuyin.filter { it !in "ˇˋˊ˙ " }
+            val clean = entry.cleanZhuyin
             val prefix = if (clean.length >= phonemeKeyLen) clean.substring(0, phonemeKeyLen) else clean
             if (prefix.isNotEmpty()) {
                 wordCombos.add(if (toneChar != null) "$prefix$toneChar" else prefix)
@@ -666,7 +709,7 @@ class ZhuyinT9Engine(private val context: Context) {
         if (isTolerantEnabled && comboSet.size < 16) {
             for (entry in candidateList) {
                 if (!entry.isTolerant) continue
-                val clean = entry.zhuyin.filter { it !in "ˇˋˊ˙ " }
+                val clean = entry.cleanZhuyin
                 val prefix = if (clean.length >= phonemeKeyLen) clean.substring(0, phonemeKeyLen) else clean
                 if (prefix.isNotEmpty()) {
                     val label = if (toneChar != null) "$prefix$toneChar" else prefix
@@ -700,14 +743,18 @@ class ZhuyinT9Engine(private val context: Context) {
 
     private class T9Path(val cost: Double, val prev: T9Path?, val entry: DictEntry?, val keyLen: Int)
 
-    /** 單一詞條的成本：-ln(詞頻 / 總詞頻) + 每詞固定成本。越低越好。 */
-    private fun t9SegmentCost(entry: DictEntry): Double {
+    /** 單一詞條的成本：-ln(詞頻 / 總詞頻) + 每詞固定成本 - Bigram 語境轉移折扣。越低越好。 */
+    private fun t9SegmentCost(entry: DictEntry, prevWord: String? = null): Double {
         val boost = userDict.getBoost(entry.word)
         val base = minOf(entry.weight, T9_DP_WEIGHT_CAP)
         val weight = if (entry.word.length == 1) base + minOf(boost, 50_000) else base + minOf(boost, 200_000)
         val logTotal = if (logTotalWeight > 0) logTotalWeight else 17.91
         val tolerantPenalty = if (entry.isTolerant) T9_TOLERANT_PENALTY else 0.0
-        return logTotal - Math.log(maxOf(weight, 1).toDouble()) + T9_WORD_PENALTY + tolerantPenalty
+
+        val bigramBoost = getBigramBoost(prevWord, entry.word)
+        val bigramDiscount = if (bigramBoost > 0) minOf(2.8, Math.log1p(bigramBoost / 80.0)) else 0.0
+
+        return (logTotal - Math.log(maxOf(weight, 1).toDouble()) + T9_WORD_PENALTY + tolerantPenalty - bigramDiscount).coerceAtLeast(0.5)
     }
 
     private fun t9PathSegments(path: T9Path): List<Pair<DictEntry, Int>> {
@@ -736,7 +783,8 @@ class ZhuyinT9Engine(private val context: Context) {
     }
 
     /**
-     * 前向 DP：hyp[i] = 涵蓋 keys[0, i) 的前 T9_BEAM 條最低成本路徑（以整串文字去重）
+     * 前向 DP (Bigram Viterbi)：hyp[i] = 涵蓋 keys[0, i) 的前 T9_BEAM 條最低成本路徑
+     * 當 i == n 時，容許最後一個詞為尚未打完的前綴延伸詞（避免打字中途句尾跳出怪異單鍵韻母字）
      */
     private fun t9ForwardPaths(keys: List<Int>, includeTolerant: Boolean): Array<List<T9Path>> {
         val n = keys.size
@@ -747,12 +795,28 @@ class ZhuyinT9Engine(private val context: Context) {
             for (len in 1..minOf(12, i)) {
                 val prevPaths = hyp[i - len]
                 if (prevPaths.isEmpty()) continue
-                val node = trie.searchNode(keys.subList(i - len, i)) ?: continue
+                val subKeys = keys.subList(i - len, i)
+                val node = trie.searchNode(subKeys) ?: continue
+
                 for (entry in node.topEntries()) {
                     if (entry.isTolerant && !includeTolerant) continue
-                    val segCost = t9SegmentCost(entry)
                     for (p in prevPaths) {
+                        val prevWord = if (i - len == 0) currentContextWord else p.entry?.word
+                        val segCost = t9SegmentCost(entry, prevWord)
                         cands.add(T9Path(p.cost + segCost, p, entry, len))
+                    }
+                }
+
+                // 若為輸入序列最尾端 (i == n) 且為多詞組合 (i - len > 0)，容許尾端尚未打完的詞參與組句
+                if (i == n && i - len > 0 && len in 1..3) {
+                    val extensions = trie.collectExtensions(node, T9_TAIL_DEPTH, false, null, T9_TAIL_PER_NODE)
+                    for (ext in extensions.values) {
+                        if (ext.entry.isTolerant && !includeTolerant) continue
+                        for (p in prevPaths) {
+                            val prevWord = p.entry?.word
+                            val segCost = t9SegmentCost(ext.entry, prevWord) + T9_TAIL_MISS * ext.extraKeys
+                            cands.add(T9Path(p.cost + segCost, p, ext.entry, len))
+                        }
                     }
                 }
             }
@@ -893,79 +957,6 @@ class ZhuyinT9Engine(private val context: Context) {
         return out
     }
 
-    /**
-     * 動態規劃 (DP / Viterbi) 全域最佳分詞演算法 - 取得分詞片段與按鍵長度
-     */
-    private fun findBestSentenceSegments(keys: List<Int>): List<Pair<DictEntry, Int>>? {
-        val n = keys.size
-        if (n < 4) return null
-
-        val dp = DoubleArray(n + 1) { Double.NEGATIVE_INFINITY }
-        dp[0] = 0.0
-        val bestSplit = arrayOfNulls<Pair<Int, DictEntry>>(n + 1)
-
-        val logTotal = if (logTotalWeight > 0) logTotalWeight else 17.91
-
-        for (i in 1..n) {
-            val maxLen = minOf(12, i)
-            for (len in 1..maxLen) {
-                val j = i - len
-                if (dp[j] != Double.NEGATIVE_INFINITY) {
-                    val subKeys = keys.subList(j, i)
-                    val node = trie.searchNode(subKeys)
-                    if (node != null && node.exactEntries.isNotEmpty()) {
-                        val isTolerantEnabled = com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(context)
-                        val prevWord = bestSplit[j]?.second?.word
-                        for (entry in node.exactEntries.values) {
-                            if (!isTolerantEnabled && entry.isTolerant) continue
-                            val boost = userDict.getBoost(entry.word)
-                            val effectiveWeight = if (entry.word.length == 1) {
-                                minOf(entry.weight + minOf(boost, 50_000), 120_000)
-                            } else {
-                                entry.weight + minOf(boost, 200_000)
-                            }
-                            val logProb = Math.log(maxOf(effectiveWeight.toDouble(), 1.0)) - logTotal
-                            val bonus = if (entry.word.length > 1) 3.5 * (entry.word.length - 1) else 0.0
-                            val bigramBoost = if (prevWord != null) getBigramBoost(prevWord, entry.word) else 0
-                            val bigramBonus = if (bigramBoost > 0) Math.log(1.0 + bigramBoost / 100.0) else 0.0
-                            val penalty = if (entry.isTolerant) -18.0 else 0.0
-                            val score = dp[j] + logProb + bonus + bigramBonus + penalty
-                            if (score > dp[i]) {
-                                dp[i] = score
-                                bestSplit[i] = Pair(j, entry)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if (dp[n] == Double.NEGATIVE_INFINITY) return null
-
-        val segments = mutableListOf<Pair<DictEntry, Int>>()
-        var curr = n
-        while (curr > 0) {
-            val split = bestSplit[curr] ?: return null
-            val entry = split.second
-            val keyLen = curr - split.first
-            segments.add(Pair(entry, keyLen))
-            curr = split.first
-        }
-        segments.reverse()
-        return segments
-    }
-
-    private fun findBestSentence(keys: List<Int>): DictEntry? {
-        val segments = findBestSentenceSegments(keys) ?: return null
-        if (segments.size > 1) {
-            val combinedWord = segments.joinToString("") { it.first.word }
-            val combinedZhuyin = segments.joinToString(" ") { it.first.zhuyin }
-            val avgLog = segments.map { Math.log(maxOf(it.first.weight.toDouble(), 1.0)) }.average()
-            val compositeWeight = minOf(Math.exp(avgLog).toInt(), 100_000_000)
-            return DictEntry(combinedWord, combinedZhuyin, compositeWeight)
-        }
-        return null
-    }
 
     /**
      * 檢查給定按鍵序列在 Trie 中是否存在完全匹配或前綴延伸詞
@@ -974,45 +965,6 @@ class ZhuyinT9Engine(private val context: Context) {
         return trie.searchNode(sequence) != null
     }
 
-    /**
-     * 長句輸入滑動窗口自動確認 (Sliding Window Prefix Commit)
-     * 當連續輸入的字數/按鍵較多，且前面分詞已經十分肯定時，
-     * 直接將穩定的第一段詞彙提前上屏確認，留存後續按鍵繼續拼音。
-     */
-    fun pollConfirmedPrefix(): Pair<String, Int>? {
-        val cleanKeys = currentKeys.filter { it != 11 }
-        if (cleanKeys.size < 4) return null
-
-        val segments = findBestSentenceSegments(cleanKeys) ?: return null
-        if (segments.size < 2) return null
-
-        val firstSegment = segments[0] // Pair(DictEntry, Int)
-        val remainingKeyCount = cleanKeys.size - firstSegment.second
-
-        // 判定條件：
-        // 1. 分詞至少有 3 段 (例如: 今天 + 天氣 + 很...)
-        // 2. 或第一段詞長 >= 2 字 (例如: 目前、今天)，且後續已有新輸入 (remainingKeyCount >= 1)
-        val shouldCommit = segments.size >= 3 || (firstSegment.first.word.length >= 2 && remainingKeyCount >= 1)
-        if (!shouldCommit) return null
-
-        val keysToRemove = firstSegment.second
-        val newKeys = mutableListOf<Int>()
-        var removed = 0
-        for (k in currentKeys) {
-            if (removed < keysToRemove && k != 11) {
-                removed++
-            } else {
-                newKeys.add(k)
-            }
-        }
-        currentKeys.clear()
-        currentKeys.addAll(newKeys)
-        currentToneIndex = 0
-        lockedZhuyinCombo = null
-
-        recalculate()
-        return Pair(firstSegment.first.word, keysToRemove)
-    }
 
     var currentContextWord: String? = null
 
@@ -1022,7 +974,7 @@ class ZhuyinT9Engine(private val context: Context) {
             val cleanLock = locked.filter { it !in "ˇˋˊ˙" }
             val filtered = baseList.filter { entry ->
                 // 整句候選的注音以空白分隔各詞，比對前需先去掉
-                entry.zhuyin.filter { it !in "ˇˋˊ˙ " }.startsWith(cleanLock)
+                entry.cleanZhuyin.startsWith(cleanLock)
             }
             if (filtered.isNotEmpty()) {
                 cachedCandidates = filtered
@@ -1232,7 +1184,7 @@ class ZhuyinT9Engine(private val context: Context) {
 
             // 3. 單字之後，再補入該音節開頭的常用詞彙（個人詞庫多字詞與 Trie 詞庫）
             val userMultiEntries = userEntries.filter {
-                it.word.length > 1 && it.zhuyin.filter { c -> c !in "ˇˋˊ˙ " }.startsWith(cleanInput)
+                it.word.length > 1 && it.cleanZhuyin.startsWith(cleanInput)
             }.sortedByDescending { it.count }
             for (u in userMultiEntries) {
                 if (seenWords.add(u.word)) {
@@ -1241,7 +1193,7 @@ class ZhuyinT9Engine(private val context: Context) {
                 }
             }
 
-            val isTolerantEnabled = com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(context)
+            val isTolerantEnabled = context?.let { com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(it) } ?: false
             val keys = cleanInput.mapNotNull { KeyMapping.getKeyId(it) }
             if (keys.isNotEmpty()) {
                 val trieResults = trie.searchPrefix(keys, includeTolerant = isTolerantEnabled)
@@ -1257,7 +1209,7 @@ class ZhuyinT9Engine(private val context: Context) {
                     trieResults
                 }
                 for (e in sortedTrieResults) {
-                    val eClean = e.zhuyin.filter { it !in "ˇˋˊ˙ " }
+                    val eClean = e.cleanZhuyin
                     if (eClean.startsWith(cleanInput) && seenWords.add(e.word)) {
                         results.add(e)
                         if (results.size >= 60) break
@@ -1302,11 +1254,12 @@ class ZhuyinT9Engine(private val context: Context) {
         }
 
         // 1.5 長句智慧分詞預測 (基於 DP / Viterbi 最優路徑，支援連打中文長句一口氣出字)
-        val fullKeys = cleanInput.mapNotNull { KeyMapping.getKeyId(it) }
-        if (fullKeys.size >= 4) {
-            val sentenceEntry = findBestSentence(fullKeys)
-            if (sentenceEntry != null && seenWords.add(sentenceEntry.word)) {
-                results.add(sentenceEntry)
+        val autoSyllables = SyllableManager.splitFullZhuyinAuto(inputZhuyin)
+        if (autoSyllables != null && autoSyllables.size >= 2) {
+            val sentenceWords = findBestSentenceFromSyllables(autoSyllables)
+            val combinedWord = sentenceWords.joinToString("")
+            if (combinedWord.isNotEmpty() && seenWords.add(combinedWord)) {
+                results.add(DictEntry(combinedWord, autoSyllables.joinToString(" "), 80_000_000))
             }
         }
 
@@ -1333,7 +1286,7 @@ class ZhuyinT9Engine(private val context: Context) {
                     val matched = initialMap[targetInitials]
                     if (matched != null) {
                         for (e in matched) {
-                            val eClean = e.zhuyin.filter { it !in "ˇˋˊ˙ " }
+                            val eClean = e.cleanZhuyin
                             if (eClean.startsWith(firstSyl) && seenWords.add(e.word)) {
                                 results.add(e)
                                 if (results.size >= 40) break
@@ -1345,12 +1298,12 @@ class ZhuyinT9Engine(private val context: Context) {
         }
 
         // 4. 全拼前綴檢索 (Trie Prefix Match, 如 ㄐㄧㄣ -> 今, 金, 今天, 金融)
-        val isTolerantEnabled = com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(context)
+        val isTolerantEnabled = context?.let { com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(it) } ?: false
         val keys = cleanInput.mapNotNull { KeyMapping.getKeyId(it) }
         if (keys.isNotEmpty()) {
             val trieResults = trie.searchPrefix(keys, includeTolerant = isTolerantEnabled)
             for (e in trieResults) {
-                val eClean = e.zhuyin.filter { it !in "ˇˋˊ˙ " }
+                val eClean = e.cleanZhuyin
                 if (eClean.startsWith(cleanInput) && seenWords.add(e.word)) {
                     results.add(e)
                     if (results.size >= 50) break
@@ -1607,6 +1560,19 @@ class ZhuyinT9Engine(private val context: Context) {
 
         val resultList = mutableListOf<DictEntry>()
 
+        // 0. 最高優先：從使用者與系統 Bigram 轉移表查詢真實上下文接續詞
+        synchronized(bigramMap) {
+            val bg = bigramMap[word]
+            if (!bg.isNullOrEmpty()) {
+                val sortedBg = bg.entries.sortedByDescending { it.value }
+                for ((nextW, wt) in sortedBg) {
+                    if (resultList.none { it.word == nextW }) {
+                        resultList.add(DictEntry(nextW, "", 50_000 + wt * 100))
+                    }
+                }
+            }
+        }
+
         // 1. 完全匹配剛上屏詞彙
         val exactList = nextWordMap[word]
         if (!exactList.isNullOrEmpty()) {
@@ -1833,5 +1799,13 @@ class ZhuyinT9Engine(private val context: Context) {
         }
         result.reverse()
         return result
+    }
+
+    fun close() {
+        mainHandler?.removeCallbacks(bigramSaveRunnable)
+        try {
+            bigramExecutor.execute { saveBigramToFile() }
+            bigramExecutor.shutdown()
+        } catch (_: Exception) {}
     }
 }
