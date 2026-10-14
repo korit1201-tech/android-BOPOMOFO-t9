@@ -2,6 +2,23 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.6.4] - 2026-10-14
+
+### 🛡️ 根治迴圈死鎖、徹底消除打字卡頓與第三方 App 崩潰 (Build 87)
+
+- **🛡️ 根除 Viterbi 動態規劃回溯死迴圈隱患**：
+  - **原因剖析**：`findBestSentenceFromSyllables` 的 DP 回溯階段，在特定音節路徑下若前驅指針未嚴格向前推進，可能導致 `while (curr > 0)` 陷入無窮死迴圈，造成 UI 主執行緒 100% 卡死、觸發系統 ANR 或進程崩潰，重啟時出現「偶爾很慢才彈出」的迴圈 crash 現象。
+  - **徹底解決**：注入嚴格前推斷言 `if (prev.first >= curr) break` 與 `safetyCounter` 深度看門狗，杜絕任何死迴圈可能！
+- **🚀 消除字典冷啟動背景 O(N^2) 重複比對**：
+  - **原因剖析**：字典載入建立 `initialToCharMap` 時，因 `initList.none { it.word == word }` 線性掃描，導致冷啟動時在背景執行上千萬次物件比對，吃滿 CPU 造成主執行緒卡頓掉幀。
+  - **徹底解決**：引進 `HashSet` O(1) 瞬時去重，字典載入恢復毫秒級超高速。
+- **⚡ 消除 updateComposingDisplay 單音節打字延遲**：
+  - 單音節輸入直通 `searchFullZhuyin`，略過無謂的複合句子重度 DP 運算，打字瞬間恢復 2.6.1 的絲滑手感。
+- **💥 修正 setComposingText 游標越界導致的第三方 App Crash**：
+  - 游標位置嚴格傳入標準安全值 `1`，徹底消除 Chrome、LINE、微信等嚴格應用的 `IndexOutOfBoundsException` 閃退。
+- **✨ 恢復注音膠囊專屬標籤與 onStartInput 殘留音節清空**：
+  - 徹底解決跨 App 切換時前次未結算音節污染新輸入框的問題；恢復注音膠囊外觀，避免正常漢字首選被誤判。
+
 ## [v2.6.3] - 2026-10-14
 
 ### ⚡ 極致性能調校與啟動延遲徹底修復 (Build 86)
