@@ -1129,16 +1129,27 @@ class ZhuyinInputMethodService : InputMethodService() {
         val isLand = isPhoneLandscapeMode()
         val splitSpacerWeight = 2.0f
 
-        // 0. 常用符號列 (Direct Symbol Row): + - * / = ( ) @ _ &
-        val symbols = listOf("+", "-", "*", "/", "=", "(", ")", "@", "_", "&")
+        // 0. 常用數字/符號共用列 (Direct Number/Symbol Row): 1(+) 2(-) 3(*) 4(/) 5(=) 6(() 7()) 8(@) 9(_) 0(&)
+        val numSymbols = listOf(
+            "1" to "+",
+            "2" to "-",
+            "3" to "*",
+            "4" to "/",
+            "5" to "=",
+            "6" to "(",
+            "7" to ")",
+            "8" to "@",
+            "9" to "_",
+            "0" to "&"
+        )
         rowSymbols?.removeAllViews()
-        for ((idx, sym) in symbols.withIndex()) {
+        for ((idx, pair) in numSymbols.withIndex()) {
             if (isLand && idx == 5) {
                 rowSymbols?.addView(View(this).apply {
                     layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, splitSpacerWeight)
                 })
             }
-            rowSymbols?.addView(createQwertySymbolKey(sym, 1f))
+            rowSymbols?.addView(createQwertyNumberSymbolKey(pair.first, pair.second, 1f))
         }
 
         val letters1 = listOf("q" to "1", "w" to "2", "e" to "3", "r" to "4", "t" to "5", "y" to "6", "u" to "7", "i" to "8", "o" to "9", "p" to "0")
@@ -1271,13 +1282,39 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
     }
 
-    private fun createQwertySymbolKey(sym: String, weight: Float): Button {
+    private fun formatNumberSymbolKeyText(num: String, sym: String): CharSequence {
+        val isLand = isPhoneLandscapeMode()
+        val text = "$num\n$sym"
+        val spannable = SpannableString(text)
+        val numEnd = num.length
+        val symStart = numEnd + 1
+        val fullLen = text.length
+
+        val currentTheme = ThemeManager.getCurrentTheme(this)
+        val colors = ThemeManager.getThemeColors(this, currentTheme)
+
+        val numSize = if (isLand) 1.15f else 1.30f
+        val symSize = if (isLand) 0.65f else 0.70f
+
+        spannable.setSpan(RelativeSizeSpan(numSize), 0, numEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        spannable.setSpan(StyleSpan(Typeface.BOLD), 0, numEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        spannable.setSpan(ForegroundColorSpan(colors.textPrimary), 0, numEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+
+        spannable.setSpan(RelativeSizeSpan(symSize), symStart, fullLen, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        spannable.setSpan(ForegroundColorSpan(colors.textSecondary), symStart, fullLen, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+
+        return spannable
+    }
+
+    private fun createQwertyNumberSymbolKey(num: String, sym: String, weight: Float): Button {
         val isLand = isPhoneLandscapeMode()
         return Button(this).apply {
-            text = sym
-            textSize = if (isLand) 14f else 16f
+            tag = Pair(num, sym)
+            text = formatNumberSymbolKeyText(num, sym)
+            textSize = if (isLand) 13f else 15f
             isAllCaps = false
             includeFontPadding = false
+            setLineSpacing(0f, 0.82f)
             minHeight = 0
             setPadding(0, 0, 0, 0)
             setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
@@ -1288,10 +1325,10 @@ class ZhuyinInputMethodService : InputMethodService() {
             layoutParams = params
             setOnClickListener {
                 triggerHapticFeedback()
-                commitTextDirectly(sym)
+                commitTextDirectly(num)
             }
 
-            // 長按彈出關聯拓展符號選單
+            // 長按彈出包含自身符號與關聯拓展符號之選單
             val related = when (sym) {
                 "+" -> listOf("=", "±", "++")
                 "-" -> listOf("_", "~", "–", "—")
@@ -1305,21 +1342,20 @@ class ZhuyinInputMethodService : InputMethodService() {
                 "&" -> listOf("%", "$", "§")
                 else -> emptyList()
             }
-            if (related.isNotEmpty()) {
-                setOnLongClickListener {
+            val fullOptions = listOf(sym) + related
+            setOnLongClickListener {
+                triggerHapticFeedback()
+                val popup = android.widget.PopupMenu(this@ZhuyinInputMethodService, this)
+                for ((index, item) in fullOptions.withIndex()) {
+                    popup.menu.add(0, index, index, item)
+                }
+                popup.setOnMenuItemClickListener { menuItem ->
                     triggerHapticFeedback()
-                    val popup = android.widget.PopupMenu(this@ZhuyinInputMethodService, this)
-                    for ((index, item) in related.withIndex()) {
-                        popup.menu.add(0, index, index, item)
-                    }
-                    popup.setOnMenuItemClickListener { menuItem ->
-                        triggerHapticFeedback()
-                        commitTextDirectly(related[menuItem.itemId])
-                        true
-                    }
-                    popup.show()
+                    commitTextDirectly(fullOptions[menuItem.itemId])
                     true
                 }
+                popup.show()
+                true
             }
         }
     }
@@ -1413,6 +1449,21 @@ class ZhuyinInputMethodService : InputMethodService() {
         updateRow(row1)
         updateRow(row2)
         updateRow(row3)
+
+        val rowSymbols = layoutQwerty.findViewById<LinearLayout>(R.id.qwerty_row_symbols)
+        if (rowSymbols != null) {
+            for (i in 0 until rowSymbols.childCount) {
+                val child = rowSymbols.getChildAt(i)
+                if (child is Button) {
+                    val pair = child.tag as? Pair<*, *>
+                    val num = pair?.first as? String
+                    val sym = pair?.second as? String
+                    if (num != null && sym != null) {
+                        child.text = formatNumberSymbolKeyText(num, sym)
+                    }
+                }
+            }
+        }
     }
 
     private fun cycleEnglishCase() {
