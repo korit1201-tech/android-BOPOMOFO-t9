@@ -138,6 +138,10 @@ class ZhuyinInputMethodService : InputMethodService() {
     private var lastComposingStart: Int = -1
     private var lastComposingEnd: Int = -1
 
+    // 英文鍵盤頂部數字鍵快速雙擊出符號之狀態偵測
+    private var lastNumberKeyTapTime: Long = 0L
+    private var lastTappedNumberKey: String? = null
+
     // 新酷音 / PIME 標準組句與光標編輯模式
     private val composingSentence = StringBuilder()
     private val composingSyllables = mutableListOf<String>() // 已結算的音節序列 (如 ["ㄓ", "ㄉㄠˋ"])
@@ -1325,7 +1329,18 @@ class ZhuyinInputMethodService : InputMethodService() {
             layoutParams = params
             setOnClickListener {
                 triggerHapticFeedback()
-                commitTextDirectly(num)
+                val now = SystemClock.uptimeMillis()
+                if (now - lastNumberKeyTapTime < 280L && lastTappedNumberKey == num) {
+                    // 快速雙擊：退格掉前一次輸出的數字，直接上屏對應之下方符號
+                    currentInputConnection?.deleteSurroundingText(1, 0)
+                    commitTextDirectly(sym)
+                    lastNumberKeyTapTime = 0L
+                    lastTappedNumberKey = null
+                } else {
+                    commitTextDirectly(num)
+                    lastNumberKeyTapTime = now
+                    lastTappedNumberKey = num
+                }
             }
 
             // 長按彈出包含自身符號與關聯拓展符號之選單
@@ -1345,6 +1360,8 @@ class ZhuyinInputMethodService : InputMethodService() {
             val fullOptions = listOf(sym) + related
             setOnLongClickListener {
                 triggerHapticFeedback()
+                lastNumberKeyTapTime = 0L
+                lastTappedNumberKey = null
                 val popup = android.widget.PopupMenu(this@ZhuyinInputMethodService, this)
                 for ((index, item) in fullOptions.withIndex()) {
                     popup.menu.add(0, index, index, item)
@@ -2661,8 +2678,14 @@ class ZhuyinInputMethodService : InputMethodService() {
 
         val combos = engine.getPossibleZhuyinCombinations()
         val density = resources.displayMetrics.density
-        val btnHeightPx = (50 * density).toInt()
         val count = combos.size
+        val targetHeightDp = when {
+            count >= 6 -> 36
+            count >= 4 -> 40
+            count >= 3 -> 44
+            else -> 48
+        }
+        val btnHeightPx = (targetHeightDp * density).toInt()
 
         for (i in 0 until count) {
             val combo = combos[i]
@@ -2675,21 +2698,34 @@ class ZhuyinInputMethodService : InputMethodService() {
                 existing
             } else {
                 Button(this).apply {
-                    textSize = 15f
                     setTextColor(Color.parseColor("#E65100"))
                     setBackgroundResource(R.drawable.bg_zhuyin_combo)
                     gravity = Gravity.CENTER
-                    val params = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        btnHeightPx
-                    ).apply {
-                        setMargins(2, 2, 2, 2)
-                    }
-                    layoutParams = params
+                    isAllCaps = false
+                    includeFontPadding = false
+                    isSingleLine = true
                     containerZhuyinCombos.addView(this)
                     comboButtonPool.add(this)
                 }
             }
+
+            // 動態依字數與音節長度微縮字級，避免字串擠在一起、換行或被截斷
+            val dynamicTextSize = when {
+                combo.length >= 4 -> 11f
+                combo.length == 3 -> 12.5f
+                combo.length == 2 -> 14f
+                else -> 15.5f
+            }
+            btn.textSize = dynamicTextSize
+            btn.setPadding(2, 0, 2, 0)
+
+            val params = (btn.layoutParams as? LinearLayout.LayoutParams) ?: LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                btnHeightPx
+            )
+            params.height = btnHeightPx
+            params.setMargins(2, 1, 2, 1)
+            btn.layoutParams = params
 
             btn.text = combo
             btn.setOnClickListener {
@@ -3129,7 +3165,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 DictEntry("～(按 `)", "", 999_991)
             )
         } else if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty() && !isHomophoneSelectionMode && !isHardwareKeyboardConnected) {
-            val zhuyinEntry = DictEntry("【$fullZhuyinBuffer】", fullZhuyinBuffer.toString(), 999_999_999)
+            val zhuyinEntry = DictEntry(fullZhuyinBuffer.toString(), fullZhuyinBuffer.toString(), 999_999_999)
             listOf(zhuyinEntry) + candidates
         } else {
             candidates
@@ -3169,7 +3205,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             val isPageIndicator = (i == count && pageIndicatorText != null)
             val entry = if (!isPageIndicator) displayCandidates[i] else DictEntry(pageIndicatorText!!, "", 0)
 
-            val isZhuyinHeader = (!isHardwareKeyboardConnected && currentMode == KeyboardMode.ZHUYIN_FULL && entry.word.startsWith("【") && entry.word.endsWith("】")) || (isSymbolLeadMode && i == 0)
+            val isZhuyinHeader = (!isHardwareKeyboardConnected && currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty() && i == 0) || (isSymbolLeadMode && i == 0)
             val rawWord = if (isSimplified && !isPageIndicator) ChineseConverter.toSimplified(entry.word) else entry.word
             val isSelectingState = isSentenceSelecting || isCandidateGridOpen || isHomophoneSelectionMode || isSymbolLeadMode
             val displayWord = if (isPhysicalMode && isSelectingState && !isZhuyinHeader && !isPageIndicator && !isSymbolLeadMode && i < 9) {
@@ -3224,10 +3260,25 @@ class ZhuyinInputMethodService : InputMethodService() {
                 tv.setTypeface(null, Typeface.BOLD)
                 tv.setBackgroundResource(R.drawable.bg_key_action)
                 tv.setOnClickListener {
+                    triggerHapticFeedback(HapticType.COMMIT)
                     if (isSymbolLeadMode) {
                         isSymbolLeadMode = false
                         updateComposingDisplay()
+                    } else {
+                        val zhuyinStr = fullZhuyinBuffer.toString()
+                        fullZhuyinBuffer.clear()
+                        currentInputConnection?.finishComposingText()
+                        safeCommitText(zhuyinStr)
+                        clearCandidateBar()
                     }
+                }
+                tv.setOnLongClickListener {
+                    triggerHapticFeedback(HapticType.MODE_SWITCH)
+                    fullZhuyinBuffer.clear()
+                    currentInputConnection?.setComposingText("", 1)
+                    currentInputConnection?.finishComposingText()
+                    clearCandidateBar()
+                    true
                 }
             } else {
                 val isFirstCandidate = if (isHardwareKeyboardConnected) i == 0 else (i == 0 || (currentMode == KeyboardMode.ZHUYIN_FULL && i == 1))
@@ -3249,14 +3300,6 @@ class ZhuyinInputMethodService : InputMethodService() {
                         handlePhysicalEnter()
                         commitTextDirectly(symbolText)
                         updateComposingDisplay()
-                        return@setOnClickListener
-                    }
-                    if (isZhuyinHeader) {
-                        val zhuyinStr = fullZhuyinBuffer.toString()
-                        fullZhuyinBuffer.clear()
-                        currentInputConnection?.finishComposingText()
-                        safeCommitText(zhuyinStr)
-                        clearCandidateBar()
                         return@setOnClickListener
                     }
                     // 實體鍵盤改字與選字模式點選
