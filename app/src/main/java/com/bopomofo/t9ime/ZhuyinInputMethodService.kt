@@ -210,6 +210,35 @@ class ZhuyinInputMethodService : InputMethodService() {
     private var lastUserTypingTime: Long = 0L
     private var activeHomophonePopup: android.widget.PopupMenu? = null
     private var clipListener: android.content.ClipboardManager.OnPrimaryClipChangedListener? = null
+    private var lastPastedClip: String? = null
+
+    fun isCurrentInputPassword(): Boolean {
+        val editorInfo = currentInputEditorInfo ?: return false
+        val inputType = editorInfo.inputType
+        val variation = inputType and android.text.InputType.TYPE_MASK_VARIATION
+        return variation == android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                variation == android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+                variation == android.text.InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
+                ((inputType and android.text.InputType.TYPE_MASK_CLASS) == android.text.InputType.TYPE_CLASS_NUMBER &&
+                        variation == android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD)
+    }
+
+    private fun checkAndShowClipboardSuggestion() {
+        if (isCurrentInputPassword()) return
+        if (engine.hasComposing() || fullZhuyinBuffer.isNotEmpty() || composingSentence.isNotEmpty()) return
+        if (isHomophoneSelectionMode || isSymbolLeadMode || isCandidateGridOpen) return
+
+        val latest = ClipboardHistoryManager.syncFromSystem(this, false)
+            ?: ClipboardHistoryManager.getHistory().firstOrNull()
+
+        if (!latest.isNullOrBlank() && latest != lastPastedClip) {
+            val preview = latest.trim().replace("\r", " ").replace("\n", " ")
+            val shortPreview = if (preview.length > 12) preview.take(12) + "…" else preview
+            val chipTitle = "📋 貼上：「$shortPreview」"
+            val entry = DictEntry(chipTitle, latest, 999_999_999)
+            updateCandidateBar(listOf(entry))
+        }
+    }
 
     private fun dismissHomophonePopup() {
         try {
@@ -259,19 +288,10 @@ class ZhuyinInputMethodService : InputMethodService() {
         try {
             val clipManager = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
             val listener = android.content.ClipboardManager.OnPrimaryClipChangedListener {
-                val clipData = clipManager?.primaryClip
-                if (clipData != null && clipData.itemCount > 0) {
-                    val text = clipData.getItemAt(0)?.coerceToText(this)?.toString()
-                    if (!text.isNullOrBlank()) {
-                        // 密碼框防護
-                        val inputType = currentInputEditorInfo?.inputType ?: 0
-                        val isPassword = (inputType and android.text.InputType.TYPE_MASK_VARIATION) == android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD ||
-                                (inputType and android.text.InputType.TYPE_MASK_VARIATION) == android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD ||
-                                (inputType and android.text.InputType.TYPE_MASK_VARIATION) == android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-                        if (!isPassword) {
-                            ClipboardHistoryManager.addClip(this, text)
-                        }
-                    }
+                lastPastedClip = null // 剪貼簿有新變更時重設，讓新內容能觸發貼上提示
+                val added = ClipboardHistoryManager.syncFromSystem(this, isCurrentInputPassword())
+                if (added != null && isInputViewShown) {
+                    checkAndShowClipboardSuggestion()
                 }
             }
             clipListener = listener
@@ -530,6 +550,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             updateKeyboardModeUI()
             updateHardwareKeyboardState()
         }
+        checkAndShowClipboardSuggestion()
     }
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
@@ -1675,6 +1696,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             override fun onHidePanel() {
                 updateKeyboardModeUI()
             }
+            override fun isPasswordField(): Boolean = isCurrentInputPassword()
         })
         symbolPanelController.setup(root)
     }
@@ -3279,6 +3301,22 @@ class ZhuyinInputMethodService : InputMethodService() {
                     clearCandidateBar()
                     true
                 }
+            } else if (entry.word.startsWith("📋 貼上")) {
+                tv.setTextColor(themeColors.accent)
+                tv.setTypeface(null, Typeface.BOLD)
+                tv.setBackgroundResource(R.drawable.bg_key_action)
+                tv.setOnClickListener {
+                    triggerHapticFeedback(HapticType.COMMIT)
+                    val textToCommit = entry.zhuyin
+                    safeCommitText(textToCommit)
+                    lastPastedClip = textToCommit
+                    clearCandidateBar()
+                }
+                tv.setOnLongClickListener {
+                    triggerHapticFeedback(HapticType.DELETE)
+                    clearCandidateBar()
+                    true
+                }
             } else {
                 val isFirstCandidate = if (isHardwareKeyboardConnected) i == 0 else (i == 0 || (currentMode == KeyboardMode.ZHUYIN_FULL && i == 1))
                 tv.setTextColor(
@@ -3509,6 +3547,13 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun selectCandidate(entry: DictEntry) {
         if (entry.word.startsWith("【")) return
+        if (entry.word.startsWith("📋 貼上")) {
+            val textToCommit = entry.zhuyin
+            safeCommitText(textToCommit)
+            lastPastedClip = textToCommit
+            clearCandidateBar()
+            return
+        }
         // 九鍵「部分上屏」候選：只涵蓋前幾個按鍵，先上屏此詞，其餘按鍵繼續組字
         if (entry.consumedKeys > 0 &&
             currentMode == KeyboardMode.ZHUYIN &&
@@ -3560,18 +3605,8 @@ class ZhuyinInputMethodService : InputMethodService() {
      * 檢查是否允許個人化學習（密碼欄位與無痕模式下強制停用學習，守護使用者隱私）
      */
     private fun isPersonalizedLearningAllowed(): Boolean {
+        if (isCurrentInputPassword()) return false
         val editorInfo = currentInputEditorInfo ?: return true
-        val inputType = editorInfo.inputType
-        val variation = inputType and android.text.InputType.TYPE_MASK_VARIATION
-
-        val isPassword = variation == android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD ||
-                variation == android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
-                variation == android.text.InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
-                ((inputType and android.text.InputType.TYPE_MASK_CLASS) == android.text.InputType.TYPE_CLASS_NUMBER &&
-                        variation == android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD)
-
-        if (isPassword) return false
-
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             if ((editorInfo.imeOptions and android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0) {
                 return false

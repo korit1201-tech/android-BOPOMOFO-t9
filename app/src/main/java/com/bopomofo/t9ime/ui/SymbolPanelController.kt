@@ -40,6 +40,7 @@ class SymbolPanelController(
         fun onTriggerHaptic(type: HapticType = HapticType.KEY_PRESS)
         fun onShowPanel()
         fun onHidePanel()
+        fun isPasswordField(): Boolean = false
     }
 
     private var rootView: View? = null
@@ -176,6 +177,11 @@ class SymbolPanelController(
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(8, 4, 8, 4)
+        }
+
+        // 開啟剪貼簿面板時，主動向系統同步最新的剪貼簿內容
+        if (!callback.isPasswordField()) {
+            ClipboardHistoryManager.syncFromSystem(context, false)
         }
 
         val clips = ClipboardHistoryManager.getHistory()
