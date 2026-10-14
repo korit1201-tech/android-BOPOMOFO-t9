@@ -1608,7 +1608,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     private fun handleZhuyinFullKey(ch: Char) {
         lastUserTypingTime = SystemClock.uptimeMillis()
         dismissHomophonePopup()
-        lastCommittedWord = null
+        engine.currentContextWord = lastCommittedWord
         if (customComposingWord != null || isHomophoneSelectionMode) {
             customComposingWord = null
             replacedCharsMap.clear()
@@ -1619,8 +1619,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         fullZhuyinBuffer.append(ch)
         updateComposingPreviewFull()
 
-        // 呼叫注音全鍵盤專屬預測與候選檢索引擎（獨立簡拼、混合簡拼與全拼聯想）
-        val candidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString())
+        val candidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString(), lastCommittedWord)
         refreshUI(candidates)
     }
 
@@ -1638,7 +1637,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     private fun setupSymbolPanel(root: View) {
         symbolPanelController = SymbolPanelController(this, object : SymbolPanelController.Callback {
             override fun onCommitText(text: String) = commitTextDirectly(text)
-            override fun onCommitProcessedText(text: String) = commitProcessedWordWithUserDict(text)
+            override fun onCommitProcessedText(text: String) = commitProcessedText(text)
             override fun onSafeCommitText(text: String) { safeCommitText(text) }
             override fun onPerformEnter() = performEnterAction()
             override fun onSendDpadKey(keyCode: Int) = sendDpadKey(keyCode)
@@ -1766,14 +1765,16 @@ class ZhuyinInputMethodService : InputMethodService() {
      */
     private fun performEnterAction() {
         if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty()) {
-            val candidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString())
-            val word = candidates.firstOrNull()?.word ?: fullZhuyinBuffer.toString()
-            commitProcessedWordWithUserDict(word)
+            val topEntry = engine.searchFullZhuyin(fullZhuyinBuffer.toString()).firstOrNull()
+            val word = topEntry?.word ?: fullZhuyinBuffer.toString()
+            commitProcessedWordWithUserDict(word, topEntry?.zhuyin ?: "")
             return
         }
         if (engine.hasComposing()) {
-            val topWord = customComposingWord ?: engine.getCandidates().firstOrNull()?.word ?: engine.getTopComposingWord()
-            commitProcessedWordWithUserDict(topWord)
+            val topEntry = engine.getCandidates().firstOrNull()
+            val topWord = customComposingWord ?: topEntry?.word ?: engine.getTopComposingWord()
+            val topZhuyin = if (customComposingWord == null) (topEntry?.zhuyin ?: "") else ""
+            commitProcessedWordWithUserDict(topWord, topZhuyin)
         } else {
             currentInputConnection?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
             currentInputConnection?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
@@ -1929,12 +1930,14 @@ class ZhuyinInputMethodService : InputMethodService() {
         btnSpaceSwipe.onTapListener = {
             triggerHapticFeedback()
             if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty()) {
-                val candidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString())
-                val topWord = candidates.firstOrNull()?.word ?: fullZhuyinBuffer.toString()
-                commitProcessedWordWithUserDict(topWord)
+                val topEntry = engine.searchFullZhuyin(fullZhuyinBuffer.toString()).firstOrNull()
+                val topWord = topEntry?.word ?: fullZhuyinBuffer.toString()
+                commitProcessedWordWithUserDict(topWord, topEntry?.zhuyin ?: "")
             } else if (engine.hasComposing()) {
-                val topWord = customComposingWord ?: engine.getCandidates().firstOrNull()?.word ?: engine.getTopComposingWord()
-                commitProcessedWordWithUserDict(topWord)
+                val topEntry = engine.getCandidates().firstOrNull()
+                val topWord = customComposingWord ?: topEntry?.word ?: engine.getTopComposingWord()
+                val topZhuyin = if (customComposingWord == null) (topEntry?.zhuyin ?: "") else ""
+                commitProcessedWordWithUserDict(topWord, topZhuyin)
             } else {
                 commitTextDirectly(" ")
                 lastCommittedWord = null
@@ -2144,8 +2147,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun updateKeyboardModeUI() {
         applyAdaptiveKeyboardHeight()
-        if (::layoutSymbolPanel.isInitialized) layoutSymbolPanel.visibility = View.GONE
-        if (::btnSymbolDrawer.isInitialized) btnSymbolDrawer.text = "✛"
+        if (::symbolPanelController.isInitialized) symbolPanelController.hide(notify = false)
 
         btnMode123.transformationMethod = null
         btnMode123.includeFontPadding = false
@@ -2727,7 +2729,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         layoutQwerty.visibility = View.GONE
         if (::layoutHandwriting.isInitialized) layoutHandwriting.visibility = View.GONE
         if (::layoutZhuyinFull.isInitialized) layoutZhuyinFull.visibility = View.GONE
-        if (::layoutSymbolPanel.isInitialized) layoutSymbolPanel.visibility = View.GONE
+        if (::symbolPanelController.isInitialized) symbolPanelController.hide(notify = false)
 
         layoutCandidateGrid?.visibility = View.VISIBLE
         btnCandidateExpand?.text = "▲"
@@ -3558,30 +3560,29 @@ class ZhuyinInputMethodService : InputMethodService() {
      */
     private fun commitProcessedWordWithUserDict(word: String, zhuyin: String = "", learn: Boolean = true) {
         if (word.startsWith("【")) return
+        var effectiveLastWord = word
         if (learn && isPersonalizedLearningAllowed()) {
-            // 1. 若為 1~4 字的一般詞彙，直接學習；若為超過 4 字的合成整句，拆分為合法音節與片語學習，避免長句污染單詞 Trie
             if (word.length <= 4) {
                 engine.learnWord(word, zhuyin)
+                val prev = lastCommittedWord
+                if (prev != null && prev != word && prev.length in 1..8 && word.length in 1..8) {
+                    engine.learnBigram(prev, word)
+                }
             } else {
                 val syls = com.bopomofo.t9ime.engine.SyllableManager.splitFullZhuyin(zhuyin, word.length)
                 if (syls != null && syls.size == word.length) {
-                    engine.learnCommittedSentence(word, syls, emptyMap(), lastCommittedWord)
+                    val words = engine.learnCommittedSentence(word, syls, emptyMap(), lastCommittedWord)
+                    words.lastOrNull()?.let { effectiveLastWord = it }
                 }
             }
 
-            // 1.5 學習 Bigram 語境詞對
-            val prev = lastCommittedWord
-            if (prev != null && prev != word && prev.length in 1..8 && word.length in 1..8) {
-                engine.learnBigram(prev, word)
-            }
-
-            // 2. 記錄個別替換字及其注音，等確定出去才紀錄成優選
+            // 記錄個別替換字及其注音，等確定出去才紀錄成優選
             for ((_, pair) in replacedCharsMap) {
                 engine.learnWord(pair.first, pair.second)
             }
         }
-        lastCommittedWord = word
-        engine.currentContextWord = word
+        lastCommittedWord = effectiveLastWord
+        engine.currentContextWord = effectiveLastWord
 
         // 3. 重設組字狀態
         customComposingWord = null
@@ -3733,13 +3734,27 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
             updateCandidateBar(candidates)
         } else if (fullZhuyinBuffer.isNotEmpty()) {
-            val candidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString())
-            updateCandidateBar(candidates)
+            // 若前面已有結算音節（如連打聲母 ㄐ + ㄊ，或已打 ㄐㄧㄣ + 正在打 ㄊㄧㄢ），合併整串查詢複合詞與整句
+            val combinedRaw = composingSyllables.joinToString("") + fullZhuyinBuffer.toString()
+            val allSyllables = composingSyllables + listOf(fullZhuyinBuffer.toString())
+            val combinedCandidates = mutableListOf<DictEntry>()
+
+            if (composingSyllables.isNotEmpty()) {
+                val bestSentence = engine.findBestSentenceFromSyllables(allSyllables, pinnedSentenceChars).joinToString("")
+                if (bestSentence.isNotEmpty()) {
+                    combinedCandidates.add(DictEntry(bestSentence, allSyllables.joinToString(" "), 999_999_999))
+                }
+                combinedCandidates.addAll(engine.searchFullZhuyin(combinedRaw, lastCommittedWord))
+            }
+            val tailCandidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString(), lastCommittedWord)
+            val finalCandidates = (combinedCandidates + tailCandidates).distinctBy { it.word }.take(40)
+            updateCandidateBar(finalCandidates)
         } else if (composingSentence.isNotEmpty()) {
             val currentSentenceStr = composingSentence.toString()
             val topEntry = DictEntry(currentSentenceStr, composingSyllables.joinToString(" "), 999_999_999)
             val cleanKey = composingSyllables.joinToString("") { it.filter { c -> c !in "ˇˋˊ˙ " } }
             val exactWords = if (cleanKey.isNotEmpty()) engine.getExactZhuyinWords(cleanKey) else emptyList()
+            val initialWords = if (cleanKey.length >= 2) engine.searchInitials(cleanKey) else emptyList()
             val candidates = if (composingSyllables.size == 1) {
                 val singleSyllable = composingSyllables[0]
                 val singleMatches = engine.searchFullZhuyin(singleSyllable).filter { it.word.length == 1 }
@@ -3747,7 +3762,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 val singleCandidates = (singleMatches + homophones).distinctBy { it.word }
                 (listOf(topEntry) + singleCandidates + exactWords).distinctBy { it.word }.take(40)
             } else {
-                (listOf(topEntry) + exactWords).distinctBy { it.word }.take(40)
+                (listOf(topEntry) + exactWords + initialWords).distinctBy { it.word }.take(40)
             }
             updateCandidateBar(candidates)
         } else {
@@ -4108,6 +4123,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     private fun handlePhysicalZhuyinKey(ch: Char): Boolean {
         lastUserTypingTime = SystemClock.uptimeMillis()
         dismissHomophonePopup()
+        engine.currentContextWord = lastCommittedWord
 
         // 1. 若按下的是聲調鍵 (ˇ ˋ ˊ ˙)：結算當前音節入句！
         if (ch in ZHUYIN_TONES) {
