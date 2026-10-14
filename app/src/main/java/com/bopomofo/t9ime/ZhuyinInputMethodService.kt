@@ -521,12 +521,6 @@ class ZhuyinInputMethodService : InputMethodService() {
         rootView?.let { root ->
             ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
             applyAdaptiveKeyboardHeight()
-            if (::layoutZhuyinFull.isInitialized) {
-                setupZhuyinFullLayout(root)
-            }
-            if (::layoutQwerty.isInitialized) {
-                setupQwertyLayout(root)
-            }
             applyOneHandedMode()
             updateKeyboardModeUI()
             updateHardwareKeyboardState()
@@ -3778,7 +3772,6 @@ class ZhuyinInputMethodService : InputMethodService() {
             updateCandidateBar(candidates)
         } else if (fullZhuyinBuffer.isNotEmpty()) {
             // 若前面已有結算音節（如連打聲母 ㄐ + ㄊ，或已打 ㄐㄧㄣ + 正在打 ㄊㄧㄢ），合併整串查詢複合詞與整句
-            val combinedRaw = composingSyllables.joinToString("") + fullZhuyinBuffer.toString()
             val allSyllables = composingSyllables + listOf(fullZhuyinBuffer.toString())
             val combinedCandidates = mutableListOf<DictEntry>()
 
@@ -3787,7 +3780,15 @@ class ZhuyinInputMethodService : InputMethodService() {
                 if (bestSentence.isNotEmpty()) {
                     combinedCandidates.add(DictEntry(bestSentence, allSyllables.joinToString(" "), 999_999_999))
                 }
-                combinedCandidates.addAll(engine.searchFullZhuyin(combinedRaw, lastCommittedWord))
+                val cleanCombined = (composingSyllables.joinToString("") + fullZhuyinBuffer.toString()).filter { it !in "ˇˋˊ˙ " }
+                if (cleanCombined.isNotEmpty()) {
+                    val exact = engine.getExactZhuyinWords(cleanCombined)
+                    if (exact.isNotEmpty()) combinedCandidates.addAll(exact)
+                    if (cleanCombined.length in 2..6) {
+                        val initials = engine.searchInitials(cleanCombined)
+                        if (initials.isNotEmpty()) combinedCandidates.addAll(initials)
+                    }
+                }
             }
             val tailCandidates = engine.searchFullZhuyin(fullZhuyinBuffer.toString(), lastCommittedWord)
             val finalCandidates = (combinedCandidates + tailCandidates).distinctBy { it.word }.take(40)

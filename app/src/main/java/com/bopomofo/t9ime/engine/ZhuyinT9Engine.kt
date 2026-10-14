@@ -45,6 +45,12 @@ class ZhuyinT9Engine(private val context: Context? = null) {
     private var soundToCharMap = mutableMapOf<String, MutableList<DictEntry>>()
 
     /**
+     * 聲母/首字符號 -> 單字列表 (O(1) 快速索引，取代每敲一鍵遍歷整個 soundToCharMap 的線性掃描)
+     */
+    @Volatile
+    private var initialToCharMap = mutableMapOf<Char, MutableList<DictEntry>>()
+
+    /**
      * 完整注音/去聲調注音 -> 詞彙條目反向索引（支援單字與多字詞，如 ㄓㄉㄠ -> [知道]）
      * 專供全鍵盤/實體鍵盤精準出詞與新酷音動態規劃組句使用
      */
@@ -231,7 +237,8 @@ class ZhuyinT9Engine(private val context: Context? = null) {
             val newInitialMap = mutableMapOf<String, MutableList<DictEntry>>()
             val newSoundToCharMap = mutableMapOf<String, MutableList<DictEntry>>()
             val newFullZhuyinWordMap = mutableMapOf<String, MutableList<DictEntry>>()
-            loadDictionaryInternal(newTrie, newNextWordMap, newCharZhuyinMap, newInitialMap, newSoundToCharMap, newFullZhuyinWordMap)
+            val newInitialToCharMap = mutableMapOf<Char, MutableList<DictEntry>>()
+            loadDictionaryInternal(newTrie, newNextWordMap, newCharZhuyinMap, newInitialMap, newSoundToCharMap, newFullZhuyinWordMap, newInitialToCharMap)
             loadUserDictionaryEntries(newTrie, newCharZhuyinMap, newFullZhuyinWordMap)
 
             val updateAction = {
@@ -241,6 +248,7 @@ class ZhuyinT9Engine(private val context: Context? = null) {
                 initialMap = newInitialMap
                 soundToCharMap = newSoundToCharMap
                 fullZhuyinWordMap = newFullZhuyinWordMap
+                initialToCharMap = newInitialToCharMap
                 isDictionaryLoaded = true
                 if (currentKeys.isNotEmpty()) {
                     recalculate()
@@ -262,8 +270,9 @@ class ZhuyinT9Engine(private val context: Context? = null) {
         val newInitialMap = mutableMapOf<String, MutableList<DictEntry>>()
         val newSoundToCharMap = mutableMapOf<String, MutableList<DictEntry>>()
         val newFullZhuyinWordMap = mutableMapOf<String, MutableList<DictEntry>>()
+        val newInitialToCharMap = mutableMapOf<Char, MutableList<DictEntry>>()
         file.inputStream().use { stream ->
-            loadDictionaryInternal(newTrie, newNextWordMap, newCharZhuyinMap, newInitialMap, newSoundToCharMap, newFullZhuyinWordMap, stream)
+            loadDictionaryInternal(newTrie, newNextWordMap, newCharZhuyinMap, newInitialMap, newSoundToCharMap, newFullZhuyinWordMap, newInitialToCharMap, stream)
         }
         loadUserDictionaryEntries(newTrie, newCharZhuyinMap, newFullZhuyinWordMap)
         trie = newTrie
@@ -272,6 +281,7 @@ class ZhuyinT9Engine(private val context: Context? = null) {
         initialMap = newInitialMap
         soundToCharMap = newSoundToCharMap
         fullZhuyinWordMap = newFullZhuyinWordMap
+        initialToCharMap = newInitialToCharMap
         isDictionaryLoaded = true
     }
 
@@ -319,6 +329,7 @@ class ZhuyinT9Engine(private val context: Context? = null) {
         targetInitialMap: MutableMap<String, MutableList<DictEntry>>,
         targetSoundToCharMap: MutableMap<String, MutableList<DictEntry>>,
         targetFullZhuyinWordMap: MutableMap<String, MutableList<DictEntry>>,
+        targetInitialToCharMap: MutableMap<Char, MutableList<DictEntry>>,
         customStream: java.io.InputStream? = null
     ) {
         val nextWordTrack = mutableMapOf<String, HashSet<String>>()
@@ -373,6 +384,13 @@ class ZhuyinT9Engine(private val context: Context? = null) {
                             if (soundList.none { it.word == word }) {
                                 soundList.add(entry)
                             }
+                            if (cleanZhuyin.isNotEmpty()) {
+                                val firstInitial = cleanZhuyin[0]
+                                val initList = targetInitialToCharMap.getOrPut(firstInitial) { ArrayList(30) }
+                                if (initList.none { it.word == word }) {
+                                    initList.add(entry)
+                                }
+                            }
                         }
 
                         // 單次讀取時構建高頻接續聯想詞庫（weight >= 25 且使用 HashSet 快速去重）
@@ -410,6 +428,9 @@ class ZhuyinT9Engine(private val context: Context? = null) {
                 list.sortByDescending { it.weight }
             }
             for ((_, list) in targetFullZhuyinWordMap) {
+                list.sortByDescending { it.weight }
+            }
+            for ((_, list) in targetInitialToCharMap) {
                 list.sortByDescending { it.weight }
             }
         } catch (e: Exception) {
@@ -1307,7 +1328,7 @@ class ZhuyinT9Engine(private val context: Context? = null) {
             }
         }
 
-        // 5. 單字精確與聲母檢索 (若輸入為單字音節或聲母，使用反向音節索引 O(1) 替代全量線性掃描)
+        // 5. 單字精確與聲母檢索 (若輸入為單字音節或聲母，使用反向音節與首碼索引 O(1) 替代全量線性掃描)
         val singleMatches = mutableListOf<DictEntry>()
         soundToCharMap[cleanInput]?.let { entries ->
             for (e in entries) {
@@ -1317,17 +1338,15 @@ class ZhuyinT9Engine(private val context: Context? = null) {
             }
         }
         if (cleanInput.length == 1) {
-            for ((syllable, entries) in soundToCharMap) {
-                if (syllable != cleanInput && syllable.startsWith(cleanInput)) {
-                    for (e in entries) {
-                        if (!seenWords.contains(e.word)) {
-                            singleMatches.add(e)
-                        }
+            initialToCharMap[cleanInput[0]]?.let { entries ->
+                for (e in entries) {
+                    if (!seenWords.contains(e.word)) {
+                        singleMatches.add(e)
+                        if (singleMatches.size >= 40) break
                     }
                 }
             }
         }
-        singleMatches.sortByDescending { it.weight }
         for (e in singleMatches) {
             if (seenWords.add(e.word)) {
                 results.add(e)
