@@ -146,4 +146,30 @@ class CandidateRankingTest {
         val sentenceWords = engine.findBestSentenceFromSyllables(syllables)
         assertEquals("高畫質影像", sentenceWords.joinToString(""))
     }
+
+    @Test
+    fun testSwiftKeyStepSyllableAndRollback() {
+        val engine = ZhuyinT9Engine()
+        engine.loadDictionaryForTest()
+
+        // 輸入 [1, 9] (ㄅ/ㄆ/ㄇ/ㄈ + ㄤ/ㄥ/ㄦ/ㄨ)
+        engine.pressKey(1)
+        engine.pressKey(9)
+
+        // 1. 驗證左側注音組合皆為單字合法音節
+        val combos = engine.getPossibleZhuyinCombinations()
+        assertTrue("左側音節組合不得為空", combos.isNotEmpty())
+        assertTrue("左側音節應包含 ㄅㄤ", combos.contains("ㄅㄤ"))
+        assertTrue("SwiftKey 模型下左側所有音節長度不得超過 4 (永遠為單字音節)", combos.all { it.length <= 4 })
+
+        // 2. 點選「ㄅㄤ」進行階梯式音節鎖定
+        val candidates = engine.confirmStepSyllable("ㄅㄤ")
+        assertTrue("鎖定音節後候選字列表不得為空", candidates.isNotEmpty())
+        assertTrue("confirmedSyllables 應記錄 ㄅㄤ", engine.getConfirmedSyllables() == listOf("ㄅㄤ"))
+
+        // 3. 測試平滑退格回滾：在沒有剩餘未確認按鍵時按退格，應退回最後一個已確認音節
+        engine.backspace()
+        assertTrue("退格後 confirmedSyllables 應回滾為空", !engine.hasConfirmedSyllables())
+        assertTrue("退格後按鍵序列仍應保留", engine.getCurrentKeys() == listOf(1, 9))
+    }
 }
