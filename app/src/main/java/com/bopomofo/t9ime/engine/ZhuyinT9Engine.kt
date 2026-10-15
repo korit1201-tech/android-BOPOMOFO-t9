@@ -491,8 +491,79 @@ class ZhuyinT9Engine(private val context: Context? = null) {
         return Pair(TONE_SYMBOLS[currentToneIndex], cachedCandidates)
     }
 
+    // SwiftKey 階梯式逐字音節確認狀態 (已確認音節序列與各音節消耗之按鍵數)
+    private val confirmedSyllables = mutableListOf<String>()
+    private val confirmedKeyCounts = mutableListOf<Int>()
+
+    fun getConfirmedSyllables(): List<String> = confirmedSyllables.toList()
+    fun hasConfirmedSyllables(): Boolean = confirmedSyllables.isNotEmpty()
+
+    /** 取得尚未被階梯音節鎖定消耗的剩餘按鍵序列 */
+    fun getRemainingKeys(): List<Int> {
+        val consumed = confirmedKeyCounts.sum()
+        return if (consumed < currentKeys.size) {
+            currentKeys.subList(consumed, currentKeys.size).toList()
+        } else {
+            emptyList()
+        }
+    }
+
+    fun hasRemainingKeys(): Boolean = getRemainingKeys().isNotEmpty()
+
+    /**
+     * SwiftKey 階梯式確認當前音節：
+     * 1. 計算該音節消耗按鍵數 (含貪婪吸收緊隨其後的聲調鍵 11)
+     * 2. 記錄進 confirmedSyllables，自動推進至下一字
+     */
+    fun confirmStepSyllable(syllable: String): List<DictEntry> {
+        val cleanSyl = syllable.filter { it !in "ˇˋˊ˙" }
+        val baseKeyLen = KeyMapping.getSequence(cleanSyl, ignoreTones = true).size
+        val remaining = getRemainingKeys()
+        var consumedKeys = baseKeyLen
+
+        // 貪婪吸收聲調鍵：若 remainingKeys 在音節按鍵之後緊跟著聲調鍵 11，一併被此音節吸收
+        if (remaining.size > baseKeyLen && remaining[baseKeyLen] == 11) {
+            consumedKeys += 1
+        } else if (syllable.any { it in "ˇˋˊ˙" } && remaining.contains(11)) {
+            // 若選擇的音節帶有聲調標記，且剩餘鍵中有 11，也一併吸收
+            val toneIdx = remaining.indexOf(11)
+            if (toneIdx in 0..baseKeyLen) {
+                consumedKeys = maxOf(consumedKeys, toneIdx + 1)
+            }
+        }
+
+        confirmedSyllables.add(syllable)
+        confirmedKeyCounts.add(minOf(consumedKeys, remaining.size))
+        lockedZhuyinCombo = null
+        recalculate()
+        return cachedCandidates
+    }
+
+    /**
+     * 平滑階梯式退格回滾 (Step Back)：
+     * 當沒有未確認按鍵時，按退格退回最後一個已確認的音節，讓該音節重新恢復為待決策狀態
+     */
+    fun rollbackLastConfirmedSyllable(): Boolean {
+        if (confirmedSyllables.isNotEmpty()) {
+            confirmedSyllables.removeLast()
+            confirmedKeyCounts.removeLast()
+            lockedZhuyinCombo = null
+            recalculate()
+            return true
+        }
+        return false
+    }
+
     fun backspace(): List<DictEntry> {
-        if (currentKeys.isNotEmpty()) {
+        val remaining = getRemainingKeys()
+        if (remaining.isNotEmpty()) {
+            currentKeys.removeAt(currentKeys.size - 1)
+            currentToneIndex = 0
+            lockedZhuyinCombo = null
+        } else if (confirmedSyllables.isNotEmpty()) {
+            rollbackLastConfirmedSyllable()
+            return cachedCandidates
+        } else if (currentKeys.isNotEmpty()) {
             currentKeys.removeAt(currentKeys.size - 1)
             currentToneIndex = 0
             lockedZhuyinCombo = null
@@ -505,6 +576,8 @@ class ZhuyinT9Engine(private val context: Context? = null) {
         currentKeys.clear()
         currentToneIndex = 0
         lockedZhuyinCombo = null
+        confirmedSyllables.clear()
+        confirmedKeyCounts.clear()
         cachedCandidates = emptyList()
         cachedZhuyinCombos = emptyList()
         previousTopWord = null
@@ -534,16 +607,15 @@ class ZhuyinT9Engine(private val context: Context? = null) {
         currentKeys.addAll(rest)
         currentToneIndex = 0
         lockedZhuyinCombo = null
+        confirmedSyllables.clear()
+        confirmedKeyCounts.clear()
         previousTopWord = null
         recalculate()
         return cachedCandidates
     }
 
     fun selectZhuyinCombo(zhuyin: String): List<DictEntry> {
-        // 點選同一個音節按鈕支援切換解除鎖定 (Toggle)
-        lockedZhuyinCombo = if (lockedZhuyinCombo == zhuyin) null else zhuyin
-        recalculateCandidatesOnly()
-        return cachedCandidates
+        return confirmStepSyllable(zhuyin)
     }
 
     private var previousTopWord: String? = null
@@ -682,74 +754,49 @@ class ZhuyinT9Engine(private val context: Context? = null) {
 
         previousTopWord = candidateList.firstOrNull()?.word
 
-        // 產生左側注音音節/詞彙組合列表（兼顧單字合法音節與多字詞組合，杜絕組合遺失與無字可選）
+        // 產生左側注音音節列表 (SwiftKey 階梯式推進模型：永遠只針對當前第一個待決策字顯示大字合法單音節)
         val comboSet = LinkedHashSet<String>()
+        val remaining = getRemainingKeys()
+        val cleanRemaining = remaining.filter { it != 11 }
 
-        // 1. 【按鍵精確音節絕對置頂】：對於短按鍵 (<= 3 鍵)，優先放入標準音節管理器中的合法單音節（如 [3,6] -> ㄓㄣ, ㄗㄣ）
-        if (phonemeKeyLen <= 3) {
-            val exactSyllables = SyllableManager.getExactSyllables(cleanKeys)
-            for (syl in exactSyllables) {
-                val label = if (toneChar != null) "$syl$toneChar" else syl
-                comboSet.add(label)
-                if (comboSet.size >= 16) break
-            }
-        }
-
-        // 2. 從「精確非容錯」候選字詞列表提取前綴注音走向（長詞或多字詞走向）
-        //    - 整句候選的注音以空白分隔各詞，必須先去掉空白再依按鍵數截取，否則會得到 `ㄞㄧㄣ ` 這種殘缺組合
-        //    - 「部分上屏」候選只涵蓋前幾個按鍵，不代表目前整串輸入的注音走向，不納入
-        val wordCombos = LinkedHashSet<String>()
-        for (entry in candidateList) {
-            if (entry.isTolerant) continue
-            if (entry.consumedKeys in 1 until phonemeKeyLen) continue
-            val clean = entry.cleanZhuyin
-            val prefix = if (clean.length >= phonemeKeyLen) clean.substring(0, phonemeKeyLen) else clean
-            if (prefix.isNotEmpty()) {
-                wordCombos.add(if (toneChar != null) "$prefix$toneChar" else prefix)
-            }
-            if (wordCombos.size >= 16) break
-        }
-        var wordComboIndex = 0
-        val wordComboList = wordCombos.toList()
-        while (wordComboIndex < wordComboList.size && wordComboIndex < T9_WORD_COMBOS_FIRST) {
-            comboSet.add(wordComboList[wordComboIndex++])
-        }
-
-        // 3. 【音節切分組合】詞庫沒有收錄的詞（如「幫我」ㄅㄤㄨㄛ）不會出現在上面的詞庫衍生組合裡，
-        //    改用真實音節頻率把按鍵切成合法音節（與詞庫衍生的組合交錯排列，才不會被排到列表最底下）。
-        //    舊的「多音節合成」實測 97% 不是任何真實詞的開頭、正確注音命中率約 2%，已不再使用。
-        if (phonemeKeyLen in 4..8) {
-            for (combo in SyllableManager.getSyllableSplitCombinations(cleanKeys, T9_SPLIT_COMBO_LIMIT)) {
-                comboSet.add(if (toneChar != null) "$combo$toneChar" else combo)
-                if (comboSet.size >= 16) break
-            }
-        }
-        while (wordComboIndex < wordComboList.size && comboSet.size < 16) {
-            comboSet.add(wordComboList[wordComboIndex++])
-        }
-
-        // 4. 【容錯音節候補】：若容錯開關啟用且尚有空間，才提取容錯詞的前綴音節（如 ㄓㄥ，嚴格排在精確音節之後作為候補）
-        if (isTolerantEnabled && comboSet.size < 16) {
-            for (entry in candidateList) {
-                if (!entry.isTolerant) continue
-                val clean = entry.cleanZhuyin
-                val prefix = if (clean.length >= phonemeKeyLen) clean.substring(0, phonemeKeyLen) else clean
-                if (prefix.isNotEmpty()) {
-                    val label = if (toneChar != null) "$prefix$toneChar" else prefix
+        if (cleanRemaining.isNotEmpty()) {
+            val remLen = cleanRemaining.size
+            // 優先列出長度為 3、2、1 鍵的所有合法單音節（按音節頻率排序）
+            for (takeLen in minOf(remLen, 3) downTo 1) {
+                val subKeys = cleanRemaining.subList(0, takeLen)
+                val exactSyllables = SyllableManager.getExactSyllables(subKeys)
+                for (syl in exactSyllables) {
+                    val label = if (toneChar != null && takeLen == remLen) "$syl$toneChar" else syl
                     comboSet.add(label)
+                    if (comboSet.size >= 14) break
                 }
-                if (comboSet.size >= 16) break
+                if (comboSet.size >= 14) break
             }
-        }
 
-        // 5. 保底：若依然為空，以各按鍵第一注音符號合成
-        if (comboSet.isEmpty()) {
-            val sb = StringBuilder()
-            for (k in cleanKeys) {
-                val chs = KeyMapping.getChars(k)
-                if (chs.isNotEmpty()) sb.append(chs[0])
+            // 保底 1：從當前候選詞列表中提取當前字的首字單音節
+            if (comboSet.size < 8) {
+                for (entry in candidateList) {
+                    val firstSyl = entry.cleanZhuyin.split(" ").firstOrNull() ?: entry.cleanZhuyin
+                    if (firstSyl.isNotEmpty() && firstSyl.length <= 4) {
+                        val seq = KeyMapping.getSequence(firstSyl, ignoreTones = true)
+                        if (seq.size <= remLen && cleanRemaining.subList(0, seq.size) == seq) {
+                            comboSet.add(firstSyl)
+                            if (comboSet.size >= 14) break
+                        }
+                    }
+                }
             }
-            comboSet.add(if (toneChar != null) "${sb}${toneChar}" else sb.toString())
+
+            // 保底 2：若依然為空，以第一鍵的個別注音字符置入
+            if (comboSet.isEmpty()) {
+                val firstKey = cleanRemaining.first()
+                for (ch in KeyMapping.getChars(firstKey)) {
+                    comboSet.add(ch.toString())
+                }
+            }
+        } else if (confirmedSyllables.isNotEmpty()) {
+            // 所有輸入按鍵均已被鎖定確認，左側顯示已確認的音節序列
+            comboSet.add(confirmedSyllables.joinToString(" "))
         }
 
         cachedZhuyinCombos = comboSet.toList()
@@ -992,47 +1039,88 @@ class ZhuyinT9Engine(private val context: Context? = null) {
     var currentContextWord: String? = null
 
     private fun applyLockFilter(baseList: List<DictEntry>) {
-        val locked = lockedZhuyinCombo
-        if (locked != null) {
-            val cleanLock = locked.filter { it !in "ˇˋˊ˙" }
+        val activeSyllables = if (confirmedSyllables.isNotEmpty()) {
+            confirmedSyllables
+        } else if (lockedZhuyinCombo != null) {
+            listOf(lockedZhuyinCombo!!)
+        } else {
+            emptyList()
+        }
+
+        if (activeSyllables.isNotEmpty()) {
+            val cleanPrefix = activeSyllables.joinToString("") { it.filter { ch -> ch !in "ˇˋˊ˙" } }
+            val firstSylClean = activeSyllables[0].filter { it !in "ˇˋˊ˙" }
+
             val filtered = baseList.filter { entry ->
-                // 整句候選的注音以空白分隔各詞，比對前需先去掉
-                entry.cleanZhuyin.startsWith(cleanLock)
+                entry.cleanZhuyin.startsWith(cleanPrefix)
             }
-            if (filtered.isNotEmpty()) {
-                cachedCandidates = filtered
-                return
-            }
-            // 若 baseList 無匹配詞條，嘗試從完整注音映射中直接檢索或組字（杜絕點擊注音組合後無字可選）
-            val directWords = fullZhuyinWordMap[cleanLock]
-            if (!directWords.isNullOrEmpty()) {
-                cachedCandidates = directWords.sortedByDescending { it.weight + userDict.getBoost(it.word) }
-                return
-            }
-            // 嘗試切分為音節組合並合成詞（如 ㄊㄧ + ㄍㄢ -> 體 + 感 = 體感）
-            val syllables = SyllableManager.splitIntoSyllables(cleanLock, 2)
-            if (syllables != null && syllables.size == 2) {
-                val words1 = fullZhuyinWordMap[syllables[0]]
-                val words2 = fullZhuyinWordMap[syllables[1]]
-                if (!words1.isNullOrEmpty() && !words2.isNullOrEmpty()) {
-                    val synthesized = mutableListOf<DictEntry>()
-                    val top1 = words1.take(5)
-                    val top2 = words2.take(5)
+
+            val resultList = mutableListOf<DictEntry>()
+            resultList.addAll(filtered)
+
+            // 雙軌合成保底：從第一個已確認音節提取單字，並與後續音節/按鍵進行笛卡爾積合成
+            val firstSylWords = fullZhuyinWordMap[firstSylClean]
+            val firstSylKeyCount = confirmedKeyCounts.getOrNull(0) ?: KeyMapping.getSequence(firstSylClean, ignoreTones = true).size
+
+            // 1. 若鎖定了兩個音節 (如 ㄅㄤ + ㄨㄛ)，合成雙字詞 (如 幫我)
+            if (activeSyllables.size >= 2) {
+                val secondSylClean = activeSyllables[1].filter { it !in "ˇˋˊ˙" }
+                val secondSylWords = fullZhuyinWordMap[secondSylClean]
+                if (!firstSylWords.isNullOrEmpty() && !secondSylWords.isNullOrEmpty()) {
+                    val top1 = firstSylWords.take(6)
+                    val top2 = secondSylWords.take(6)
                     for (w1 in top1) {
                         for (w2 in top2) {
                             val combined = w1.word + w2.word
-                            val avgWt = (w1.weight + w2.weight) / 2
-                            synthesized.add(DictEntry(combined, "${w1.zhuyin} ${w2.zhuyin}", avgWt))
+                            if (resultList.none { it.word == combined }) {
+                                val avgWt = (w1.weight + w2.weight) / 2
+                                resultList.add(DictEntry(combined, "${w1.zhuyin} ${w2.zhuyin}", avgWt))
+                            }
                         }
                     }
-                    if (synthesized.isNotEmpty()) {
-                        cachedCandidates = synthesized.sortedByDescending { it.weight + userDict.getBoost(it.word) }
-                        return
+                }
+            } else if (resultList.size < 4 && !firstSylWords.isNullOrEmpty()) {
+                // 若只有一個鎖定音節且整詞候選少於 4 個，嘗試與剩餘按鍵的首字單音節合成
+                val remaining = getRemainingKeys().filter { it != 11 }
+                if (remaining.isNotEmpty()) {
+                    for (kLen in minOf(remaining.size, 3) downTo 1) {
+                        val subKeys = remaining.subList(0, kLen)
+                        val nextSyls = SyllableManager.getExactSyllables(subKeys)
+                        for (nSyl in nextSyls.take(3)) {
+                            val nextWords = fullZhuyinWordMap[nSyl] ?: continue
+                            for (w1 in firstSylWords.take(4)) {
+                                for (w2 in nextWords.take(4)) {
+                                    val combined = w1.word + w2.word
+                                    if (resultList.none { it.word == combined }) {
+                                        val avgWt = (w1.weight + w2.weight) / 2
+                                        resultList.add(DictEntry(combined, "${w1.zhuyin} ${w2.zhuyin}", avgWt))
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
-            cachedCandidates = baseList
-            return
+
+            // 2. 將第一字的單字候選 (如 幫、榜、綁) 納入候選列，標註其 consumedKeys，讓使用者可單字上屏
+            if (!firstSylWords.isNullOrEmpty()) {
+                for (singleEntry in firstSylWords.sortedByDescending { it.weight + userDict.getBoost(it.word) }.take(8)) {
+                    if (resultList.none { it.word == singleEntry.word }) {
+                        resultList.add(singleEntry.copy(consumedKeys = firstSylKeyCount))
+                    }
+                }
+            }
+
+            if (resultList.isNotEmpty()) {
+                cachedCandidates = resultList.sortedByDescending { it.weight + userDict.getBoost(it.word) }
+                return
+            }
+
+            // 3. 終極保底：直接提取第一音節的所有單字，絕不允許空白
+            if (!firstSylWords.isNullOrEmpty()) {
+                cachedCandidates = firstSylWords.sortedByDescending { it.weight + userDict.getBoost(it.word) }
+                return
+            }
         }
         cachedCandidates = baseList
     }

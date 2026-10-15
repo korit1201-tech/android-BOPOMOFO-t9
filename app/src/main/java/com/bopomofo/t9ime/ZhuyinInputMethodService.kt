@@ -129,6 +129,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     private lateinit var containerZhuyinCombos: LinearLayout
     private val candidateTextViewPool = ArrayList<TextView>()
     private val comboButtonPool = ArrayList<Button>()
+    private var pendingDownButton: SwipeKeyButton? = null
 
     // 底線候選文字同音字/同拼法逐字替換狀態 (1.6.5)
     private var isHomophoneSelectionMode = false
@@ -1034,8 +1035,18 @@ class ZhuyinInputMethodService : InputMethodService() {
         for ((viewId, keyNum) in keyIds) {
             val btn = root.findViewById<SwipeKeyButton>(viewId) ?: continue
 
+            btn.onDownAction = {
+                // Flush-on-Next-Down：新鍵按下瞬間，強制結算未完成的前一鍵，根治快打時序顛倒
+                if (pendingDownButton != null && pendingDownButton != btn) {
+                    pendingDownButton?.flushAsTap()
+                }
+                pendingDownButton = btn
+                // 接觸螢幕瞬間 (ACTION_DOWN) 即刻發出物理反饋 (0ms 零延遲)
+                triggerHapticFeedback(HapticType.KEY_PRESS)
+            }
+
             btn.onTapListener = {
-                triggerHapticFeedback()
+                if (pendingDownButton == btn) pendingDownButton = null
                 lastUserTypingTime = SystemClock.uptimeMillis()
                 dismissHomophonePopup()
                 when (currentMode) {
@@ -1063,7 +1074,8 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
 
             btn.onSwipeListener = { direction ->
-                triggerHapticFeedback()
+                if (pendingDownButton == btn) pendingDownButton = null
+                triggerHapticFeedback(HapticType.KEY_PRESS)
                 lastUserTypingTime = SystemClock.uptimeMillis()
                 dismissHomophonePopup()
                 when (currentMode) {
@@ -2726,12 +2738,12 @@ class ZhuyinInputMethodService : InputMethodService() {
                 btn.typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
             }
 
-            // 動態依字數與音節長度微縮字級，避免字串擠在一起、換行或被截斷
+            // SwiftKey 單字音節模型：字串短小精確，字級調大清晰好讀
             val dynamicTextSize = when {
-                combo.length >= 4 -> 11f
-                combo.length == 3 -> 12.5f
-                combo.length == 2 -> 14f
-                else -> 15.5f
+                combo.length >= 4 -> 13.5f
+                combo.length == 3 -> 15.0f
+                combo.length == 2 -> 16.5f
+                else -> 17.5f
             }
             btn.textSize = dynamicTextSize
             btn.setPadding(2, 0, 2, 0)
@@ -2746,10 +2758,9 @@ class ZhuyinInputMethodService : InputMethodService() {
 
             btn.text = combo
             btn.setOnClickListener {
-                triggerHapticFeedback()
-                val filtered = engine.selectZhuyinCombo(combo)
-                updateCandidateBar(filtered)
-                updateComposingPreview()
+                triggerHapticFeedback(HapticType.KEY_PRESS)
+                val filtered = engine.confirmStepSyllable(combo)
+                refreshUI(filtered)
             }
             btn.visibility = View.VISIBLE
         }

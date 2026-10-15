@@ -48,6 +48,7 @@ class SwipeKeyButton @JvmOverloads constructor(
     var onTapListener: (() -> Unit)? = null
     var onSwipeListener: ((Direction) -> Unit)? = null
     var onLongClickListenerCustom: (() -> Unit)? = null
+    var onDownAction: (() -> Unit)? = null
 
     /**
      * 提供四方向字符映射表（由 Service 綁定，若有提供則啟用拖動視覺指示動畫）
@@ -61,7 +62,7 @@ class SwipeKeyButton @JvmOverloads constructor(
     private var activeDirection: Direction? = null
 
     companion object {
-        private const val SWIPE_THRESHOLD_DP = 26f
+        private const val SWIPE_THRESHOLD_DP = 34f
         private const val SHOW_POPUP_DELAY_MS = 220L
     }
 
@@ -218,6 +219,19 @@ class SwipeKeyButton @JvmOverloads constructor(
         activeDirection = null
     }
 
+    /**
+     * Flush-on-Next-Down：當下一個按鍵按下時，強制將當前按鍵結算為 Tap，杜絕雙手快打時序顛倒
+     */
+    fun flushAsTap() {
+        if (isPressed) {
+            isPressed = false
+            removeCallbacks(showPopupRunnable)
+            dismissPreviewPopup()
+            performClick()
+            onTapListener?.invoke()
+        }
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -228,6 +242,12 @@ class SwipeKeyButton @JvmOverloads constructor(
                 activeDirection = null
                 isPressed = true
 
+                // 防止父容器偷取觸控事件
+                parent?.requestDisallowInterceptTouchEvent(true)
+
+                // 通知 Service 執行即時震動反饋與 flush 前一鍵
+                onDownAction?.invoke()
+
                 // 長按 220ms 展開十字指南針預覽（快速敲擊 <220ms 絕不喚起彈窗）
                 removeCallbacks(showPopupRunnable)
                 postDelayed(showPopupRunnable, SHOW_POPUP_DELAY_MS)
@@ -236,14 +256,19 @@ class SwipeKeyButton @JvmOverloads constructor(
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.x - startX
                 val dy = event.y - startY
+                val absDx = abs(dx)
+                val absDy = abs(dy)
                 val threshold = swipeThresholdPx
 
-                if (abs(dx) > threshold || abs(dy) > threshold) {
+                // 必須位移超過門檻，且主軸大於次軸 1.35 倍（過濾斜向模糊移動），才判定為有效方向
+                val isDominantX = absDx > absDy * 1.35f
+                val isDominantY = absDy > absDx * 1.35f
+
+                if ((absDx > threshold || absDy > threshold) && (isDominantX || isDominantY)) {
                     isMoved = true
                     if (previewPopup == null || previewPopup?.isShowing == false) {
                         showPreviewPopup()
                     }
-                    val isDominantX = abs(dx) > abs(dy)
                     val dir = if (isDominantX) {
                         if (dx > 0) Direction.RIGHT else Direction.LEFT
                     } else {
@@ -258,9 +283,20 @@ class SwipeKeyButton @JvmOverloads constructor(
                 isPressed = false
                 removeCallbacks(showPopupRunnable)
                 val selectedDir = activeDirection
+                val duration = System.currentTimeMillis() - downTime
+                val dx = event.x - startX
+                val dy = event.y - startY
+                val dist = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+                val density = resources.displayMetrics.density
+                val distDp = dist / density
+                val velocity = distDp / maxOf(duration, 1L)
 
-                // 核心關鍵：立即同步派發輸入事件（0 毫秒延遲，絕不等待動畫或異步回呼，杜絕快打時按鍵順序顛倒）
-                if (selectedDir != null) {
+                // 判定是否為真實滑動：
+                // 1. 已鎖定方向且手指停留超時 (>180ms) 拖選
+                // 2. 或快速短促且速度極高的輕彈 (Flick, velocity > 0.32 dp/ms)
+                val isLegitimateSwipe = selectedDir != null && (duration >= 180L || velocity > 0.32f)
+
+                if (isLegitimateSwipe && selectedDir != null) {
                     onSwipeListener?.invoke(selectedDir)
                 } else {
                     performClick()
