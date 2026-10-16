@@ -1134,22 +1134,75 @@ class ZhuyinT9Engine(private val context: Context? = null) {
     fun getPossibleZhuyinCombinations(): List<String> = cachedZhuyinCombos
 
     /**
-     * 取得當前組字序列對應之完整多字注音字串（優先使用首選詞之完整注音，無完整詞時拼接已確認音節與候選組合）
+     * 取得當前組字序列對應之完整多字注音字串：
+     * 嚴格遵守「使用者未輸入聲調絕不擅自填上聲調」原則：
+     * 1. 已確認音節 (confirmedSyllables)：忠實呈現使用者點選時的音節形態（有聲調即有，無聲調即無）。
+     * 2. 剩餘未確認音節：若使用者主動按了聲調鍵 (currentToneIndex > 0)，僅最後一個音節套用該聲調；
+     *    若使用者完全未按聲調鍵，所有音節一律去除聲調符號 (ˇˋˊ˙)，絕不隨便腦補字典預設聲調！
      */
     fun getFullComposingZhuyin(): String {
         if (currentKeys.isEmpty()) return ""
+
         val top = cachedCandidates.firstOrNull()
-        val topZhuyin = top?.zhuyin?.trim() ?: ""
+        val rawZhuyin = top?.zhuyin?.trim() ?: ""
+
+        val toneChar = if (currentToneIndex > 0 && currentToneIndex < TONE_SYMBOLS.size) {
+            TONE_SYMBOLS[currentToneIndex].takeIf { it != ' ' }
+        } else null
+
+        // 輔助函式：去除音節中的所有聲調符號
+        fun cleanTone(syl: String): String = syl.filter { it !in "ˇˋˊ˙" }
+
         if (confirmedSyllables.isEmpty()) {
-            if (topZhuyin.isNotEmpty()) return topZhuyin
-            return cachedZhuyinCombos.firstOrNull() ?: ""
+            if (rawZhuyin.isNotEmpty()) {
+                val syllables = rawZhuyin.split("\\s+".toRegex()).filter { it.isNotEmpty() }
+                if (syllables.isNotEmpty()) {
+                    val result = syllables.mapIndexed { index, syl ->
+                        val base = cleanTone(syl)
+                        if (index == syllables.size - 1 && toneChar != null) {
+                            "$base$toneChar"
+                        } else {
+                            base
+                        }
+                    }
+                    return result.joinToString(" ")
+                }
+            }
+            val combo = cachedZhuyinCombos.firstOrNull() ?: ""
+            return if (toneChar != null && !combo.any { it in "ˇˋˊ˙" }) "$combo$toneChar" else combo
         }
+
         val confirmed = confirmedSyllables.joinToString(" ")
-        if (topZhuyin.isNotEmpty()) {
-            return if (topZhuyin.startsWith(confirmed)) topZhuyin else "$confirmed $topZhuyin"
+        val confirmedClean = confirmedSyllables.map { cleanTone(it) }.joinToString(" ")
+
+        if (rawZhuyin.isNotEmpty()) {
+            val syllables = rawZhuyin.split("\\s+".toRegex()).filter { it.isNotEmpty() }
+            val confirmedCount = confirmedSyllables.size
+            if (syllables.size > confirmedCount) {
+                // 拼接：前段保持 confirmedSyllables 原樣，後段為剩餘音節
+                val remainingSyllables = syllables.subList(confirmedCount, syllables.size)
+                val formattedRem = remainingSyllables.mapIndexed { index, syl ->
+                    val base = cleanTone(syl)
+                    if (index == remainingSyllables.size - 1 && toneChar != null) {
+                        "$base$toneChar"
+                    } else {
+                        base
+                    }
+                }
+                return "$confirmed ${formattedRem.joinToString(" ")}"
+            } else if (rawZhuyin.startsWith(confirmedClean) || rawZhuyin.startsWith(confirmed)) {
+                // 候選詞長度剛好等於已確認音節數
+                return confirmed
+            }
         }
-        val rem = cachedZhuyinCombos.firstOrNull() ?: ""
-        return if (rem.isNotEmpty()) "$confirmed $rem" else confirmed
+
+        val remCombo = cachedZhuyinCombos.firstOrNull() ?: ""
+        val formattedRem = if (remCombo.isNotEmpty()) {
+            val base = cleanTone(remCombo)
+            if (toneChar != null) "$base$toneChar" else base
+        } else ""
+
+        return if (formattedRem.isNotEmpty()) "$confirmed $formattedRem" else confirmed
     }
 
     fun getCandidates(): List<DictEntry> = cachedCandidates
