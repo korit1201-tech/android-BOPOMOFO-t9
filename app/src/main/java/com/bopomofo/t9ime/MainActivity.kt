@@ -175,9 +175,11 @@ class MainActivity : AppCompatActivity() {
         val testVibrate = { ms: Int ->
             try {
                 if (vibrator != null && vibrator.hasVibrator()) {
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                        val amplitude = ((ms / 100f) * 255).toInt().coerceIn(1, 255)
-                        val effect = android.os.VibrationEffect.createOneShot(ms.toLong(), amplitude)
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        vibrator.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK))
+                    } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        val amplitude = ((ms / 100f) * 190).toInt().coerceIn(35, 255)
+                        val effect = android.os.VibrationEffect.createOneShot(4L, amplitude)
                         vibrator.vibrate(effect)
                     } else {
                         @Suppress("DEPRECATION")

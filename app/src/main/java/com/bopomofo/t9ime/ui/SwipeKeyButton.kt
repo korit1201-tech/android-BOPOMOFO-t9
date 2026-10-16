@@ -39,6 +39,8 @@ class SwipeKeyButton @JvmOverloads constructor(
             typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
         }
         paint.isFakeBoldText = true
+        // 停用系統 View 預設點擊震動，交由輸入法核心專屬震動引擎統一調度，杜絕按下+抬手產生的雙重微妙震動
+        isHapticFeedbackEnabled = false
     }
 
     enum class Direction {
@@ -161,7 +163,10 @@ class SwipeKeyButton @JvmOverloads constructor(
         // 觸覺微反饋
         if (newDir != null) {
             try {
-                performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+                performHapticFeedback(
+                    android.view.HapticFeedbackConstants.KEYBOARD_TAP,
+                    android.view.HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING
+                )
             } catch (_: Exception) {
             }
         }

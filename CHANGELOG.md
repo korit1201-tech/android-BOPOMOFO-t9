@@ -2,6 +2,19 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.6.7] - 2026-10-16
+
+### 🎯 旗艦級線性馬達微動觸覺革命與雙重震動根治 (Build 90)
+
+- **🎯 Android 10+ 硬體級原生微動脈衝 (EFFECT_CLICK / EFFECT_TICK)**：
+  - **告別 20ms+ 嗡嗡蜂鳴拖尾**：過去舊版使用 `createOneShot(20ms+)` 蜂鳴波形，在現代 X 軸線性馬達（LRA）手機上會產生嚴重拖尾嗡鳴與黏手發麻感。
+  - **原生微動開關級爽脆回饋**：全面對齊 Gboard 與 iOS 觸感標準，直接調用底層 HAL `VibrationEffect.createPredefined(EFFECT_CLICK)`，觸發瞬態主動反向制動，敲擊如機械微動開關般爽脆乾淨、「嗒嗒嗒」乾淨俐落！
+  - **退格與刪除細緻反饋 (EFFECT_TICK)**：退格鍵與連續刪除切換為極輕量微滴答感，手感層次分明。
+  - **舊機型極致超短脈衝**：Android 8~9 備用路徑壓降至 `4ms` 極短脈衝，杜絕任何拖泥帶水。
+- **🚫 根除 View performClick 系統層雙重微妙震動碰撞**：
+  - 將按鍵元件的 `isHapticFeedbackEnabled` 強制關閉，徹底消除 Android Framework 在抬手 `performClick` 時偷偷附加的系統預設震動，杜絕「按下震一下、抬手又震一下」的怪異微妙雙重手感。
+  - 確保所有觸覺反饋 100% 由輸入法核心統一精確調度。
+
 ## [v2.6.6] - 2026-10-15
 
 ### ⚡ 觸控反饋零延遲革命與 SwiftKey 階梯式逐字音節預測 (Build 89)
