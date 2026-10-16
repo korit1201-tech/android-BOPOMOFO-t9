@@ -193,6 +193,8 @@ class ZhuyinInputMethodService : InputMethodService() {
     private lateinit var spacerBottomBar: View
     private lateinit var btnSymbolDrawer: Button
     private lateinit var containerSymbolContent: FrameLayout
+    private var layoutZhuyinPreview: LinearLayout? = null
+    private var tvZhuyinFullPreview: TextView? = null
 
     private val repeatHandler = Handler(Looper.getMainLooper())
     private var isRepeatingBackspace = false
@@ -700,6 +702,24 @@ class ZhuyinInputMethodService : InputMethodService() {
         layoutResizeHandle = root.findViewById(R.id.layout_resize_handle)
         layoutBottomBar = root.findViewById(R.id.layout_bottom_bar)
         layoutCandidateBar = root.findViewById(R.id.layout_candidate_bar)
+        layoutZhuyinPreview = root.findViewById(R.id.layout_zhuyin_preview)
+        tvZhuyinFullPreview = root.findViewById(R.id.tv_zhuyin_full_preview)
+        try {
+            val f = androidx.core.content.res.ResourcesCompat.getFont(this, R.font.bopomofo_font)
+            if (f != null) tvZhuyinFullPreview?.typeface = android.graphics.Typeface.create(f, android.graphics.Typeface.BOLD)
+        } catch (_: Exception) {}
+        tvZhuyinFullPreview?.setOnClickListener {
+            triggerHapticFeedback(HapticType.COMMIT)
+            val textToCommit = tvZhuyinFullPreview?.text?.toString() ?: ""
+            if (textToCommit.isNotEmpty()) {
+                val rawZhuyin = textToCommit.replace(" ", "")
+                safeCommitText(rawZhuyin)
+                clearCandidateBar()
+                engine.clear()
+                fullZhuyinBuffer.clear()
+                currentInputConnection?.finishComposingText()
+            }
+        }
         handwritingCanvas = root.findViewById(R.id.handwriting_canvas)
 
         // 依當前直向/橫向動態套用鍵盤高度（手機橫向自適應緊湊預設 145dp，直向 240dp）
@@ -2649,6 +2669,27 @@ class ZhuyinInputMethodService : InputMethodService() {
         updateComposingPreview()
         updateCandidateBar(candidates)
         updateLeftZhuyinCombos()
+        updateZhuyinFullPreview()
+    }
+
+    private fun updateZhuyinFullPreview() {
+        val previewText = when (currentMode) {
+            KeyboardMode.ZHUYIN_FULL -> fullZhuyinBuffer.toString()
+            KeyboardMode.ZHUYIN -> if (engine.hasComposing()) engine.getFullComposingZhuyin() else ""
+            else -> ""
+        }
+        if (previewText.isNotEmpty()) {
+            val currentTheme = ThemeManager.getCurrentTheme(this)
+            val themeColors = ThemeManager.getThemeColors(this, currentTheme)
+            val radiusPx = 14f * resources.displayMetrics.density
+            tvZhuyinFullPreview?.background = ThemeManager.createKeyDrawable(themeColors.actionKeyBg, themeColors.keyPressed, themeColors.stroke, radiusPx)
+            tvZhuyinFullPreview?.setTextColor(themeColors.textPrimary)
+            tvZhuyinFullPreview?.text = previewText
+            layoutZhuyinPreview?.visibility = View.VISIBLE
+        } else {
+            tvZhuyinFullPreview?.text = ""
+            layoutZhuyinPreview?.visibility = View.GONE
+        }
     }
 
     private fun updateComposingPreview() {
@@ -2767,6 +2808,8 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun clearCandidateBar() {
+        layoutZhuyinPreview?.visibility = View.GONE
+        tvZhuyinFullPreview?.text = ""
         for (tv in candidateTextViewPool) {
             tv.visibility = View.GONE
         }
