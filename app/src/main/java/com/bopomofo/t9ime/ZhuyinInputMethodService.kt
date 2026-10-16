@@ -3856,7 +3856,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                         if (initials.isNotEmpty()) combinedCandidates.addAll(initials)
                     }
                 }
-                val finalCandidates = (combinedCandidates + tailCandidates).distinctBy { it.word }.take(40)
+                val finalCandidates = (combinedCandidates + tailCandidates).distinctBy { it.word }
                 updateCandidateBar(finalCandidates)
             } else {
                 // 單音節輸入直通，零額外負擔，超輕量流暢響應
@@ -3873,9 +3873,9 @@ class ZhuyinInputMethodService : InputMethodService() {
                 val singleMatches = engine.searchFullZhuyin(singleSyllable).filter { it.word.length == 1 }
                 val homophones = if (currentSentenceStr.isNotEmpty()) engine.getHomophonesForChar(currentSentenceStr[0], singleSyllable) else emptyList()
                 val singleCandidates = (singleMatches + homophones).distinctBy { it.word }
-                (listOf(topEntry) + singleCandidates + exactWords).distinctBy { it.word }.take(40)
+                (listOf(topEntry) + singleCandidates + exactWords).distinctBy { it.word }
             } else {
-                (listOf(topEntry) + exactWords + initialWords).distinctBy { it.word }.take(40)
+                (listOf(topEntry) + exactWords + initialWords).distinctBy { it.word }
             }
             updateCandidateBar(candidates)
         } else {
