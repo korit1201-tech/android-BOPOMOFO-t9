@@ -7,6 +7,35 @@
     android:orientation="vertical"
     android:padding="4dp">
 
+    <!-- 頂部更上方：完整注音浮動預覽列（組字時展開顯示完整注音，無組字時 GONE 不佔空間） -->
+    <LinearLayout
+        android:id="@+id/layout_zhuyin_preview"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="2dp"
+        android:paddingBottom="4dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tv_zhuyin_full_preview"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_swipe_popup"
+            android:textColor="@color/kb_text_primary"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp"
+            android:elevation="2dp"
+            android:includeFontPadding="false" />
+    </LinearLayout>
+
     <!-- 頂部：候選字列與常駐符號按鈕 -->
     <LinearLayout
         android:id="@+id/layout_candidate_bar"

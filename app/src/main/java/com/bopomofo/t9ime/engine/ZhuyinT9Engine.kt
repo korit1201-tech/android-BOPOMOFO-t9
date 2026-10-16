@@ -1133,6 +1133,25 @@ class ZhuyinT9Engine(private val context: Context? = null) {
 
     fun getPossibleZhuyinCombinations(): List<String> = cachedZhuyinCombos
 
+    /**
+     * 取得當前組字序列對應之完整多字注音字串（優先使用首選詞之完整注音，無完整詞時拼接已確認音節與候選組合）
+     */
+    fun getFullComposingZhuyin(): String {
+        if (currentKeys.isEmpty()) return ""
+        val top = cachedCandidates.firstOrNull()
+        val topZhuyin = top?.zhuyin?.trim() ?: ""
+        if (confirmedSyllables.isEmpty()) {
+            if (topZhuyin.isNotEmpty()) return topZhuyin
+            return cachedZhuyinCombos.firstOrNull() ?: ""
+        }
+        val confirmed = confirmedSyllables.joinToString(" ")
+        if (topZhuyin.isNotEmpty()) {
+            return if (topZhuyin.startsWith(confirmed)) topZhuyin else "$confirmed $topZhuyin"
+        }
+        val rem = cachedZhuyinCombos.firstOrNull() ?: ""
+        return if (rem.isNotEmpty()) "$confirmed $rem" else confirmed
+    }
+
     fun getCandidates(): List<DictEntry> = cachedCandidates
 
     val currentCandidates: List<DictEntry>
