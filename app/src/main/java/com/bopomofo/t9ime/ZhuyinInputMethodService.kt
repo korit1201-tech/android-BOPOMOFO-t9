@@ -3218,6 +3218,10 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun updateCandidateBar(candidates: List<DictEntry>) {
+        if (!engine.hasComposing() && fullZhuyinBuffer.isEmpty()) {
+            layoutZhuyinPreview?.visibility = View.GONE
+            tvZhuyinFullPreview?.text = ""
+        }
         val effectiveCandidates = if (isSymbolLeadMode) {
             listOf(
                 DictEntry("【全形標點模式】", "", 999_999_999),
@@ -3712,6 +3716,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             handwritingCanvas.clearCanvas()
         }
         updateLeftZhuyinCombos()
+        updateZhuyinFullPreview()
         showNextWordPredictions(word)
     }
 

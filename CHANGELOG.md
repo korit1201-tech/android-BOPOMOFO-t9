@@ -2,6 +2,14 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.7.2] - 2026-10-16
+
+### 🧼 修正：文字確認上屏後立即清空並隱藏頂部完整注音膠囊 (Build 95)
+
+- **🧼 徹底修復膠囊殘留問題**：
+  - **原因**：字詞上屏（`commitProcessedWordWithUserDict`）並觸發後續聯想預測詞時，候選列刷新未同步重設頂部注音膠囊狀態，導致已確認送出文字後膠囊依然滯留畫面的缺陷。
+  - **修復**：在上屏完成後立即呼叫 `updateZhuyinFullPreview()` 清空文字並切換為 `GONE`；同時在 `updateCandidateBar` 注入安全保底，凡無進行中組字序列時強制隱藏膠囊，確保視覺完全乾淨俐落！
+
 ## [v2.7.1] - 2026-10-16
 
 ### 🧠 演算法核心架構修復：多音字頻率自動繼承 ＆ 聲調偏袒拔除 (Build 94)
