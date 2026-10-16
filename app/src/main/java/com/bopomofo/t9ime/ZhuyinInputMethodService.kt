@@ -182,7 +182,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     private var rootView: View? = null
     private var vibrator: Vibrator? = null
     private var cachedVibrationEnabled = true
-    private var cachedVibrationStrength = 40
+    private var cachedVibrationStrength = 5
     private var lastHapticTime = 0L
     private val hapticExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
