@@ -115,14 +115,15 @@ class CandidateRankingTest {
 
     @Test
     fun testSplitFullZhuyinAutoAndLongSentence() {
+        val engine = ZhuyinT9Engine()
+        engine.loadDictionaryForTest()
+
         // 1. 驗證 SyllableManager.splitFullZhuyinAuto 自動切分音節
         val rawZhuyin = "ㄉㄚˋㄐㄧㄚㄏㄠˇ"
         val syllables = SyllableManager.splitFullZhuyinAuto(rawZhuyin)
         assertEquals(listOf("ㄉㄚˋ", "ㄐㄧㄚ", "ㄏㄠˇ"), syllables)
 
         // 2. 驗證 engine.searchFullZhuyin 能正確透過 Viterbi 組出「大家好」
-        val engine = ZhuyinT9Engine()
-        engine.loadDictionaryForTest()
         val results = engine.searchFullZhuyin(rawZhuyin)
         assertTrue("searchFullZhuyin 搜尋結果不得為空", results.isNotEmpty())
         val topSentence = results.first().word
@@ -172,4 +173,25 @@ class CandidateRankingTest {
         assertTrue("退格後 confirmedSyllables 應回滾為空", !engine.hasConfirmedSyllables())
         assertTrue("退格後按鍵序列仍應保留", engine.getCurrentKeys() == listOf(1, 9))
     }
+
+    @Test
+    fun testPangCandidateRankingWithoutDictTampering() {
+        val engine = ZhuyinT9Engine()
+        engine.loadDictionaryForTest()
+
+        // 1. 全注音輸入「ㄆㄤ」，驗證「胖」在首屏前段（前 4 名）
+        val fullResults = engine.searchFullZhuyin("ㄆㄤ")
+        val topFullWords = fullResults.take(5).map { it.word }
+        assertTrue("全注音輸入 ㄆㄤ 首屏候選應包含 胖，實際為: $topFullWords", topFullWords.contains("胖"))
+
+        // 2. 9 鍵輸入 Key 4, 9 並鎖定「ㄆㄤ」，驗證「胖」在候選字前段（前 4 名）
+        val engine9 = ZhuyinT9Engine()
+        engine9.loadDictionaryForTest()
+        engine9.pressKey(4)
+        engine9.pressKey(9)
+        val candidates = engine9.confirmStepSyllable("ㄆㄤ")
+        val top9Words = candidates.take(5).map { it.word }
+        assertTrue("9 鍵鎖定 ㄆㄤ 候選字應包含 胖，實際為: $top9Words", top9Words.contains("胖"))
+    }
 }
+

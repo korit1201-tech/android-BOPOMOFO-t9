@@ -317,10 +317,18 @@ object SyllableManager {
                 val endIdx = nextIdx + (if (hasTone) 1 else 0)
                 val fullSyl = rawZhuyin.substring(i, endIdx)
 
-                val sylScore = Math.log(maxOf(getSyllableWeight(sylPart).toDouble(), 10.0)) - 12.0
+                val sylScore = Math.log(maxOf(getSyllableWeight(sylPart).toDouble(), 10.0))
                 val newScore = current.second + sylScore
+                val nextSylCount = current.first.size + 1
                 val existing = dp[endIdx]
-                if (existing == null || newScore > existing.second) {
+                val shouldReplace = if (existing == null) {
+                    true
+                } else if (nextSylCount != existing.first.size) {
+                    nextSylCount < existing.first.size // 音節數越少越優先
+                } else {
+                    newScore > existing.second // 同音節數時權重越高越優先
+                }
+                if (shouldReplace) {
                     dp[endIdx] = Pair(current.first + fullSyl, newScore)
                 }
             }
