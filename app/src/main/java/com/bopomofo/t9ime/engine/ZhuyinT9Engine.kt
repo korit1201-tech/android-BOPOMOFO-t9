@@ -334,6 +334,7 @@ class ZhuyinT9Engine(private val context: Context? = null) {
     ) {
         val nextWordTrack = mutableMapOf<String, HashSet<String>>()
         val initialToCharTrack = mutableMapOf<Char, HashSet<String>>()
+        val charMaxWeight = mutableMapOf<Char, Int>()
         var accumulatedWeight = 0L
         try {
             SyllableManager.resetWeights()
@@ -348,7 +349,18 @@ class ZhuyinT9Engine(private val context: Context? = null) {
 
                         val word = line.substring(0, tab1)
                         val zhuyin = line.substring(tab1 + 1, tab2)
-                        val weight = line.substring(tab2 + 1).toIntOrNull() ?: 100
+                        val rawWeight = line.substring(tab2 + 1).toIntOrNull() ?: 100
+
+                        // 多音字頻率補償：詞庫依權重降序排列，首見之讀音為該字主要頻率。
+                        // 部分口語讀音（如「胖」ㄆㄤˋ 1、「重」ㄔㄨㄥˊ 1）常被文言辭典歸為次讀音並給予極低分數(1)，
+                        // 演算法層面讓次讀音自動繼承該單字固有頻率之 75%，徹底解決現代常用口語字被罕見生僻字淹沒的問題，
+                        // 且絕不更動原始 dict_tw.txt 詞庫字典檔。
+                        val weight = if (word.length == 1) {
+                            val maxW = charMaxWeight.getOrPut(word[0]) { rawWeight }
+                            if (rawWeight < maxW * 0.75) (maxW * 0.75).toInt() else rawWeight
+                        } else {
+                            rawWeight
+                        }
 
                         val entry = DictEntry(word, zhuyin, weight)
                         targetTrie.insert(entry)
@@ -1285,7 +1297,7 @@ class ZhuyinT9Engine(private val context: Context? = null) {
                         val toneBonus = if (toneChar != null) {
                             if (u.zhuyin.contains(toneChar)) 20_000_000 else 0
                         } else {
-                            if (!u.zhuyin.any { it in "ˇˋˊ˙" }) 5_000_000 else 0
+                            0
                         }
                         singleEntries.add(DictEntry(u.word, u.zhuyin, baseWeight + toneBonus))
                     }
@@ -1300,7 +1312,7 @@ class ZhuyinT9Engine(private val context: Context? = null) {
                 val toneBonus = if (toneChar != null) {
                     if (e.zhuyin.contains(toneChar)) 20_000_000 else 0
                 } else {
-                    if (!e.zhuyin.any { it in "ˇˋˊ˙" }) 5_000_000 else 0
+                    0
                 }
                 singleEntries.add(DictEntry(e.word, e.zhuyin, baseWeight + toneBonus))
             }
