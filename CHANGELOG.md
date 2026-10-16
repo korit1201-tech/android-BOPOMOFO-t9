@@ -2,6 +2,19 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.6.8] - 2026-10-16
+
+### 🚨 緊急修復：根治雙指快打連點出字、吃字與滑動誤判 (Build 91)
+
+- **🔒 引入 `isFlushed` 狀態互斥鎖（徹底根除雙擊/重複出字 Bug）**：
+  - 過去快打時因 `flushAsTap()` 結算前一鍵後，手指離屏時 `ACTION_UP` 再次觸發 `onTapListener`，導致嚴重連點打錯字。
+  - 現在透過 `isFlushed` 嚴格防重鎖，在隨後的 `ACTION_MOVE` 與 `ACTION_UP` 中直接消費忽略，徹底消滅連擊問題。
+- **🛡️ 12 鍵注音主鍵盤嚴格長按門檻 (`allowFastFlick = false`)**：
+  - 快速打字（按鍵時間 < 200ms）時，手指劃往下一鍵的任何微小位移一律視為標準 Tap 點擊，絕不誤彈出羅盤、也絕不誤判為 Swipe 直出注音而中斷組字。
+  - 只有真正按住超過 200ms 喚起羅盤並拖曳時才允許滑動選字。
+- **⚡ 空白鍵與括號鍵保留極速輕彈 (`allowFastFlick = true`)**：
+  - 空白鍵快速滑動切換中英文維持超靈動手感。
+
 ## [v2.6.7] - 2026-10-16
 
 ### 🎯 旗艦級線性馬達微動觸覺革命與雙重震動根治 (Build 90)

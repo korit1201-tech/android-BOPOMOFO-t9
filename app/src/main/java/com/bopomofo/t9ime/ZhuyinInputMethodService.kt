@@ -1845,6 +1845,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
 
         // 2. 左側鍵（數字模式下為括號雙向滑動鍵）
+        btnQwertyToggle.allowFastFlick = true
         btnQwertyToggle.onTapListener = {
             triggerHapticFeedback()
             commitTextDirectly("()")
@@ -1922,6 +1923,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             true
         }
 
+        btnSpaceSwipe.allowFastFlick = true
         btnSpaceSwipe.transformationMethod = null
         btnSpaceSwipe.includeFontPadding = false
         btnSpaceSwipe.setLineSpacing(0f, 0.9f)

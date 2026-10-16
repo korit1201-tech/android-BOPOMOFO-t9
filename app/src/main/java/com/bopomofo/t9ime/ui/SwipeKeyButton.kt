@@ -3,20 +3,19 @@ package com.bopomofo.t9ime.ui
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewGroup
 import android.widget.PopupWindow
 import android.widget.TextView
 import com.bopomofo.t9ime.R
 import kotlin.math.abs
 
 /**
- * 支援 Tap (點擊) 與 4 方向長拉拖選 (Drag-to-select Swipe) 的自訂按鍵，
- * 內建 4 向十字指示羅盤與動態縮放高亮視覺動畫反饋。
+ * 支援高速連打 Tap (點擊) 與長按 4 方向羅盤拖選 (Hold & Drag-to-select) 的自訂按鍵
  */
 class SwipeKeyButton @JvmOverloads constructor(
     context: Context,
@@ -39,7 +38,6 @@ class SwipeKeyButton @JvmOverloads constructor(
             typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
         }
         paint.isFakeBoldText = true
-        // 停用系統 View 預設點擊震動，交由輸入法核心專屬震動引擎統一調度，杜絕按下+抬手產生的雙重微妙震動
         isHapticFeedbackEnabled = false
     }
 
@@ -53,25 +51,29 @@ class SwipeKeyButton @JvmOverloads constructor(
     var onDownAction: (() -> Unit)? = null
 
     /**
-     * 提供四方向字符映射表（由 Service 綁定，若有提供則啟用拖動視覺指示動畫）
+     * 是否允許不經長按的「快速輕彈滑動 (Fast Flick)」：
+     * - 12 鍵注音主鍵盤設為 false（防止快速連打移往下一鍵時誤觸滑動直出注音）
+     * - 空白鍵設為 true（方便快速左右滑動切換中英模式）
      */
+    var allowFastFlick: Boolean = false
+
     var swipeLabelsProvider: (() -> Map<Direction, String>)? = null
 
     private var startX = 0f
     private var startY = 0f
     private var downTime = 0L
-    private var isMoved = false
+    private var isFlushed = false
+    private var isCompassActive = false
     private var activeDirection: Direction? = null
 
     companion object {
-        private const val SWIPE_THRESHOLD_DP = 34f
-        private const val SHOW_POPUP_DELAY_MS = 220L
+        private const val SWIPE_THRESHOLD_DP = 28f
+        private const val COMPASS_HOLD_DELAY_MS = 200L
     }
 
     private val swipeThresholdPx: Float
         get() = SWIPE_THRESHOLD_DP * resources.displayMetrics.density
 
-    // 視覺預覽浮動視窗
     private var previewPopup: PopupWindow? = null
     private var popupView: View? = null
     private var tvUp: TextView? = null
@@ -80,7 +82,8 @@ class SwipeKeyButton @JvmOverloads constructor(
     private var tvRight: TextView? = null
 
     private val showPopupRunnable = Runnable {
-        if (isPressed) {
+        if (isPressed && !isFlushed) {
+            isCompassActive = true
             showPreviewPopup()
         }
     }
@@ -143,14 +146,13 @@ class SwipeKeyButton @JvmOverloads constructor(
                 val density = resources.displayMetrics.density
                 val popupSize = (132 * density).toInt()
                 val xOff = loc[0] + (width - popupSize) / 2
-                val yOff = loc[1] - popupSize - (10 * density).toInt() // 浮在按鍵上方
+                val yOff = loc[1] - popupSize - (10 * density).toInt()
 
-                // 彈入微動態動畫
                 view.scaleX = 0.85f
                 view.scaleY = 0.85f
                 view.alpha = 0f
                 popup.showAtLocation(this, Gravity.NO_GRAVITY, xOff, yOff)
-                view.animate().scaleX(1.0f).scaleY(1.0f).alpha(1.0f).setDuration(100).start()
+                view.animate().scaleX(1.0f).scaleY(1.0f).alpha(1.0f).setDuration(90).start()
             }
         } catch (_: Exception) {
         }
@@ -160,8 +162,7 @@ class SwipeKeyButton @JvmOverloads constructor(
         if (activeDirection == newDir) return
         activeDirection = newDir
 
-        // 觸覺微反饋
-        if (newDir != null) {
+        if (newDir != null && isCompassActive) {
             try {
                 performHapticFeedback(
                     android.view.HapticFeedbackConstants.KEYBOARD_TAP,
@@ -179,12 +180,12 @@ class SwipeKeyButton @JvmOverloads constructor(
                 if (isTarget) {
                     tv.setBackgroundResource(R.drawable.bg_swipe_item_active)
                     tv.setTextColor(Color.WHITE)
-                    tv.animate().scaleX(1.35f).scaleY(1.35f).alpha(1.0f).setDuration(90).start()
+                    tv.animate().scaleX(1.35f).scaleY(1.35f).alpha(1.0f).setDuration(80).start()
                 } else {
                     tv.background = null
                     val normalColor = androidx.core.content.ContextCompat.getColor(context, R.color.kb_text_primary)
                     tv.setTextColor(normalColor)
-                    tv.animate().scaleX(1.0f).scaleY(1.0f).alpha(if (newDir == null) 1.0f else 0.4f).setDuration(90).start()
+                    tv.animate().scaleX(1.0f).scaleY(1.0f).alpha(if (newDir == null) 1.0f else 0.4f).setDuration(80).start()
                 }
             }
         }
@@ -221,16 +222,18 @@ class SwipeKeyButton @JvmOverloads constructor(
             } catch (_: Exception) {
             }
         }
+        isCompassActive = false
         activeDirection = null
     }
 
     /**
-     * Flush-on-Next-Down：當下一個按鍵按下時，強制將當前按鍵結算為 Tap，杜絕雙手快打時序顛倒
+     * Flush-on-Next-Down：當下一顆按鍵按下時，若此鍵尚未放開，強制提前結算為一次 Tap，
+     * 並鎖定 isFlushed = true 防止後續 ACTION_UP 重複觸發第二次 Tap！
      */
     fun flushAsTap() {
-        if (isPressed) {
+        if (isPressed && !isFlushed) {
+            isFlushed = true
             isPressed = false
-            removeCallbacks(showPopupRunnable)
             dismissPreviewPopup()
             performClick()
             onTapListener?.invoke()
@@ -242,80 +245,78 @@ class SwipeKeyButton @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 startX = event.x
                 startY = event.y
-                downTime = System.currentTimeMillis()
-                isMoved = false
+                downTime = SystemClock.uptimeMillis()
+                isFlushed = false
+                isCompassActive = false
                 activeDirection = null
                 isPressed = true
 
-                // 防止父容器偷取觸控事件
                 parent?.requestDisallowInterceptTouchEvent(true)
-
-                // 通知 Service 執行即時震動反饋與 flush 前一鍵
                 onDownAction?.invoke()
 
-                // 長按 220ms 展開十字指南針預覽（快速敲擊 <220ms 絕不喚起彈窗）
                 removeCallbacks(showPopupRunnable)
-                postDelayed(showPopupRunnable, SHOW_POPUP_DELAY_MS)
+                postDelayed(showPopupRunnable, COMPASS_HOLD_DELAY_MS)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
+                if (isFlushed) return true
+
                 val dx = event.x - startX
                 val dy = event.y - startY
                 val absDx = abs(dx)
                 val absDy = abs(dy)
                 val threshold = swipeThresholdPx
 
-                // 必須位移超過門檻，且主軸大於次軸 1.35 倍（過濾斜向模糊移動），才判定為有效方向
-                val isDominantX = absDx > absDy * 1.35f
-                val isDominantY = absDy > absDx * 1.35f
-
-                if ((absDx > threshold || absDy > threshold) && (isDominantX || isDominantY)) {
-                    isMoved = true
-                    if (previewPopup == null || previewPopup?.isShowing == false) {
-                        showPreviewPopup()
-                    }
-                    val dir = if (isDominantX) {
-                        if (dx > 0) Direction.RIGHT else Direction.LEFT
-                    } else {
-                        if (dy > 0) Direction.DOWN else Direction.UP
-                    }
-                    updateActiveDirection(dir)
-                } else {
-                    updateActiveDirection(null)
+                // 只有在「已長按超過 200ms 喚起羅盤 (isCompassActive)」或「允許快速輕彈 (allowFastFlick)」時，才計算滑動方向
+                val holdElapsed = SystemClock.uptimeMillis() - downTime
+                if (holdElapsed >= COMPASS_HOLD_DELAY_MS && !isCompassActive) {
+                    isCompassActive = true
+                    showPreviewPopup()
                 }
+
+                if (isCompassActive || allowFastFlick) {
+                    val isDominantX = absDx > absDy * 1.25f
+                    val isDominantY = absDy > absDx * 1.25f
+                    if ((absDx > threshold || absDy > threshold) && (isDominantX || isDominantY)) {
+                        val dir = if (isDominantX) {
+                            if (dx > 0) Direction.RIGHT else Direction.LEFT
+                        } else {
+                            if (dy > 0) Direction.DOWN else Direction.UP
+                        }
+                        updateActiveDirection(dir)
+                    } else {
+                        updateActiveDirection(null)
+                    }
+                }
+                return true
             }
             MotionEvent.ACTION_UP -> {
-                isPressed = false
                 removeCallbacks(showPopupRunnable)
+                if (isFlushed) {
+                    isPressed = false
+                    dismissPreviewPopup()
+                    return true
+                }
+                isPressed = false
+
                 val selectedDir = activeDirection
-                val duration = System.currentTimeMillis() - downTime
-                val dx = event.x - startX
-                val dy = event.y - startY
-                val dist = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
-                val density = resources.displayMetrics.density
-                val distDp = dist / density
-                val velocity = distDp / maxOf(duration, 1L)
+                val wasCompass = isCompassActive
+                dismissPreviewPopup()
 
-                // 判定是否為真實滑動：
-                // 1. 已鎖定方向且手指停留超時 (>180ms) 拖選
-                // 2. 或快速短促且速度極高的輕彈 (Flick, velocity > 0.32 dp/ms)
-                val isLegitimateSwipe = selectedDir != null && (duration >= 180L || velocity > 0.32f)
-
-                if (isLegitimateSwipe && selectedDir != null) {
+                // 若羅盤已展開且選中方向，或為允許快速滑動的按鈕（如空白鍵）且已滑出方向，則觸發 Swipe
+                if (selectedDir != null && (wasCompass || allowFastFlick)) {
                     onSwipeListener?.invoke(selectedDir)
                 } else {
                     performClick()
                     onTapListener?.invoke()
                 }
-
-                // 立即關閉視覺預覽浮層
-                dismissPreviewPopup()
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
                 isPressed = false
-                removeCallbacks(showPopupRunnable)
+                isFlushed = false
                 dismissPreviewPopup()
+                return true
             }
         }
         return super.onTouchEvent(event)
@@ -328,11 +329,7 @@ class SwipeKeyButton @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        removeCallbacks(showPopupRunnable)
-        try {
-            previewPopup?.dismiss()
-        } catch (_: Exception) {
-        }
+        dismissPreviewPopup()
         previewPopup = null
         popupView = null
     }
