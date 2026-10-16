@@ -603,8 +603,12 @@ class ZhuyinInputMethodService : InputMethodService() {
     /**
      * 觸發多級細緻按鍵震動反饋（依據輸入法設定的開關與強度，細分普通按鍵、確認上屏、退格刪除、模式切換等波形）
      */
+    /**
+     * 觸發旗艦級細緻按鍵觸覺反饋 (Crisp Haptic Feedback)：
+     * 1. Android 10+ (API 29+) 優先使用系統硬體預定義脈衝 (EFFECT_CLICK / EFFECT_TICK)，直接驅動 X 軸線性馬達，手感爽脆乾淨如敲擊微動開關
+     * 2. 備用與自訂模式採用 4ms 極致超短脈衝，徹底消除以前 20ms 以上產生的「嗡嗡拖尾、黏手發麻感」
+     */
     private fun triggerHapticFeedback(type: HapticType = HapticType.KEY_PRESS) {
-        // 使用者觸摸螢幕按鍵時，立刻確保恢復觸控模式
         if (isHardwareKeyboardConnected) {
             isHardwareKeyboardConnected = false
             updateHardwareKeyboardState()
@@ -612,45 +616,32 @@ class ZhuyinInputMethodService : InputMethodService() {
         try {
             if (!cachedVibrationEnabled) return
 
-            val baseStrength = cachedVibrationStrength
-
-            if (vibrator != null && vibrator?.hasVibrator() == true) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val vib = vibrator
+            if (vib != null && vib.hasVibrator()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    // API 29+ 旗艦線性馬達原生短脈衝（與 Gboard、iOS 同源的純粹敲擊感）
                     val effect = when (type) {
-                        HapticType.KEY_PRESS -> {
-                            val durationMs = (baseStrength * 0.7f).toLong().coerceAtLeast(6L)
-                            val amplitude = ((baseStrength / 100f) * 180).toInt().coerceIn(1, 255)
-                            VibrationEffect.createOneShot(durationMs, amplitude)
-                        }
-                        HapticType.COMMIT -> {
-                            // 雙脈衝確認震動 (12ms 震, 35ms 停, 18ms 震)
-                            val timings = longArrayOf(0, 12, 35, 18)
-                            val amplitudes = intArrayOf(
-                                0,
-                                ((baseStrength / 100f) * 200).toInt().coerceIn(1, 255),
-                                0,
-                                ((baseStrength / 100f) * 255).toInt().coerceIn(1, 255)
-                            )
-                            VibrationEffect.createWaveform(timings, amplitudes, -1)
-                        }
-                        HapticType.DELETE -> {
-                            val durationMs = (baseStrength * 0.9f).toLong().coerceAtLeast(10L)
-                            val amplitude = ((baseStrength / 100f) * 230).toInt().coerceIn(1, 255)
-                            VibrationEffect.createOneShot(durationMs, amplitude)
-                        }
-                        HapticType.MODE_SWITCH -> {
-                            val durationMs = (baseStrength * 1.1f).toLong().coerceAtLeast(14L)
-                            val amplitude = ((baseStrength / 100f) * 220).toInt().coerceIn(1, 255)
-                            VibrationEffect.createOneShot(durationMs, amplitude)
-                        }
-                        HapticType.REPEAT_DELETE -> {
-                            VibrationEffect.createOneShot(8L, ((baseStrength / 100f) * 120).toInt().coerceIn(1, 255))
-                        }
+                        HapticType.KEY_PRESS -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+                        HapticType.COMMIT -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+                        HapticType.DELETE, HapticType.REPEAT_DELETE -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
+                        HapticType.MODE_SWITCH -> VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK)
                     }
-                    vibrator?.vibrate(effect)
+                    vib.vibrate(effect)
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val baseStrength = cachedVibrationStrength
+                    // 極致短促 4~6ms，杜絕任何蜂鳴器式拖尾
+                    val durationMs = when (type) {
+                        HapticType.KEY_PRESS -> 4L
+                        HapticType.COMMIT -> 6L
+                        HapticType.DELETE, HapticType.REPEAT_DELETE -> 3L
+                        HapticType.MODE_SWITCH -> 7L
+                    }
+                    val amplitude = ((baseStrength / 100f) * 190).toInt().coerceIn(35, 255)
+                    val effect = VibrationEffect.createOneShot(durationMs, amplitude)
+                    vib.vibrate(effect)
                 } else {
                     @Suppress("DEPRECATION")
-                    vibrator?.vibrate(baseStrength.toLong())
+                    vib.vibrate(5L)
                 }
             } else {
                 val constant = when (type) {
@@ -658,7 +649,10 @@ class ZhuyinInputMethodService : InputMethodService() {
                     HapticType.DELETE, HapticType.REPEAT_DELETE -> HapticFeedbackConstants.KEYBOARD_RELEASE
                     else -> HapticFeedbackConstants.KEYBOARD_TAP
                 }
-                rootView?.performHapticFeedback(constant)
+                rootView?.performHapticFeedback(
+                    constant,
+                    HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+                )
             }
         } catch (_: Exception) {
             // 忽略非致命震動異常
@@ -2523,7 +2517,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun performBackspace() {
-        triggerHapticFeedback()
+        triggerHapticFeedback(if (isRepeatingBackspace) HapticType.REPEAT_DELETE else HapticType.DELETE)
         lastUserTypingTime = SystemClock.uptimeMillis()
         dismissHomophonePopup()
         if (isHomophoneSelectionMode) {
