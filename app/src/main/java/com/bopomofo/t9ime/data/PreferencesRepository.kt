@@ -27,8 +27,8 @@ object PreferencesRepository {
 
     // 預設值
     const val DEFAULT_VIBRATION_ENABLED = true
-    const val DEFAULT_VIBRATION_STRENGTH = 30
-    const val DEFAULT_VIBRATION_MS = 25
+    const val DEFAULT_VIBRATION_STRENGTH = 5
+    const val DEFAULT_VIBRATION_MS = 5
     const val DEFAULT_KEYBOARD_HEIGHT_DP = 240
     const val DEFAULT_KEYBOARD_HEIGHT_LANDSCAPE_DP = 115
     const val DEFAULT_ONE_HANDED_MODE = "full"

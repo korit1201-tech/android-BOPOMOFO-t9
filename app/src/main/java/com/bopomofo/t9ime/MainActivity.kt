@@ -9,6 +9,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import com.bopomofo.t9ime.data.PreferencesRepository
 import com.bopomofo.t9ime.engine.UserDictionaryManager
 
 /**
@@ -150,14 +151,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupVibrationSettings() {
-        val prefs = getSharedPreferences("ime_prefs", MODE_PRIVATE)
         val switchVib = findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switch_vibration)
         val layoutStrength = findViewById<android.view.View>(R.id.layout_vibration_strength)
         val seekbarStrength = findViewById<android.widget.SeekBar>(R.id.seekbar_vibration_strength)
         val tvStrengthVal = findViewById<TextView>(R.id.tv_vibration_strength_val)
 
-        val isEnabled = prefs.getBoolean("pref_vibration_enabled", true)
-        val savedStrength = prefs.getInt("pref_vibration_strength", 30).coerceIn(5, 100)
+        val isEnabled = PreferencesRepository.isVibrationEnabled(this)
+        val savedStrength = PreferencesRepository.getVibrationStrength(this).coerceIn(5, 100)
 
         switchVib?.isChecked = isEnabled
         layoutStrength?.visibility = if (isEnabled) android.view.View.VISIBLE else android.view.View.GONE
@@ -190,10 +190,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         switchVib?.setOnCheckedChangeListener { _, isChecked ->
-            prefs.edit().putBoolean("pref_vibration_enabled", isChecked).apply()
+            PreferencesRepository.setVibrationEnabled(this, isChecked)
             layoutStrength?.visibility = if (isChecked) android.view.View.VISIBLE else android.view.View.GONE
             if (isChecked) {
-                testVibrate(seekbarStrength?.progress ?: 30)
+                testVibrate(seekbarStrength?.progress ?: 5)
             }
         }
 
@@ -202,15 +202,15 @@ class MainActivity : AppCompatActivity() {
                 val strength = progress.coerceIn(5, 100)
                 tvStrengthVal?.text = "$strength ms"
                 if (fromUser) {
-                    prefs.edit().putInt("pref_vibration_strength", strength).apply()
+                    PreferencesRepository.setVibrationStrength(this@MainActivity, strength)
                     testVibrate(strength)
                 }
             }
 
             override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {
-                val strength = (seekBar?.progress ?: 30).coerceIn(5, 100)
-                prefs.edit().putInt("pref_vibration_strength", strength).apply()
+                val strength = (seekBar?.progress ?: 5).coerceIn(5, 100)
+                PreferencesRepository.setVibrationStrength(this@MainActivity, strength)
                 testVibrate(strength)
             }
         })
