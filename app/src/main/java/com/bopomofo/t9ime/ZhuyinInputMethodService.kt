@@ -129,7 +129,6 @@ class ZhuyinInputMethodService : InputMethodService() {
     private lateinit var containerZhuyinCombos: LinearLayout
     private val candidateTextViewPool = ArrayList<TextView>()
     private val comboButtonPool = ArrayList<Button>()
-    private var pendingDownButton: SwipeKeyButton? = null
 
     // 底線候選文字同音字/同拼法逐字替換狀態 (1.6.5)
     private var isHomophoneSelectionMode = false
@@ -1039,6 +1038,10 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun setup12KeyLayout(root: View) {
+        // 顯式開啟主鍵盤容器與 12 鍵區之多點觸控分割 (Multi-touch Split)，確保雙手極速交替跨鍵敲擊不丟失 Pointer
+        root.findViewById<ViewGroup>(R.id.layout_main_frame)?.isMotionEventSplittingEnabled = true
+        root.findViewById<ViewGroup>(R.id.layout_12key)?.isMotionEventSplittingEnabled = true
+
         val keyIds = listOf(
             R.id.key_k1 to 1, R.id.key_k2 to 2, R.id.key_k3 to 3,
             R.id.key_k4 to 4, R.id.key_k5 to 5, R.id.key_k6 to 6,
@@ -1048,19 +1051,13 @@ class ZhuyinInputMethodService : InputMethodService() {
 
         for ((viewId, keyNum) in keyIds) {
             val btn = root.findViewById<SwipeKeyButton>(viewId) ?: continue
+            // 確保每一橫行 LinearLayout 與中間容器皆具備 Multi-touch Split 能力
+            (btn.parent as? ViewGroup)?.isMotionEventSplittingEnabled = true
+            ((btn.parent as? ViewGroup)?.parent as? ViewGroup)?.isMotionEventSplittingEnabled = true
 
-            btn.onDownAction = {
-                // Flush-on-Next-Down：新鍵按下瞬間，強制結算未完成的前一鍵，根治快打時序顛倒
-                if (pendingDownButton != null && pendingDownButton != btn) {
-                    pendingDownButton?.flushAsTap()
-                }
-                pendingDownButton = btn
-                // 接觸螢幕瞬間 (ACTION_DOWN) 即刻發出物理反饋 (0ms 零延遲)
-                triggerHapticFeedback(HapticType.KEY_PRESS)
-            }
-
+            // 0ms Press-to-Input：接觸螢幕 (ACTION_DOWN / ACTION_POINTER_DOWN) 即刻結算，時序 100% 嚴格對齊物理接觸順序
             btn.onTapListener = {
-                if (pendingDownButton == btn) pendingDownButton = null
+                triggerHapticFeedback(HapticType.KEY_PRESS)
                 lastUserTypingTime = SystemClock.uptimeMillis()
                 dismissHomophonePopup()
                 when (currentMode) {
@@ -1087,13 +1084,20 @@ class ZhuyinInputMethodService : InputMethodService() {
                 }
             }
 
+            // 羅盤長按拖選 (Hold >= 200ms & Swipe)：若確認選中注音，自動回滾剛才 0ms DOWN 預按下的該鍵，並無縫上屏滑動注音
             btn.onSwipeListener = { direction ->
-                if (pendingDownButton == btn) pendingDownButton = null
                 triggerHapticFeedback(HapticType.KEY_PRESS)
                 lastUserTypingTime = SystemClock.uptimeMillis()
                 dismissHomophonePopup()
                 when (currentMode) {
                     KeyboardMode.ZHUYIN -> {
+                        if (engine.hasComposing()) {
+                            val candidates = engine.backspace()
+                            refreshUI(candidates)
+                            if (!engine.hasComposing()) {
+                                clearCandidateBar()
+                            }
+                        }
                         val zhuyin = getSwipeZhuyin(keyNum, direction)
                         if (zhuyin != null) commitTextDirectly(zhuyin.toString())
                     }

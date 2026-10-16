@@ -62,7 +62,6 @@ class SwipeKeyButton @JvmOverloads constructor(
     private var startX = 0f
     private var startY = 0f
     private var downTime = 0L
-    private var isFlushed = false
     private var isCompassActive = false
     private var activeDirection: Direction? = null
 
@@ -82,7 +81,7 @@ class SwipeKeyButton @JvmOverloads constructor(
     private var tvRight: TextView? = null
 
     private val showPopupRunnable = Runnable {
-        if (isPressed && !isFlushed) {
+        if (isPressed) {
             isCompassActive = true
             showPreviewPopup()
         }
@@ -226,48 +225,50 @@ class SwipeKeyButton @JvmOverloads constructor(
         activeDirection = null
     }
 
-    /**
-     * Flush-on-Next-Down：當下一顆按鍵按下時，若此鍵尚未放開，強制提前結算為一次 Tap，
-     * 並鎖定 isFlushed = true 防止後續 ACTION_UP 重複觸發第二次 Tap！
-     */
-    fun flushAsTap() {
-        if (isPressed && !isFlushed) {
-            isFlushed = true
-            isPressed = false
-            dismissPreviewPopup()
-            performClick()
-            onTapListener?.invoke()
-        }
-    }
-
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 startX = event.x
                 startY = event.y
                 downTime = SystemClock.uptimeMillis()
-                isFlushed = false
                 isCompassActive = false
                 activeDirection = null
                 isPressed = true
 
-                parent?.requestDisallowInterceptTouchEvent(true)
                 onDownAction?.invoke()
+
+                if (!allowFastFlick) {
+                    // 12 鍵主鍵盤 (T9 Mode)：0ms 接觸即刻送出 Tap 結算，時序由物理接觸螢幕順序嚴格鎖定！
+                    performClick()
+                    onTapListener?.invoke()
+                }
+
+                removeCallbacks(showPopupRunnable)
+                postDelayed(showPopupRunnable, COMPASS_HOLD_DELAY_MS)
+                return true
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                val index = event.actionIndex
+                startX = event.getX(index)
+                startY = event.getY(index)
+                downTime = SystemClock.uptimeMillis()
+                isCompassActive = false
+                activeDirection = null
+                isPressed = true
+
+                onDownAction?.invoke()
+
+                if (!allowFastFlick) {
+                    // 同鍵多點觸控/雙指極速連打：第二指落在同鍵瞬間，0ms 立即觸發新一擊，絕不吞鍵！
+                    performClick()
+                    onTapListener?.invoke()
+                }
 
                 removeCallbacks(showPopupRunnable)
                 postDelayed(showPopupRunnable, COMPASS_HOLD_DELAY_MS)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                if (isFlushed) return true
-
-                val dx = event.x - startX
-                val dy = event.y - startY
-                val absDx = abs(dx)
-                val absDy = abs(dy)
-                val threshold = swipeThresholdPx
-
-                // 只有在「已長按超過 200ms 喚起羅盤 (isCompassActive)」或「允許快速輕彈 (allowFastFlick)」時，才計算滑動方向
                 val holdElapsed = SystemClock.uptimeMillis() - downTime
                 if (holdElapsed >= COMPASS_HOLD_DELAY_MS && !isCompassActive) {
                     isCompassActive = true
@@ -275,6 +276,12 @@ class SwipeKeyButton @JvmOverloads constructor(
                 }
 
                 if (isCompassActive || allowFastFlick) {
+                    val dx = event.x - startX
+                    val dy = event.y - startY
+                    val absDx = abs(dx)
+                    val absDy = abs(dy)
+                    val threshold = swipeThresholdPx
+
                     val isDominantX = absDx > absDy * 1.25f
                     val isDominantY = absDy > absDx * 1.25f
                     if ((absDx > threshold || absDy > threshold) && (isDominantX || isDominantY)) {
@@ -290,31 +297,30 @@ class SwipeKeyButton @JvmOverloads constructor(
                 }
                 return true
             }
+            MotionEvent.ACTION_POINTER_UP -> {
+                return true
+            }
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(showPopupRunnable)
-                if (isFlushed) {
-                    isPressed = false
-                    dismissPreviewPopup()
-                    return true
-                }
                 isPressed = false
 
                 val selectedDir = activeDirection
                 val wasCompass = isCompassActive
                 dismissPreviewPopup()
 
-                // 若羅盤已展開且選中方向，或為允許快速滑動的按鈕（如空白鍵）且已滑出方向，則觸發 Swipe
+                // 若羅盤已展開且選中方向，或為允許快速輕彈滑動的按鈕（如空白鍵）且已劃出方向，則觸發 Swipe
                 if (selectedDir != null && (wasCompass || allowFastFlick)) {
                     onSwipeListener?.invoke(selectedDir)
-                } else {
+                } else if (allowFastFlick) {
+                    // 僅允許快速滑動的按鈕（如空白鍵）在 UP 結算 Tap
                     performClick()
                     onTapListener?.invoke()
                 }
+                // 注：若 allowFastFlick == false，Tap 已在 ACTION_DOWN / ACTION_POINTER_DOWN 即刻完成，UP 無需重複觸發
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
                 isPressed = false
-                isFlushed = false
                 dismissPreviewPopup()
                 return true
             }
