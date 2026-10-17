@@ -4565,30 +4565,46 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private var isPhysicalShiftPressed = false
     private var isPhysicalSelecting = false
+    private var backHandledInDown = false
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        // 0. 返回鍵 (Back Key) 優先處理：嚴禁呼叫 requestShowSelf，徹底解決瀏覽器返回鍵失效或重複彈出鍵盤問題
+        // 0. 返回鍵 (Back Key) 優先處理：嚴格優先關閉輸入法/面板，徹底消費事件，絕不洩漏導致網頁或介面返回上一頁
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             if (isCustomWordBuilderOpen) {
                 closeCustomWordBuilder()
+                backHandledInDown = true
                 return true
             }
             if (isCandidateGridOpen) {
                 closeCandidateGrid()
+                backHandledInDown = true
+                return true
+            }
+            if (isHomophoneSelectionMode) {
+                exitHomophoneSelectionMode()
+                backHandledInDown = true
                 return true
             }
             if (isSentenceSelecting) {
                 sentenceCursor = composingSentence.length
                 isSentenceSelecting = false
                 updateComposingDisplay()
+                backHandledInDown = true
                 return true
             }
             if (fullZhuyinBuffer.isNotEmpty() || composingSentence.isNotEmpty() || engine.hasComposing()) {
                 cancelComposing()
+                requestHideSelf(0)
+                backHandledInDown = true
                 return true
             }
-            // 無組字中：直接收起虛擬鍵盤，並放行由系統處理返回上一頁
-            requestHideSelf(0)
+            // 軟體鍵盤顯示時：按下返回鍵優先收起鍵盤並消費事件，絕不可放行給系統以防網頁/App跳轉上一頁
+            if (isInputViewShown) {
+                requestHideSelf(0)
+                backHandledInDown = true
+                return true
+            }
+            backHandledInDown = false
             return super.onKeyDown(keyCode, event)
         }
 
@@ -4848,6 +4864,12 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (backHandledInDown || isInputViewShown) {
+                backHandledInDown = false
+                return true
+            }
+        }
         // Shift 單按一秒切換中英文（PC 經典體驗，支援 9 鍵與 41 鍵全鍵盤）
         if (keyCode == KeyEvent.KEYCODE_SHIFT_LEFT || keyCode == KeyEvent.KEYCODE_SHIFT_RIGHT) {
             if (isPhysicalShiftPressed && !event.isCanceled) {
