@@ -805,6 +805,105 @@
             </ScrollView>
         </LinearLayout>
 
+        <!-- 7. 自建自有詞編輯面板 (Custom Word Builder) -->
+        <LinearLayout
+            android:id="@+id/layout_custom_word_builder"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/kb_bg"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <!-- 頂部控制列：標題、確認按鈕與取消按鈕 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:background="@color/kb_action_key_bg"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="10dp"
+                android:paddingEnd="4dp">
+
+                <TextView
+                    android:id="@+id/tv_word_builder_title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="💡 自建自有詞（點選字元改字）"
+                    android:textColor="@color/kb_text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btn_word_builder_confirm"
+                    style="?android:attr/borderlessButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:background="@drawable/bg_key_action"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="✔ 建立自有詞"
+                    android:textColor="@color/kb_accent"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btn_word_builder_cancel"
+                    style="?android:attr/borderlessButtonStyle"
+                    android:layout_width="38dp"
+                    android:layout_height="match_parent"
+                    android:text="✕"
+                    android:textColor="@color/kb_text_secondary"
+                    android:textSize="16sp" />
+            </LinearLayout>
+
+            <!-- 詞條字元卡片列（使用者點選哪一個字，就切換改哪一個字） -->
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:background="@color/kb_candidate_bg"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/container_word_builder_chars"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp" />
+            </HorizontalScrollView>
+
+            <!-- 提示字樣 -->
+            <TextView
+                android:id="@+id/tv_word_builder_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="12dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="2dp"
+                android:text="請點選下方同音字替換："
+                android:textColor="@color/kb_text_secondary"
+                android:textSize="12sp" />
+
+            <!-- 同音字備選滾動列 -->
+            <ScrollView
+                android:id="@+id/scroll_word_builder_homophones"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:fadingEdgeLength="16dp"
+                android:requiresFadingEdge="vertical">
+
+                <LinearLayout
+                    android:id="@+id/container_word_builder_homophones"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="6dp" />
+            </ScrollView>
+        </LinearLayout>
+
     </FrameLayout>
 
     <!-- 底部功能與控制欄 (123, 括號/模式切換, 逗號, 空格/語言滑動, 句號, 模式樞紐) -->

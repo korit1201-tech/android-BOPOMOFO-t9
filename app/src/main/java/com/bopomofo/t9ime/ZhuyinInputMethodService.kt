@@ -218,6 +218,17 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private var lastUserTypingTime: Long = 0L
     private var activeHomophonePopup: android.widget.PopupMenu? = null
+    private var layoutCustomWordBuilder: LinearLayout? = null
+    private var btnWordBuilderConfirm: Button? = null
+    private var btnWordBuilderCancel: Button? = null
+    private var containerWordBuilderChars: LinearLayout? = null
+    private var tvWordBuilderHint: TextView? = null
+    private var containerWordBuilderHomophones: LinearLayout? = null
+    private var isCustomWordBuilderOpen: Boolean = false
+    private var editingCustomWordEntry: DictEntry? = null
+    private val editingCustomWordChars = mutableListOf<String>()
+    private val editingCustomWordSyllables = mutableListOf<String>()
+    private var editingSelectedCharIndex: Int = 0
     private var clipListener: android.content.ClipboardManager.OnPrimaryClipChangedListener? = null
 
     fun isCurrentInputPassword(): Boolean {
@@ -1028,6 +1039,19 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
         btnCandidateGridClose?.setOnClickListener {
             closeCandidateGrid()
+        }
+
+        // 自建自有詞編輯面板 (Custom Word Builder) 綁定
+        layoutCustomWordBuilder = root.findViewById(R.id.layout_custom_word_builder)
+        btnWordBuilderConfirm = root.findViewById(R.id.btn_word_builder_confirm)
+        btnWordBuilderCancel = root.findViewById(R.id.btn_word_builder_cancel)
+        containerWordBuilderChars = root.findViewById(R.id.container_word_builder_chars)
+        tvWordBuilderHint = root.findViewById(R.id.tv_word_builder_hint)
+        containerWordBuilderHomophones = root.findViewById(R.id.container_word_builder_homophones)
+
+        btnWordBuilderCancel?.setOnClickListener {
+            triggerHapticFeedback()
+            closeCustomWordBuilder()
         }
 
         try {
@@ -3424,7 +3448,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                     return@setOnLongClickListener true
                 }
                 triggerHapticFeedback(HapticType.MODE_SWITCH)
-                showCandidateLongClickMenu(it, entry)
+                openCustomWordBuilder(entry)
                 true
             }
 
@@ -3452,155 +3476,204 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     /**
-     * 候選字詞長按改字選單：
-     * 1. 單字：一鍵彈出同音字選單，選取後直接替換上屏並學習至使用者詞庫
-     * 2. 多字詞：彈出同音詞及「逐字改字」選項，讓使用者能精準修改詞中任何字
+     * 自建自有詞編輯模式：
+     * 長按任意候選詞進入。支援：
+     * 1. 逐字切換修改（點選第 1 字、第 2 字、第 3 字... 換同音字）
+     * 2. 保留原系統詞典完整性，絕不破壞原詞條
+     * 3. 點選【✔ 建立自有詞】後，將新詞 + 注音以置頂權重 (50,000,000) 存入個人詞庫（learnWord）
+     * 4. 立即上屏並智慧消費對應按鍵序列
      */
-    private fun showCandidateLongClickMenu(anchor: View, originalEntry: DictEntry) {
-        if (originalEntry.word.startsWith("✔")) {
-            exitHomophoneSelectionMode()
-            return
+    private fun openCustomWordBuilder(entry: DictEntry) {
+        val word = entry.word.filter { it != '✔' && it != ' ' }
+        if (word.isEmpty()) return
+
+        // 關閉候選格柵與符號抽屜，防止介面重疊
+        closeCandidateGrid()
+        if (::layoutSymbolPanel.isInitialized) {
+            layoutSymbolPanel.visibility = View.GONE
         }
-
-        // 單字處理
-        if (originalEntry.word.length == 1) {
-            showSingleCharHomophonePopup(anchor, originalEntry)
-            return
-        }
-
-        // 多字詞處理
-        showMultiCharHomophonePopup(anchor, originalEntry)
-    }
-
-    private fun showSingleCharHomophonePopup(
-        anchor: View,
-        originalEntry: DictEntry,
-        onCharSelected: ((String) -> Unit)? = null
-    ) {
-        val targetChar = originalEntry.word[0]
-        val prefZhuyin = originalEntry.zhuyin.ifEmpty { null }
-        val homophones = engine.getHomophonesForChar(targetChar, prefZhuyin)
-
         dismissHomophonePopup()
-        val popup = android.widget.PopupMenu(this, anchor)
-        activeHomophonePopup = popup
 
-        val displayOriginal = if (isSimplified) ChineseConverter.toSimplified(originalEntry.word) else originalEntry.word
-        popup.menu.add(0, 0, 0, "✔ $displayOriginal（保持）")
+        editingCustomWordEntry = entry
+        editingCustomWordChars.clear()
+        editingCustomWordChars.addAll(word.map { it.toString() })
 
-        val targetList = homophones.filter { it.word != originalEntry.word }
-        for ((index, homo) in targetList.withIndex()) {
-            val displayWord = if (isSimplified) ChineseConverter.toSimplified(homo.word) else homo.word
-            val zy = if (homo.zhuyin.isNotEmpty()) " (${homo.zhuyin})" else ""
-            popup.menu.add(0, index + 1, index + 1, "$displayWord$zy")
-        }
-
-        popup.setOnMenuItemClickListener { menuItem ->
-            triggerHapticFeedback(HapticType.COMMIT)
-            val chosen = if (menuItem.itemId == 0) originalEntry else {
-                val idx = menuItem.itemId - 1
-                if (idx in targetList.indices) targetList[idx] else originalEntry
-            }
-
-            if (onCharSelected != null) {
-                onCharSelected(chosen.word)
-            } else if (isHomophoneSelectionMode) {
-                applyHomophoneReplacement(chosen)
+        // 依詞長解析各字對應的注音音節
+        val rawZhuyin = entry.zhuyin
+        val splitSyllables = com.bopomofo.t9ime.engine.SyllableManager.splitFullZhuyin(rawZhuyin, word.length)
+        editingCustomWordSyllables.clear()
+        if (splitSyllables != null && splitSyllables.size == word.length) {
+            editingCustomWordSyllables.addAll(splitSyllables)
+        } else if (rawZhuyin.contains(" ")) {
+            val parts = rawZhuyin.split(" ").filter { it.isNotEmpty() }
+            if (parts.size == word.length) {
+                editingCustomWordSyllables.addAll(parts)
             } else {
-                val entryToSelect = if (chosen.consumedKeys == 0 && originalEntry.consumedKeys > 0) {
-                    chosen.copy(consumedKeys = originalEntry.consumedKeys)
-                } else {
-                    chosen
-                }
-                selectCandidate(entryToSelect)
+                editingCustomWordSyllables.addAll(word.map { engine.getZhuyinForChar(it) })
             }
-            true
+        } else {
+            editingCustomWordSyllables.addAll(word.map { engine.getZhuyinForChar(it) })
         }
-        popup.setOnDismissListener {
-            if (activeHomophonePopup === popup) {
-                activeHomophonePopup = null
-            }
+
+        editingSelectedCharIndex = 0
+        isCustomWordBuilderOpen = true
+        layoutCustomWordBuilder?.visibility = View.VISIBLE
+
+        renderWordBuilderChars()
+        renderWordBuilderHomophones()
+
+        btnWordBuilderConfirm?.setOnClickListener {
+            triggerHapticFeedback(HapticType.COMMIT)
+            confirmCustomWordAndCommit()
         }
-        try {
-            popup.show()
-        } catch (_: Exception) {}
     }
 
-    private fun showMultiCharHomophonePopup(anchor: View, originalEntry: DictEntry) {
-        val homophones = engine.getHomophonesFor(originalEntry)
-        dismissHomophonePopup()
-        val popup = android.widget.PopupMenu(this, anchor)
-        activeHomophonePopup = popup
+    private fun closeCustomWordBuilder() {
+        isCustomWordBuilderOpen = false
+        layoutCustomWordBuilder?.visibility = View.GONE
+        editingCustomWordEntry = null
+        editingCustomWordChars.clear()
+        editingCustomWordSyllables.clear()
+        editingSelectedCharIndex = 0
+    }
 
-        val displayOriginal = if (isSimplified) ChineseConverter.toSimplified(originalEntry.word) else originalEntry.word
-        popup.menu.add(0, 0, 0, "✔ $displayOriginal（保持）")
+    private fun renderWordBuilderChars() {
+        val container = containerWordBuilderChars ?: return
+        container.removeAllViews()
 
-        var itemIdCounter = 1
-        val homoItemMap = mutableMapOf<Int, DictEntry>()
-        val charEditMap = mutableMapOf<Int, Int>() // menuItemId -> charIndex in word
+        val density = resources.displayMetrics.density
+        for (i in editingCustomWordChars.indices) {
+            val charStr = editingCustomWordChars[i]
+            val syl = editingCustomWordSyllables.getOrNull(i) ?: ""
+            val isSelected = (i == editingSelectedCharIndex)
 
-        // 1. 同音詞選項
-        for (homo in homophones) {
-            val id = itemIdCounter++
-            homoItemMap[id] = homo
-            val displayWord = if (isSimplified) ChineseConverter.toSimplified(homo.word) else homo.word
-            popup.menu.add(0, id, id, "同音詞：$displayWord")
-        }
-
-        // 2. 逐字改字選項
-        for ((charIdx, ch) in originalEntry.word.withIndex()) {
-            val id = itemIdCounter++
-            charEditMap[id] = charIdx
-            val displayCh = if (isSimplified) ChineseConverter.toSimplified(ch.toString()) else ch.toString()
-            popup.menu.add(1, id, id, "✎ 改第 ${charIdx + 1} 字【$displayCh】")
-        }
-
-        popup.setOnMenuItemClickListener { menuItem ->
-            triggerHapticFeedback(HapticType.COMMIT)
-            val itemId = menuItem.itemId
-            if (itemId == 0) {
-                selectCandidate(originalEntry)
-                return@setOnMenuItemClickListener true
-            }
-
-            val homo = homoItemMap[itemId]
-            if (homo != null) {
-                val entryToSelect = if (homo.consumedKeys == 0 && originalEntry.consumedKeys > 0) {
-                    homo.copy(consumedKeys = originalEntry.consumedKeys)
-                } else {
-                    homo
+            val charBox = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding((14 * density).toInt(), (4 * density).toInt(), (14 * density).toInt(), (4 * density).toInt())
+                val lp = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    setMargins((4 * density).toInt(), (2 * density).toInt(), (4 * density).toInt(), (2 * density).toInt())
                 }
-                selectCandidate(entryToSelect)
-                return@setOnMenuItemClickListener true
+                layoutParams = lp
+
+                if (isSelected) {
+                    setBackgroundResource(R.drawable.bg_key_action)
+                } else {
+                    setBackgroundResource(R.drawable.bg_candidate_more)
+                }
+
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    triggerHapticFeedback()
+                    editingSelectedCharIndex = i
+                    renderWordBuilderChars()
+                    renderWordBuilderHomophones()
+                }
             }
 
-            val charIdx = charEditMap[itemId]
-            if (charIdx != null) {
-                // 進入該字的同音字替換選單
-                val targetChar = originalEntry.word[charIdx]
-                val singleEntry = DictEntry(targetChar.toString(), "", 0)
-                anchor.post {
-                    showSingleCharHomophonePopup(anchor, singleEntry) { newChar ->
-                        val sb = StringBuilder(originalEntry.word)
-                        sb.setCharAt(charIdx, newChar[0])
-                        val newWord = sb.toString()
-                        val modifiedEntry = originalEntry.copy(word = newWord)
-                        selectCandidate(modifiedEntry)
+            val tvChar = TextView(this).apply {
+                text = if (isSimplified) ChineseConverter.toSimplified(charStr) else charStr
+                textSize = 18f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(if (isSelected) ContextCompat.getColor(context, R.color.kb_accent) else ContextCompat.getColor(context, R.color.kb_text_primary))
+                gravity = Gravity.CENTER
+            }
+
+            val tvSyl = TextView(this).apply {
+                text = if (syl.isNotEmpty()) syl else "第${i + 1}字"
+                textSize = 10f
+                setTextColor(ContextCompat.getColor(context, R.color.kb_text_secondary))
+                gravity = Gravity.CENTER
+            }
+
+            charBox.addView(tvChar)
+            charBox.addView(tvSyl)
+            container.addView(charBox)
+        }
+    }
+
+    private fun renderWordBuilderHomophones() {
+        val container = containerWordBuilderHomophones ?: return
+        container.removeAllViews()
+
+        if (editingSelectedCharIndex !in editingCustomWordChars.indices) return
+        val currentChar = editingCustomWordChars[editingSelectedCharIndex].firstOrNull() ?: return
+        val currentSyllable = editingCustomWordSyllables.getOrNull(editingSelectedCharIndex)
+
+        val sylDisplay = if (!currentSyllable.isNullOrEmpty()) "($currentSyllable)" else ""
+        tvWordBuilderHint?.text = "點選替換第 ${editingSelectedCharIndex + 1} 字【$currentChar】$sylDisplay："
+
+        val homophones = engine.getHomophonesForChar(currentChar, currentSyllable)
+        val density = resources.displayMetrics.density
+
+        val columns = 4
+        var rowLayout: LinearLayout? = null
+
+        for ((idx, entry) in homophones.withIndex()) {
+            if (idx % columns == 0) {
+                rowLayout = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        bottomMargin = (4 * density).toInt()
                     }
                 }
-                return@setOnMenuItemClickListener true
+                container.addView(rowLayout)
             }
 
-            false
-        }
-        popup.setOnDismissListener {
-            if (activeHomophonePopup === popup) {
-                activeHomophonePopup = null
+            val wordBtn = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+                val displayWord = if (isSimplified) ChineseConverter.toSimplified(entry.word) else entry.word
+                val zy = if (entry.zhuyin.isNotEmpty()) " ${entry.zhuyin}" else ""
+                text = "$displayWord$zy"
+                textSize = 14f
+                setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
+                setBackgroundResource(R.drawable.bg_candidate_more)
+                setPadding(0, (6 * density).toInt(), 0, (6 * density).toInt())
+
+                val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = (2 * density).toInt()
+                    marginEnd = (2 * density).toInt()
+                }
+                layoutParams = lp
+
+                setOnClickListener {
+                    triggerHapticFeedback(HapticType.KEY_PRESS)
+                    editingCustomWordChars[editingSelectedCharIndex] = entry.word
+                    if (entry.zhuyin.isNotEmpty()) {
+                        editingCustomWordSyllables[editingSelectedCharIndex] = entry.zhuyin
+                    }
+                    if (editingSelectedCharIndex < editingCustomWordChars.size - 1) {
+                        editingSelectedCharIndex++
+                    }
+                    renderWordBuilderChars()
+                    renderWordBuilderHomophones()
+                }
             }
+            rowLayout?.addView(wordBtn)
         }
-        try {
-            popup.show()
-        } catch (_: Exception) {}
+    }
+
+    private fun confirmCustomWordAndCommit() {
+        val originalEntry = editingCustomWordEntry ?: return
+        val newWord = editingCustomWordChars.joinToString("")
+        val newZhuyin = editingCustomWordSyllables.joinToString(" ")
+
+        // 1. 正式以高權重 (50,000,000) 寫入個人自有詞庫（UserDictionary）
+        engine.learnWord(newWord, newZhuyin)
+
+        // 2. 構建自有詞 entry 並上屏
+        val finalEntry = DictEntry(newWord, newZhuyin, 50_000_000, consumedKeys = originalEntry.consumedKeys)
+        closeCustomWordBuilder()
+
+        selectCandidate(finalEntry)
+
+        android.widget.Toast.makeText(this, "已成功建立自有詞：【$newWord】", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     /**
@@ -4426,6 +4499,10 @@ class ZhuyinInputMethodService : InputMethodService() {
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         // 0. 返回鍵 (Back Key) 優先處理：嚴禁呼叫 requestShowSelf，徹底解決瀏覽器返回鍵失效或重複彈出鍵盤問題
         if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (isCustomWordBuilderOpen) {
+                closeCustomWordBuilder()
+                return true
+            }
             if (isCandidateGridOpen) {
                 closeCandidateGrid()
                 return true
@@ -4725,6 +4802,9 @@ class ZhuyinInputMethodService : InputMethodService() {
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
         dismissHomophonePopup()
+        if (isCustomWordBuilderOpen) {
+            closeCustomWordBuilder()
+        }
         if (isHomophoneSelectionMode) {
             isHomophoneSelectionMode = false
             homophoneCharIndex = -1
@@ -4742,6 +4822,9 @@ class ZhuyinInputMethodService : InputMethodService() {
     override fun onFinishInput() {
         super.onFinishInput()
         currentInputConnection?.finishComposingText()
+        if (isCustomWordBuilderOpen) {
+            closeCustomWordBuilder()
+        }
         if (::engine.isInitialized) {
             engine.clear()
         }
