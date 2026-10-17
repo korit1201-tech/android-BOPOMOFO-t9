@@ -1,5 +1,6 @@
 package com.bopomofo.t9ime
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
@@ -55,6 +56,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.bopomofo.t9ime.util.CrashLogger.install(this)
         setContentView(R.layout.activity_main)
 
         tvDictStats = findViewById(R.id.tv_dict_stats)
@@ -106,6 +108,7 @@ class MainActivity : AppCompatActivity() {
         setupTolerantInputSettings()
         setupThemeSettings()
         setupThirdPartyNotices()
+        setupCrashLogSettings()
     }
 
     private fun setupTolerantInputSettings() {
@@ -315,6 +318,62 @@ class MainActivity : AppCompatActivity() {
             }
             .setPositiveButton("關閉", null)
             .show()
+    }
+
+    private fun setupCrashLogSettings() {
+        val btnCrashLog = findViewById<Button>(R.id.btn_view_crash_log) ?: return
+        btnCrashLog.setOnClickListener {
+            val logs = com.bopomofo.t9ime.util.CrashLogger.getCrashLogs(this)
+            if (logs.isBlank()) {
+                val runtime = Runtime.getRuntime()
+                val maxMem = runtime.maxMemory() / (1024 * 1024)
+                val totalMem = runtime.totalMemory() / (1024 * 1024)
+                val freeMem = runtime.freeMemory() / (1024 * 1024)
+                val usedMem = totalMem - freeMem
+
+                AlertDialog.Builder(this)
+                    .setTitle("系統診斷狀態")
+                    .setMessage(
+                        "✅ 目前無任何崩潰紀錄，輸入法運作狀態良好！\n\n" +
+                        "【裝置與環境診斷資訊】\n" +
+                        "• App 版本：v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})\n" +
+                        "• 裝置型號：${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}\n" +
+                        "• Android 系統：${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})\n" +
+                        "• JVM 記憶體：已分配 ${usedMem}MB / 堆上限 ${maxMem}MB\n" +
+                        "• 處理器架構：${android.os.Build.SUPPORTED_ABIS.joinToString(", ")}"
+                    )
+                    .setPositiveButton("確定", null)
+                    .show()
+            } else {
+                val scrollView = android.widget.ScrollView(this).apply {
+                    setPadding(32, 24, 32, 24)
+                }
+                val tvLog = TextView(this).apply {
+                    text = logs
+                    setTextIsSelectable(true)
+                    textSize = 12f
+                    typeface = android.graphics.Typeface.MONOSPACE
+                    setTextColor(android.graphics.Color.parseColor("#333333"))
+                }
+                scrollView.addView(tvLog)
+
+                AlertDialog.Builder(this)
+                    .setTitle("診斷與崩潰日誌")
+                    .setView(scrollView)
+                    .setPositiveButton("複製日誌") { _, _ ->
+                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        val clip = android.content.ClipData.newPlainText("Bopomofo Crash Log", logs)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(this, "✅ 已複製日誌內容至剪貼簿！", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNeutralButton("清空日誌") { _, _ ->
+                        com.bopomofo.t9ime.util.CrashLogger.clearCrashLogs(this)
+                        Toast.makeText(this, "日誌已清空", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("關閉", null)
+                    .show()
+            }
+        }
     }
 
     override fun onResume() {

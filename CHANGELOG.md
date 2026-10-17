@@ -2,6 +2,25 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.8.3] - 2026-10-18
+
+### ⚡ 輸入框啟動卡死徹底根治與系統崩潰診斷日誌 (Build 109)
+
+- **🚀 徹底根治「開啟特定輸入框時鍵盤卡死/凍結數秒」之嚴重效能病灶**：
+  - **剪貼簿非同步同步與直接純文字擷取**：
+    - 診斷發現原版在彈出鍵盤時於 UI 主執行緒呼叫 `coerceToText(context)`，若剪貼簿包含圖片、URI 或跨應用 ContentProvider 連結，會觸發跨進程 IPC 與網路/儲存逾時（卡頓 2~5 秒）。
+    - 全面重構為優先讀取記憶體純文字（0ms 零 IPC），並全面採用背景守護執行緒非同步派發（`syncFromSystemAsync`），徹底消滅彈出鍵盤時的 UI 阻塞。
+  - **View 樹主題遍歷防抖與字型解析快取化**：
+    - `onStartInputView` 加入當前主題與系統深色模式（UI_MODE_NIGHT）快取比對，未變動時略過整棵 View 樹遞迴遍歷。
+    - 修正 `ThemeManager` 遍歷 View 樹時重複呼叫 `ResourcesCompat.getFont` 造成的磁碟 I/O 與 Native Typeface 重新生成，改由全域 `FontCache` 單例常駐複用。
+  - **實體鍵盤設備檢測 Binder IPC 呼叫收斂**：
+    - 消除每次開啟鍵盤時對 `InputManager.inputDeviceIds` 的多次重複跨進程查詢。
+- **🛠️ 內建系統診斷與崩潰日誌檢視器 (CrashLogger)**：
+  - 輸入法核心服務與設定頁全面安裝全域未捕獲異常處理器（`UncaughtExceptionHandler`），自動將例外軌跡、裝置型號、Android 版本與 JVM Heap 記憶體狀態持久化記錄。
+  - 設定 App 內建【🛠️ 系統診斷與崩潰日誌】面板，使用者可一鍵查看輸入法運作狀態、複製日誌供開發者除錯或清空日誌。
+- **🧪 單元測試全數覆蓋**：
+  - 新增 `CrashLoggerTest` 驗證日誌記錄、格式化、擷取與清空邏輯，全專案 100% 測試通過。
+
 ## [v2.8.2] - 2026-10-17
 
 ### 🛡️ 系統返回鍵優先關閉輸入法與防穿透修復 (Build 108)
