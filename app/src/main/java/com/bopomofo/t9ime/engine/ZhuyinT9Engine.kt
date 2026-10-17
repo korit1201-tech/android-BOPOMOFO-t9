@@ -1582,6 +1582,42 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     }
 
     /**
+     * 取得指定音節的所有聲調單字列表（供自建自有詞面板使用）
+     * @param cleanSyllable 去聲調注音音節（例如 "ㄊㄧㄢ"）
+     * @param toneFilter 指定聲調 (' ' 或 '1' 一聲, 'ˊ' 二聲, 'ˇ' 三聲, 'ˋ' 四聲, '˙' 輕聲, null 全部聲調)
+     */
+    fun getCharsForSyllable(cleanSyllable: String, toneFilter: Char? = null): List<DictEntry> {
+        val clean = cleanSyllable.filter { it !in "ˇˋˊ˙ " }
+        val entries = soundToCharMap[clean]
+        val results = if (!entries.isNullOrEmpty()) {
+            when (toneFilter) {
+                null -> entries
+                ' ', '1' -> entries.filter { !it.zhuyin.any { c -> c in "ˇˋˊ˙" } }
+                'ˊ', '2' -> entries.filter { it.zhuyin.contains('ˊ') }
+                'ˇ', '3' -> entries.filter { it.zhuyin.contains('ˇ') }
+                'ˋ', '4' -> entries.filter { it.zhuyin.contains('ˋ') }
+                '˙', '5' -> entries.filter { it.zhuyin.contains('˙') }
+                else -> entries
+            }
+        } else {
+            val seq = KeyMapping.getSequence(clean, ignoreTones = true)
+            val node = trie.searchNode(seq)
+            val list = node?.exactEntries?.values?.filter { it.word.length == 1 } ?: emptyList()
+            when (toneFilter) {
+                null -> list
+                ' ', '1' -> list.filter { !it.zhuyin.any { c -> c in "ˇˋˊ˙" } }
+                'ˊ', '2' -> list.filter { it.zhuyin.contains('ˊ') }
+                'ˇ', '3' -> list.filter { it.zhuyin.contains('ˇ') }
+                'ˋ', '4' -> list.filter { it.zhuyin.contains('ˋ') }
+                '˙', '5' -> list.filter { it.zhuyin.contains('˙') }
+                else -> list
+            }
+        }
+
+        return results.sortedByDescending { it.weight + userDict.getBoost(it.word) }
+    }
+
+    /**
      * 同音/同拼法候選字查詢：
      * 1. 若傳入 preferredZhuyin（使用者實際輸入的音節），優先以該音節排序，避免多音字卡在字典第一讀音
      * 2. 優先由 soundToCharMap 檢索標準同音字，以同聲調 > 字典權重 > 使用者個人化權重排序

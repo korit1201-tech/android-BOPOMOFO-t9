@@ -874,6 +874,96 @@
                     android:paddingEnd="10dp" />
             </HorizontalScrollView>
 
+            <!-- 聲調切換/篩選欄 (Tone Filter Bar) -->
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="36dp"
+                android:background="@color/kb_action_key_bg"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/container_word_builder_tones"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp">
+
+                    <Button
+                        android:id="@+id/btn_tone_all"
+                        style="?android:attr/borderlessButtonStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="28dp"
+                        android:minWidth="56dp"
+                        android:text="全部聲調"
+                        android:textColor="@color/kb_accent"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:background="@drawable/bg_candidate_more" />
+
+                    <Button
+                        android:id="@+id/btn_tone_1"
+                        style="?android:attr/borderlessButtonStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="28dp"
+                        android:minWidth="44dp"
+                        android:layout_marginStart="4dp"
+                        android:text="一聲 ¯"
+                        android:textColor="@color/kb_text_primary"
+                        android:textSize="12sp"
+                        android:background="@drawable/bg_candidate_more" />
+
+                    <Button
+                        android:id="@+id/btn_tone_2"
+                        style="?android:attr/borderlessButtonStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="28dp"
+                        android:minWidth="44dp"
+                        android:layout_marginStart="4dp"
+                        android:text="二聲 ˊ"
+                        android:textColor="@color/kb_text_primary"
+                        android:textSize="12sp"
+                        android:background="@drawable/bg_candidate_more" />
+
+                    <Button
+                        android:id="@+id/btn_tone_3"
+                        style="?android:attr/borderlessButtonStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="28dp"
+                        android:minWidth="44dp"
+                        android:layout_marginStart="4dp"
+                        android:text="三聲 ˇ"
+                        android:textColor="@color/kb_text_primary"
+                        android:textSize="12sp"
+                        android:background="@drawable/bg_candidate_more" />
+
+                    <Button
+                        android:id="@+id/btn_tone_4"
+                        style="?android:attr/borderlessButtonStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="28dp"
+                        android:minWidth="44dp"
+                        android:layout_marginStart="4dp"
+                        android:text="四聲 ˋ"
+                        android:textColor="@color/kb_text_primary"
+                        android:textSize="12sp"
+                        android:background="@drawable/bg_candidate_more" />
+
+                    <Button
+                        android:id="@+id/btn_tone_5"
+                        style="?android:attr/borderlessButtonStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="28dp"
+                        android:minWidth="44dp"
+                        android:layout_marginStart="4dp"
+                        android:text="輕聲 ˙"
+                        android:textColor="@color/kb_text_primary"
+                        android:textSize="12sp"
+                        android:background="@drawable/bg_candidate_more" />
+                </LinearLayout>
+            </HorizontalScrollView>
+
             <!-- 提示字樣 -->
             <TextView
                 android:id="@+id/tv_word_builder_hint"

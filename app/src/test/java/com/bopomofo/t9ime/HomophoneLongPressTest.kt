@@ -77,4 +77,41 @@ class HomophoneLongPressTest {
         assertTrue("新自有詞「金添」應成功註冊至候選庫", candidatesForToday.any { it.word == "金添" })
         assertEquals("新自有詞「金添」應享有最高權重排在首位", "金添", candidatesForToday.first().word)
     }
+
+    @Test
+    fun testToneFilterInCustomWordBuilder() {
+        // 1. 全部聲調：ㄊㄧㄢ 應能查到一聲（天）、二聲（田/甜）、三聲（舔）、四聲（店/電/殿）
+        val allTones = engine.getCharsForSyllable("ㄊㄧㄢ", null)
+        assertTrue("全部聲調應有候選字", allTones.isNotEmpty())
+        val allWords = allTones.map { it.word }
+        assertTrue("全聲調候選應包含一聲【天】", allWords.contains("天"))
+        assertTrue("全聲調候選應包含二聲【田】或【甜】", allWords.contains("田") || allWords.contains("甜"))
+
+        // 2. 篩選二聲：僅二聲字
+        val tone2 = engine.getCharsForSyllable("ㄊㄧㄢ", 'ˊ')
+        assertTrue("二聲候選字不應為空", tone2.isNotEmpty())
+        for (item in tone2) {
+            assertTrue("二聲候選字【${item.word}】其注音【${item.zhuyin}】應包含'ˊ'", item.zhuyin.contains('ˊ'))
+        }
+        val tone2Words = tone2.map { it.word }
+        assertTrue("二聲候選應包含【田】或【甜】", tone2Words.contains("田") || tone2Words.contains("甜"))
+
+        // 3. 篩選一聲：僅一聲字
+        val tone1 = engine.getCharsForSyllable("ㄊㄧㄢ", ' ')
+        assertTrue("一聲候選字不應為空", tone1.isNotEmpty())
+        for (item in tone1) {
+            assertTrue("一聲候選字【${item.word}】其注音【${item.zhuyin}】不應有聲調符號", !item.zhuyin.any { c -> c in "ˇˋˊ˙" })
+        }
+        val tone1Words = tone1.map { it.word }
+        assertTrue("一聲候選應包含【天】", tone1Words.contains("天"))
+
+        // 4. 跨聲調自建詞：將「今天」第二字「天 (ㄊㄧㄢ)」改為二聲「田 (ㄊㄧㄢˊ)」，建立「金田」
+        val selectedTian = tone2.first { it.word == "田" }
+        val newWord = "金" + selectedTian.word
+        val newZhuyin = "ㄐㄧㄣ " + selectedTian.zhuyin
+        engine.learnWord(newWord, newZhuyin)
+
+        val candidates = engine.searchFullZhuyin("ㄐㄧㄣㄊㄧㄢˊ")
+        assertTrue("自有詞「金田」應可透過全注音檢索出來", candidates.any { it.word == "金田" })
+    }
 }

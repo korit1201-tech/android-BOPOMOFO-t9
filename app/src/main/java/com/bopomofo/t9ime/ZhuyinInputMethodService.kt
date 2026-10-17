@@ -229,6 +229,13 @@ class ZhuyinInputMethodService : InputMethodService() {
     private val editingCustomWordChars = mutableListOf<String>()
     private val editingCustomWordSyllables = mutableListOf<String>()
     private var editingSelectedCharIndex: Int = 0
+    private var btnToneAll: Button? = null
+    private var btnTone1: Button? = null
+    private var btnTone2: Button? = null
+    private var btnTone3: Button? = null
+    private var btnTone4: Button? = null
+    private var btnTone5: Button? = null
+    private var editingCurrentToneFilter: Char? = null
     private var clipListener: android.content.ClipboardManager.OnPrimaryClipChangedListener? = null
 
     fun isCurrentInputPassword(): Boolean {
@@ -1053,6 +1060,20 @@ class ZhuyinInputMethodService : InputMethodService() {
             triggerHapticFeedback()
             closeCustomWordBuilder()
         }
+
+        btnToneAll = root.findViewById(R.id.btn_tone_all)
+        btnTone1 = root.findViewById(R.id.btn_tone_1)
+        btnTone2 = root.findViewById(R.id.btn_tone_2)
+        btnTone3 = root.findViewById(R.id.btn_tone_3)
+        btnTone4 = root.findViewById(R.id.btn_tone_4)
+        btnTone5 = root.findViewById(R.id.btn_tone_5)
+
+        btnToneAll?.setOnClickListener { setToneFilter(null) }
+        btnTone1?.setOnClickListener { setToneFilter(' ') }
+        btnTone2?.setOnClickListener { setToneFilter('ˊ') }
+        btnTone3?.setOnClickListener { setToneFilter('ˇ') }
+        btnTone4?.setOnClickListener { setToneFilter('ˋ') }
+        btnTone5?.setOnClickListener { setToneFilter('˙') }
 
         try {
             setup12KeyLayout(root)
@@ -3516,15 +3537,43 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
 
         editingSelectedCharIndex = 0
+        editingCurrentToneFilter = null
         isCustomWordBuilderOpen = true
         layoutCustomWordBuilder?.visibility = View.VISIBLE
 
+        updateToneButtonsUI()
         renderWordBuilderChars()
         renderWordBuilderHomophones()
 
         btnWordBuilderConfirm?.setOnClickListener {
             triggerHapticFeedback(HapticType.COMMIT)
             confirmCustomWordAndCommit()
+        }
+    }
+
+    private fun setToneFilter(tone: Char?) {
+        triggerHapticFeedback(HapticType.KEY_PRESS)
+        editingCurrentToneFilter = tone
+        updateToneButtonsUI()
+        renderWordBuilderHomophones()
+    }
+
+    private fun updateToneButtonsUI() {
+        val accentColor = ContextCompat.getColor(this, R.color.kb_accent)
+        val normalColor = ContextCompat.getColor(this, R.color.kb_text_primary)
+        val buttons = listOf(
+            Pair(btnToneAll, null),
+            Pair(btnTone1, ' '),
+            Pair(btnTone2, 'ˊ'),
+            Pair(btnTone3, 'ˇ'),
+            Pair(btnTone4, 'ˋ'),
+            Pair(btnTone5, '˙')
+        )
+        for ((btn, tone) in buttons) {
+            val isSelected = (editingCurrentToneFilter == tone)
+            btn?.setTextColor(if (isSelected) accentColor else normalColor)
+            btn?.setTypeface(null, if (isSelected) Typeface.BOLD else Typeface.NORMAL)
+            btn?.setBackgroundResource(if (isSelected) R.drawable.bg_key_action else R.drawable.bg_candidate_more)
         }
     }
 
@@ -3535,6 +3584,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         editingCustomWordChars.clear()
         editingCustomWordSyllables.clear()
         editingSelectedCharIndex = 0
+        editingCurrentToneFilter = null
     }
 
     private fun renderWordBuilderChars() {
@@ -3570,6 +3620,8 @@ class ZhuyinInputMethodService : InputMethodService() {
                 setOnClickListener {
                     triggerHapticFeedback()
                     editingSelectedCharIndex = i
+                    editingCurrentToneFilter = null
+                    updateToneButtonsUI()
                     renderWordBuilderChars()
                     renderWordBuilderHomophones()
                 }
@@ -3602,12 +3654,23 @@ class ZhuyinInputMethodService : InputMethodService() {
 
         if (editingSelectedCharIndex !in editingCustomWordChars.indices) return
         val currentChar = editingCustomWordChars[editingSelectedCharIndex].firstOrNull() ?: return
-        val currentSyllable = editingCustomWordSyllables.getOrNull(editingSelectedCharIndex)
+        val currentSyllable = editingCustomWordSyllables.getOrNull(editingSelectedCharIndex) ?: ""
+        val cleanSyllable = currentSyllable.filter { it !in "ˇˋˊ˙ " }.ifEmpty {
+            engine.getZhuyinForChar(currentChar).filter { it !in "ˇˋˊ˙ " }
+        }
 
-        val sylDisplay = if (!currentSyllable.isNullOrEmpty()) "($currentSyllable)" else ""
-        tvWordBuilderHint?.text = "點選替換第 ${editingSelectedCharIndex + 1} 字【$currentChar】$sylDisplay："
+        val sylDisplay = if (currentSyllable.isNotEmpty()) "($currentSyllable)" else ""
+        val toneDisplay = when (editingCurrentToneFilter) {
+            ' ' -> " [一聲 ¯]"
+            'ˊ' -> " [二聲 ˊ]"
+            'ˇ' -> " [三聲 ˇ]"
+            'ˋ' -> " [四聲 ˋ]"
+            '˙' -> " [輕聲 ˙]"
+            else -> " [全部聲調]"
+        }
+        tvWordBuilderHint?.text = "點選替換第 ${editingSelectedCharIndex + 1} 字【$currentChar】$sylDisplay$toneDisplay："
 
-        val homophones = engine.getHomophonesForChar(currentChar, currentSyllable)
+        val homophones = engine.getCharsForSyllable(cleanSyllable, editingCurrentToneFilter)
         val density = resources.displayMetrics.density
 
         val columns = 4
@@ -3650,6 +3713,8 @@ class ZhuyinInputMethodService : InputMethodService() {
                     }
                     if (editingSelectedCharIndex < editingCustomWordChars.size - 1) {
                         editingSelectedCharIndex++
+                        editingCurrentToneFilter = null
+                        updateToneButtonsUI()
                     }
                     renderWordBuilderChars()
                     renderWordBuilderHomophones()
