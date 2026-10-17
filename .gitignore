@@ -22,6 +22,7 @@ __pycache__/
 .claude/settings.local.json
 secrets.json
 deploy.py
+tools/
 *.secret
 *.token
 *.key
