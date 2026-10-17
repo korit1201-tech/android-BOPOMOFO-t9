@@ -2,6 +2,17 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.8.2] - 2026-10-17
+
+### 🛡️ 系統返回鍵優先關閉輸入法與防穿透修復 (Build 108)
+
+- **🚪 返回鍵（Back Key）優先收起軟體鍵盤**：
+  - 徹底修正「在輸入框中按返回鍵未先關閉鍵盤，而是直接跳轉返回網頁/介面上一頁」的嚴重穿透問題。
+  - 當軟體鍵盤顯示時（`isInputViewShown`），按下返回鍵嚴格優先調用 `requestHideSelf(0)` 收起鍵盤，並徹底消費 `ACTION_DOWN` 與 `ACTION_UP` 雙向事件（`return true`），絕不放行給系統以防網頁觸發 `history.back()`。
+- **🧩 階梯式面板與組字狀態防護**：
+  - 展開候選字格柵、自建自有詞面板或同音字挑字盤開啟時，返回鍵優先收合該子面板。
+  - 組字中按返回鍵自動安全清空未上屏組字並收合鍵盤，全面對齊 Android 主流輸入法標準互動體驗。
+
 ## [v2.8.1] - 2026-10-17
 
 ### 🎯 實體按鍵序列退格重構與精準回滾 (Build 107)
