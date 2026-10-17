@@ -583,19 +583,32 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     }
 
     fun backspace(): List<DictEntry> {
-        val remaining = getRemainingKeys()
-        if (remaining.isNotEmpty()) {
-            currentKeys.removeAt(currentKeys.size - 1)
-            currentToneIndex = 0
-            lockedZhuyinCombo = null
-        } else if (confirmedSyllables.isNotEmpty()) {
-            rollbackLastConfirmedSyllable()
-            return cachedCandidates
-        } else if (currentKeys.isNotEmpty()) {
-            currentKeys.removeAt(currentKeys.size - 1)
-            currentToneIndex = 0
-            lockedZhuyinCombo = null
+        if (currentKeys.isEmpty()) {
+            clear()
+            return emptyList()
         }
+
+        // 1. 忠實刪除使用者實際按下的最後一顆實體按鍵
+        val removedKey = currentKeys.removeAt(currentKeys.size - 1)
+        if (removedKey == 11) {
+            currentToneIndex = 0
+        }
+        lockedZhuyinCombo = null
+
+        // 2. 若累計已確認音節所消耗的鍵數大於剩餘總鍵數，表示該音節的按鍵已被削減，回滾解除該音節
+        while (confirmedKeyCounts.isNotEmpty() && confirmedKeyCounts.sum() > currentKeys.size) {
+            confirmedKeyCounts.removeAt(confirmedKeyCounts.size - 1)
+            if (confirmedSyllables.isNotEmpty()) {
+                confirmedSyllables.removeAt(confirmedSyllables.size - 1)
+            }
+        }
+
+        // 3. 若所有按鍵皆已退格清空
+        if (currentKeys.isEmpty()) {
+            clear()
+            return emptyList()
+        }
+
         recalculate()
         return cachedCandidates
     }

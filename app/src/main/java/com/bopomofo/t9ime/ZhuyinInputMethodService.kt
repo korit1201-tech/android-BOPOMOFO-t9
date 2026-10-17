@@ -2617,7 +2617,13 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
         if (engine.hasComposing()) {
             val candidates = engine.backspace()
-            refreshUI(candidates)
+            if (!engine.hasComposing()) {
+                clearCandidateBar()
+                updateComposingPreview()
+                updateLeftZhuyinCombos()
+            } else {
+                refreshUI(candidates)
+            }
         } else {
             val ic = currentInputConnection
             if (ic != null) {

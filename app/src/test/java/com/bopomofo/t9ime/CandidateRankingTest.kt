@@ -6,6 +6,7 @@ import com.bopomofo.t9ime.engine.TrieDictionary
 import com.bopomofo.t9ime.engine.ZhuyinT9Engine
 import com.bopomofo.t9ime.engine.SyllableManager
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -168,10 +169,61 @@ class CandidateRankingTest {
         assertTrue("鎖定音節後候選字列表不得為空", candidates.isNotEmpty())
         assertTrue("confirmedSyllables 應記錄 ㄅㄤ", engine.getConfirmedSyllables() == listOf("ㄅㄤ"))
 
-        // 3. 測試平滑退格回滾：在沒有剩餘未確認按鍵時按退格，應退回最後一個已確認音節
+        // 3. 測試物理按鍵退格：按退格時，必須精確刪除使用者實際按下的最後一顆按鍵 (9)
+        // 且因按鍵減少，依附該按鍵的確認音節「ㄅㄤ」也同步自動回滾解鎖
         engine.backspace()
-        assertTrue("退格後 confirmedSyllables 應回滾為空", !engine.hasConfirmedSyllables())
-        assertTrue("退格後按鍵序列仍應保留", engine.getCurrentKeys() == listOf(1, 9))
+        assertTrue("退格後 confirmedSyllables 應因按鍵減少而回滾為空", !engine.hasConfirmedSyllables())
+        assertTrue("退格後按鍵序列應精確刪除最後一顆按鍵 9，僅保留 [1]", engine.getCurrentKeys() == listOf(1))
+
+        // 4. 再次退格，序列清空
+        engine.backspace()
+        assertTrue("再次退格後按鍵序列應清空", engine.getCurrentKeys().isEmpty())
+        assertTrue("輸入狀態應為非 Composing", !engine.hasComposing())
+    }
+
+    @Test
+    fun testBackspaceSequentialKeyDeletionWithTonesAndMultiSyllables() {
+        val engine = ZhuyinT9Engine()
+        engine.loadDictionaryForTest()
+
+        // 測試 1: 帶聲調按鍵的退格 (Key 11 ˙ˊˇˋ)
+        engine.pressKey(1)
+        engine.pressKey(9)
+        engine.cycleTone() // 切換聲調，添加 11
+        assertEquals(listOf(1, 9, 11), engine.getCurrentKeys())
+
+        // 第一次退格：刪除聲調鍵 11
+        engine.backspace()
+        assertEquals(listOf(1, 9), engine.getCurrentKeys())
+
+        // 第二次退格：刪除按鍵 9
+        engine.backspace()
+        assertEquals(listOf(1), engine.getCurrentKeys())
+
+        // 第三次退格：刪除按鍵 1
+        engine.backspace()
+        assertEquals(emptyList<Int>(), engine.getCurrentKeys())
+        assertFalse(engine.hasComposing())
+
+        // 測試 2: 多字多音節輸入時的退格
+        engine.pressKey(1)
+        engine.pressKey(9)
+        engine.confirmStepSyllable("ㄅㄤ")
+        assertEquals(listOf("ㄅㄤ"), engine.getConfirmedSyllables())
+
+        // 繼續輸入第二字音節按鍵 (4)
+        engine.pressKey(4)
+        assertEquals(listOf(1, 9, 4), engine.getCurrentKeys())
+
+        // 退格：先刪除第二字剛輸入的 4，第一字「ㄅㄤ」保持鎖定
+        engine.backspace()
+        assertEquals(listOf(1, 9), engine.getCurrentKeys())
+        assertEquals(listOf("ㄅㄤ"), engine.getConfirmedSyllables())
+
+        // 再次退格：刪除 9，第一字「ㄅㄤ」因鍵數不足回滾解鎖
+        engine.backspace()
+        assertEquals(listOf(1), engine.getCurrentKeys())
+        assertFalse(engine.hasConfirmedSyllables())
     }
 
     @Test
