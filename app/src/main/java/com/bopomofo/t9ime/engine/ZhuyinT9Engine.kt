@@ -323,6 +323,36 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     @Volatile
     private var logTotalWeight: Double = 17.91
 
+    fun loadDictionaryForTest(stream: java.io.InputStream) {
+        val newTrie = TrieDictionary()
+        val newNextWordMap = HashMap<String, MutableList<DictEntry>>()
+        val newCharZhuyinMap = HashMap<Char, MutableList<String>>()
+        val newInitialMap = HashMap<String, MutableList<DictEntry>>()
+        val newSoundToCharMap = HashMap<String, MutableList<DictEntry>>()
+        val newFullZhuyinWordMap = HashMap<String, MutableList<DictEntry>>()
+        val newInitialToCharMap = HashMap<Char, MutableList<DictEntry>>()
+
+        loadDictionaryInternal(
+            newTrie,
+            newNextWordMap,
+            newCharZhuyinMap,
+            newInitialMap,
+            newSoundToCharMap,
+            newFullZhuyinWordMap,
+            newInitialToCharMap,
+            stream
+        )
+
+        trie = newTrie
+        nextWordMap = newNextWordMap
+        charZhuyinMap = newCharZhuyinMap
+        initialMap = newInitialMap
+        soundToCharMap = newSoundToCharMap
+        fullZhuyinWordMap = newFullZhuyinWordMap
+        initialToCharMap = newInitialToCharMap
+        isDictionaryLoaded = true
+    }
+
     private fun loadDictionaryInternal(
         targetTrie: TrieDictionary,
         targetNextWordMap: MutableMap<String, MutableList<DictEntry>>,
@@ -1670,9 +1700,10 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
      */
     fun getHomophonesFor(entry: DictEntry): List<DictEntry> {
         if (entry.word.length == 1) {
-            return getHomophonesForChar(entry.word[0])
+            val pref = entry.zhuyin.ifEmpty { null }
+            return getHomophonesForChar(entry.word[0], pref)
         }
-        val zhuyin = entry.zhuyin
+        val zhuyin = if (entry.zhuyin.isNotEmpty()) entry.zhuyin else entry.word.map { getZhuyinForChar(it) }.joinToString(" ")
         if (zhuyin.isEmpty()) return emptyList()
 
         val keys = KeyMapping.getSequence(zhuyin, ignoreTones = false)

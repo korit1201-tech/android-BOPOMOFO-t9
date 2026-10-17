@@ -3423,12 +3423,9 @@ class ZhuyinInputMethodService : InputMethodService() {
                     clearCandidateBar()
                     return@setOnLongClickListener true
                 }
-                val hasComp = engine.hasComposing() || fullZhuyinBuffer.isNotEmpty()
-                if (hasComp && !isHomophoneSelectionMode) {
-                    triggerHapticFeedback(HapticType.MODE_SWITCH)
-                    enterHomophoneSelectionMode(0)
-                    true
-                } else false
+                triggerHapticFeedback(HapticType.MODE_SWITCH)
+                showCandidateLongClickMenu(it, entry)
+                true
             }
 
             tv.visibility = View.VISIBLE
@@ -3452,6 +3449,158 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
         }
         return engine.getTopComposingWord()
+    }
+
+    /**
+     * 候選字詞長按改字選單：
+     * 1. 單字：一鍵彈出同音字選單，選取後直接替換上屏並學習至使用者詞庫
+     * 2. 多字詞：彈出同音詞及「逐字改字」選項，讓使用者能精準修改詞中任何字
+     */
+    private fun showCandidateLongClickMenu(anchor: View, originalEntry: DictEntry) {
+        if (originalEntry.word.startsWith("✔")) {
+            exitHomophoneSelectionMode()
+            return
+        }
+
+        // 單字處理
+        if (originalEntry.word.length == 1) {
+            showSingleCharHomophonePopup(anchor, originalEntry)
+            return
+        }
+
+        // 多字詞處理
+        showMultiCharHomophonePopup(anchor, originalEntry)
+    }
+
+    private fun showSingleCharHomophonePopup(
+        anchor: View,
+        originalEntry: DictEntry,
+        onCharSelected: ((String) -> Unit)? = null
+    ) {
+        val targetChar = originalEntry.word[0]
+        val prefZhuyin = originalEntry.zhuyin.ifEmpty { null }
+        val homophones = engine.getHomophonesForChar(targetChar, prefZhuyin)
+
+        dismissHomophonePopup()
+        val popup = android.widget.PopupMenu(this, anchor)
+        activeHomophonePopup = popup
+
+        val displayOriginal = if (isSimplified) ChineseConverter.toSimplified(originalEntry.word) else originalEntry.word
+        popup.menu.add(0, 0, 0, "✔ $displayOriginal（保持）")
+
+        val targetList = homophones.filter { it.word != originalEntry.word }
+        for ((index, homo) in targetList.withIndex()) {
+            val displayWord = if (isSimplified) ChineseConverter.toSimplified(homo.word) else homo.word
+            val zy = if (homo.zhuyin.isNotEmpty()) " (${homo.zhuyin})" else ""
+            popup.menu.add(0, index + 1, index + 1, "$displayWord$zy")
+        }
+
+        popup.setOnMenuItemClickListener { menuItem ->
+            triggerHapticFeedback(HapticType.COMMIT)
+            val chosen = if (menuItem.itemId == 0) originalEntry else {
+                val idx = menuItem.itemId - 1
+                if (idx in targetList.indices) targetList[idx] else originalEntry
+            }
+
+            if (onCharSelected != null) {
+                onCharSelected(chosen.word)
+            } else if (isHomophoneSelectionMode) {
+                applyHomophoneReplacement(chosen)
+            } else {
+                val entryToSelect = if (chosen.consumedKeys == 0 && originalEntry.consumedKeys > 0) {
+                    chosen.copy(consumedKeys = originalEntry.consumedKeys)
+                } else {
+                    chosen
+                }
+                selectCandidate(entryToSelect)
+            }
+            true
+        }
+        popup.setOnDismissListener {
+            if (activeHomophonePopup === popup) {
+                activeHomophonePopup = null
+            }
+        }
+        try {
+            popup.show()
+        } catch (_: Exception) {}
+    }
+
+    private fun showMultiCharHomophonePopup(anchor: View, originalEntry: DictEntry) {
+        val homophones = engine.getHomophonesFor(originalEntry)
+        dismissHomophonePopup()
+        val popup = android.widget.PopupMenu(this, anchor)
+        activeHomophonePopup = popup
+
+        val displayOriginal = if (isSimplified) ChineseConverter.toSimplified(originalEntry.word) else originalEntry.word
+        popup.menu.add(0, 0, 0, "✔ $displayOriginal（保持）")
+
+        var itemIdCounter = 1
+        val homoItemMap = mutableMapOf<Int, DictEntry>()
+        val charEditMap = mutableMapOf<Int, Int>() // menuItemId -> charIndex in word
+
+        // 1. 同音詞選項
+        for (homo in homophones) {
+            val id = itemIdCounter++
+            homoItemMap[id] = homo
+            val displayWord = if (isSimplified) ChineseConverter.toSimplified(homo.word) else homo.word
+            popup.menu.add(0, id, id, "同音詞：$displayWord")
+        }
+
+        // 2. 逐字改字選項
+        for ((charIdx, ch) in originalEntry.word.withIndex()) {
+            val id = itemIdCounter++
+            charEditMap[id] = charIdx
+            val displayCh = if (isSimplified) ChineseConverter.toSimplified(ch.toString()) else ch.toString()
+            popup.menu.add(1, id, id, "✎ 改第 ${charIdx + 1} 字【$displayCh】")
+        }
+
+        popup.setOnMenuItemClickListener { menuItem ->
+            triggerHapticFeedback(HapticType.COMMIT)
+            val itemId = menuItem.itemId
+            if (itemId == 0) {
+                selectCandidate(originalEntry)
+                return@setOnMenuItemClickListener true
+            }
+
+            val homo = homoItemMap[itemId]
+            if (homo != null) {
+                val entryToSelect = if (homo.consumedKeys == 0 && originalEntry.consumedKeys > 0) {
+                    homo.copy(consumedKeys = originalEntry.consumedKeys)
+                } else {
+                    homo
+                }
+                selectCandidate(entryToSelect)
+                return@setOnMenuItemClickListener true
+            }
+
+            val charIdx = charEditMap[itemId]
+            if (charIdx != null) {
+                // 進入該字的同音字替換選單
+                val targetChar = originalEntry.word[charIdx]
+                val singleEntry = DictEntry(targetChar.toString(), "", 0)
+                anchor.post {
+                    showSingleCharHomophonePopup(anchor, singleEntry) { newChar ->
+                        val sb = StringBuilder(originalEntry.word)
+                        sb.setCharAt(charIdx, newChar[0])
+                        val newWord = sb.toString()
+                        val modifiedEntry = originalEntry.copy(word = newWord)
+                        selectCandidate(modifiedEntry)
+                    }
+                }
+                return@setOnMenuItemClickListener true
+            }
+
+            false
+        }
+        popup.setOnDismissListener {
+            if (activeHomophonePopup === popup) {
+                activeHomophonePopup = null
+            }
+        }
+        try {
+            popup.show()
+        } catch (_: Exception) {}
     }
 
     /**
