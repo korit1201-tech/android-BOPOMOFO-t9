@@ -2,6 +2,7 @@ package com.bopomofo.t9ime.theme
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.view.View
@@ -214,16 +215,20 @@ object ThemeManager {
         val density = root.resources.displayMetrics.density
         val radiusPx = 6f * density
 
-        applyRecursive(root, colors, radiusPx)
+        val normalTf = com.bopomofo.t9ime.ui.FontCache.getBopomofoTypeface(root.context)
+        val boldTf = com.bopomofo.t9ime.ui.FontCache.getBopomofoBoldTypeface(root.context)
+            ?: (if (normalTf != null) try { Typeface.create(normalTf, Typeface.BOLD) } catch (_: Exception) { normalTf } else Typeface.defaultFromStyle(Typeface.BOLD))
+
+        applyRecursive(root, colors, radiusPx, normalTf, boldTf)
     }
 
-    private fun applyRecursive(view: View, colors: ThemeColors, radiusPx: Float) {
-        val bopomofoTypeface = try {
-            androidx.core.content.res.ResourcesCompat.getFont(view.context, R.font.bopomofo_font)
-        } catch (e: Exception) {
-            null
-        }
-
+    private fun applyRecursive(
+        view: View,
+        colors: ThemeColors,
+        radiusPx: Float,
+        normalTf: Typeface?,
+        boldTf: Typeface?
+    ) {
         when {
             view.id == R.id.candidate_scroll || view.id == R.id.candidate_container -> {
                 view.setBackgroundColor(colors.candidateBg)
@@ -244,14 +249,11 @@ object ThemeManager {
                 view.includeFontPadding = false
                 val isZhuyinKey = view.id in ZHUYIN_KEY_IDS || view is com.bopomofo.t9ime.ui.SwipeKeyButton || isZhuyinText(view.text)
                 val isBold = isZhuyinKey || view.typeface?.isBold == true || view.paint.isFakeBoldText
-                if (bopomofoTypeface != null) {
-                    view.typeface = if (isBold) {
-                        android.graphics.Typeface.create(bopomofoTypeface, android.graphics.Typeface.BOLD)
-                    } else {
-                        bopomofoTypeface
-                    }
+                val targetTf = if (isBold) (boldTf ?: normalTf) else normalTf
+                if (targetTf != null) {
+                    view.typeface = targetTf
                 } else if (isBold) {
-                    view.typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
+                    view.typeface = Typeface.defaultFromStyle(Typeface.BOLD)
                 }
                 if (isBold) {
                     view.paint.isFakeBoldText = true
@@ -264,14 +266,11 @@ object ThemeManager {
                 }
                 val isZhuyin = isZhuyinText(view.text)
                 val isBold = isZhuyin || view.typeface?.isBold == true || view.paint.isFakeBoldText
-                if (bopomofoTypeface != null) {
-                    view.typeface = if (isBold) {
-                        android.graphics.Typeface.create(bopomofoTypeface, android.graphics.Typeface.BOLD)
-                    } else {
-                        bopomofoTypeface
-                    }
+                val targetTf = if (isBold) (boldTf ?: normalTf) else normalTf
+                if (targetTf != null) {
+                    view.typeface = targetTf
                 } else if (isBold) {
-                    view.typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
+                    view.typeface = Typeface.defaultFromStyle(Typeface.BOLD)
                 }
                 if (isBold) {
                     view.paint.isFakeBoldText = true
@@ -282,7 +281,7 @@ object ThemeManager {
 
         if (view is ViewGroup) {
             for (i in 0 until view.childCount) {
-                applyRecursive(view.getChildAt(i), colors, radiusPx)
+                applyRecursive(view.getChildAt(i), colors, radiusPx, normalTf, boldTf)
             }
         }
     }

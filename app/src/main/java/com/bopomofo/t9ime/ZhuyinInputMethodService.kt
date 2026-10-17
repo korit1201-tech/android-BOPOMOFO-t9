@@ -184,6 +184,8 @@ class ZhuyinInputMethodService : InputMethodService() {
     private var vibrator: Vibrator? = null
     private var cachedVibrationEnabled = true
     private var cachedVibrationStrength = 5
+    private var lastAppliedTheme: com.bopomofo.t9ime.theme.AppTheme? = null
+    private var lastAppliedNightMode: Int? = null
     private var lastHapticTime = 0L
     private val hapticExecutor = java.util.concurrent.ThreadPoolExecutor(
         1, 1, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
@@ -258,6 +260,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
+        com.bopomofo.t9ime.util.CrashLogger.install(this)
         try {
             engine = ZhuyinT9Engine(this).apply {
                 onDictionaryLoadedListener = {
@@ -297,7 +300,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         try {
             val clipManager = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
             val listener = android.content.ClipboardManager.OnPrimaryClipChangedListener {
-                ClipboardHistoryManager.syncFromSystem(this, isCurrentInputPassword())
+                ClipboardHistoryManager.syncFromSystemAsync(this, isCurrentInputPassword())
             }
             clipListener = listener
             clipManager?.addPrimaryClipChangedListener(listener)
@@ -550,20 +553,24 @@ class ZhuyinInputMethodService : InputMethodService() {
         cachedVibrationStrength = PreferencesRepository.getVibrationStrength(this).coerceIn(5, 100)
         // 每次彈出輸入法，即時檢測實體鍵盤是否依然在線，若已拔除則立即恢復虛擬鍵盤
         val hasPhysical = isPhysicalKeyboardPresent()
-        if (hasPhysical) {
-            isHardwareKeyboardConnected = true
-        } else {
-            isHardwareKeyboardConnected = false
-        }
+        isHardwareKeyboardConnected = hasPhysical
+
         rootView?.let { root ->
-            ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
+            // 快取檢測：僅在主題或系統深色模式變動時才遍歷整棵 View 樹，避免每次彈出鍵盤重複重繪
+            val currentTheme = ThemeManager.getCurrentTheme(this)
+            val currentNightMode = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
+            if (lastAppliedTheme != currentTheme || lastAppliedNightMode != currentNightMode) {
+                lastAppliedTheme = currentTheme
+                lastAppliedNightMode = currentNightMode
+                ThemeManager.applyTheme(root, currentTheme)
+            }
             applyAdaptiveKeyboardHeight()
             applyOneHandedMode()
             updateKeyboardModeUI()
-            updateHardwareKeyboardState()
+            updateHardwareKeyboardState(hasPhysical)
         }
         if (!isCurrentInputPassword()) {
-            ClipboardHistoryManager.syncFromSystem(this, false)
+            ClipboardHistoryManager.syncFromSystemAsync(this, false)
         }
     }
 
@@ -574,7 +581,11 @@ class ZhuyinInputMethodService : InputMethodService() {
             isHardwareKeyboardConnected = false
         }
         rootView?.let { root ->
-            ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
+            val currentTheme = ThemeManager.getCurrentTheme(this)
+            val currentNightMode = newConfig.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
+            lastAppliedTheme = currentTheme
+            lastAppliedNightMode = currentNightMode
+            ThemeManager.applyTheme(root, currentTheme)
             applyAdaptiveKeyboardHeight()
             if (::layoutZhuyinFull.isInitialized) {
                 setupZhuyinFullLayout(root)
@@ -584,7 +595,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
             applyOneHandedMode()
             updateKeyboardModeUI()
-            updateHardwareKeyboardState()
+            updateHardwareKeyboardState(hasPhysical)
             if (isHardwareKeyboardConnected && currentCandidateList.isNotEmpty()) {
                 physicalCandidatePageIndex = 0
                 updateCandidateBar(currentCandidateList)
@@ -611,9 +622,8 @@ class ZhuyinInputMethodService : InputMethodService() {
         return false
     }
 
-    private fun updateHardwareKeyboardState() {
+    private fun updateHardwareKeyboardState(hasPhysical: Boolean = isPhysicalKeyboardPresent()) {
         if (!::layoutMainFrame.isInitialized || !::layoutBottomBar.isInitialized || !::layoutResizeHandle.isInitialized) return
-        val hasPhysical = isPhysicalKeyboardPresent()
         // 核心關鍵：若實體鍵盤已經被拔掉，hardConnected 絕對為 false，虛擬鍵盤無條件完全長回來！
         val hardConnected = isHardwareKeyboardConnected && hasPhysical
         isHardwareKeyboardConnected = hardConnected

@@ -406,6 +406,40 @@
                 android:text="🔍 檢查 GitHub 新版本" />
         </LinearLayout>
 
+        <!-- 區塊：系統診斷與崩潰日誌 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_key"
+            android:elevation="1dp"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🛠️ 系統診斷與崩潰日誌"
+                android:textColor="#212121"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="若輸入法遇到異常閃退、輸入框卡頓或異常中斷，可在此檢視診斷紀錄並複製提供給開發者除錯。"
+                android:textColor="#757575"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/btn_view_crash_log"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="📋 檢視診斷與崩潰日誌" />
+        </LinearLayout>
+
         <!-- 區塊五：第三方開源語料與授權致謝 -->
         <LinearLayout
             android:layout_width="match_parent"

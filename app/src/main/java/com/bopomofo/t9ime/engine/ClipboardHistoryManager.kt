@@ -11,41 +11,52 @@ object ClipboardHistoryManager {
     private const val KEY_HISTORY = "clipboard_history"
     private const val MAX_ITEMS = 10
 
+    private val lock = Any()
     private val historyList = mutableListOf<String>()
     private var isInitialized = false
 
+    private val asyncExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "ime-clipboard-bg").apply { isDaemon = true }
+    }
+
     fun init(context: Context) {
-        if (isInitialized) return
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        val jsonStr = prefs.getString(KEY_HISTORY, null)
-        var needTrim = false
-        if (!jsonStr.isNullOrEmpty()) {
-            try {
-                val array = JSONArray(jsonStr)
-                for (i in 0 until array.length()) {
-                    if (historyList.size < MAX_ITEMS) {
-                        historyList.add(array.getString(i))
-                    } else {
-                        needTrim = true
+        synchronized(lock) {
+            if (isInitialized) return
+            val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            val jsonStr = prefs.getString(KEY_HISTORY, null)
+            var needTrim = false
+            if (!jsonStr.isNullOrEmpty()) {
+                try {
+                    val array = JSONArray(jsonStr)
+                    for (i in 0 until array.length()) {
+                        if (historyList.size < MAX_ITEMS) {
+                            historyList.add(array.getString(i))
+                        } else {
+                            needTrim = true
+                        }
                     }
-                }
-            } catch (_: Exception) {}
-        }
-        isInitialized = true
-        if (needTrim) {
-            save(context)
+                } catch (_: Exception) {}
+            }
+            isInitialized = true
+            if (needTrim) {
+                save(context)
+            }
         }
     }
 
-    fun getHistory(): List<String> = historyList.take(MAX_ITEMS).toList()
+    fun getHistory(): List<String> = synchronized(lock) {
+        historyList.take(MAX_ITEMS).toList()
+    }
 
     fun addClip(context: Context, text: String) {
         if (text.isBlank() || text.length > 2000) return
-        if (historyList.firstOrNull() == text) return
-        historyList.remove(text)
-        historyList.add(0, text)
-        while (historyList.size > MAX_ITEMS) {
-            historyList.removeAt(historyList.lastIndex)
+        synchronized(lock) {
+            if (historyList.firstOrNull() == text) return
+            historyList.remove(text)
+            historyList.add(0, text)
+            while (historyList.size > MAX_ITEMS) {
+                historyList.removeAt(historyList.lastIndex)
+            }
         }
         save(context)
     }
@@ -71,8 +82,13 @@ object ClipboardHistoryManager {
             }
 
             if (clipData.itemCount > 0) {
-                val item = clipData.getItemAt(0)
-                val text = item?.coerceToText(context)?.toString()
+                val item = clipData.getItemAt(0) ?: return null
+                // 核心關鍵優化：優先直接取得記憶體中已存在的純文字，絕不盲目呼叫 coerceToText(context) 觸發 ContentResolver 跨應用 IPC 阻塞主執行緒
+                val text = item.text?.toString() ?: try {
+                    item.coerceToText(context)?.toString()
+                } catch (_: Exception) {
+                    null
+                }
                 if (!text.isNullOrBlank() && text.length <= 2000) {
                     addClip(context, text)
                     text
@@ -83,23 +99,51 @@ object ClipboardHistoryManager {
         }
     }
 
+    /**
+     * 非同步同步剪貼簿內容（供 onStartInputView 呼叫，確保主執行緒 0ms 零阻塞）
+     */
+    fun syncFromSystemAsync(context: Context, isPasswordInput: Boolean = false) {
+        if (isPasswordInput) return
+        val appContext = context.applicationContext
+        try {
+            asyncExecutor.execute {
+                try {
+                    syncFromSystem(appContext, false)
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+    }
+
     fun removeClip(context: Context, text: String) {
-        if (historyList.remove(text)) {
+        val removed = synchronized(lock) {
+            historyList.remove(text)
+        }
+        if (removed) {
             save(context)
         }
     }
 
     fun clearAll(context: Context) {
-        if (historyList.isNotEmpty()) {
-            historyList.clear()
+        val hadItems = synchronized(lock) {
+            if (historyList.isNotEmpty()) {
+                historyList.clear()
+                true
+            } else {
+                false
+            }
+        }
+        if (hadItems) {
             save(context)
         }
     }
 
     private fun save(context: Context) {
+        val snapshot = synchronized(lock) {
+            ArrayList(historyList)
+        }
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val array = JSONArray()
-        for (item in historyList) {
+        for (item in snapshot) {
             array.put(item)
         }
         prefs.edit().putString(KEY_HISTORY, array.toString()).apply()
