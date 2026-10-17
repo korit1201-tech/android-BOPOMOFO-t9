@@ -3779,9 +3779,8 @@ class ZhuyinInputMethodService : InputMethodService() {
         // 同步彈出懸浮同音字選單，確保在任何 App 輸入框長按時能直觀看到選單
         dismissHomophonePopup()
         try {
-            val anchor = candidateContainer ?: rootView
-            if (anchor != null) {
-                val popup = android.widget.PopupMenu(this, anchor)
+            if (::candidateContainer.isInitialized) {
+                val popup = android.widget.PopupMenu(this, candidateContainer)
                 activeHomophonePopup = popup
                 popup.menu.add(0, 0, 0, "✔ 保持原字【$targetChar】")
                 for ((index, homo) in homophones.withIndex()) {

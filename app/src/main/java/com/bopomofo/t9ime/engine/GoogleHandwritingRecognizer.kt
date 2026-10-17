@@ -15,7 +15,7 @@ import com.google.mlkit.vision.digitalink.Ink
  * Google ML Kit 官方高精度端側（On-Device）神經網絡手寫辨識引擎
  * 與 Gboard 同源的強大墨水筆跡識別技術，支援草書、連筆、任意筆順及中英數混寫
  */
-class GoogleHandwritingRecognizer(private val context: Context) {
+class GoogleHandwritingRecognizer(@Suppress("UNUSED_PARAMETER") context: Context? = null) {
 
     private var recognizer: DigitalInkRecognizer? = null
     private var model: DigitalInkRecognitionModel? = null

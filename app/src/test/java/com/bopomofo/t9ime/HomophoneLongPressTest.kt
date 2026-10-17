@@ -54,7 +54,6 @@ class HomophoneLongPressTest {
     @Test
     fun testCreateCustomWordFromCandidate() {
         // 模擬修改候選詞「今天」各字產生新自有詞「金添」
-        val originalWord = "今天"
         val originalZhuyin = "ㄐㄧㄣ ㄊㄧㄢ"
 
         // 1. 查詢第 1 字【今】同音字
