@@ -19,7 +19,8 @@ import java.io.InputStreamReader
  * - pollConfirmedPrefix 前綴確認門檻降低（≥6鍵、剩餘≥3鍵），讓連續輸入時「今天」等詞更快自動上屏
  * - getHomophonesFor() 同音字查詢，供候選詞長按替換功能使用
  */
-class ZhuyinT9Engine(private val context: Context? = null) {
+class ZhuyinT9Engine(rawContext: Context? = null) {
+    private val context = rawContext?.applicationContext ?: rawContext
 
     @Volatile
     private var trie = TrieDictionary()
@@ -85,8 +86,8 @@ class ZhuyinT9Engine(private val context: Context? = null) {
         private const val T9_BEAM = 4
         /** 斷詞時單一詞條權重上限，避免個人學習詞（5000 萬級權重）讓成本趨近 0 而綁架斷詞 */
         private const val T9_DP_WEIGHT_CAP = 600_000
-        /** 超過此鍵數不做整句斷詞（效能保護） */
-        private const val T9_MAX_DP_KEYS = 40
+        /** 超過此鍵數不做整句斷詞（效能保護：上限 16 鍵涵蓋 6~8 字常用短句，杜絕 DP 運算超時） */
+        private const val T9_MAX_DP_KEYS = 16
         /** 左側組合：先放幾個詞庫衍生的組合，再放音節切分組合 */
         private const val T9_WORD_COMBOS_FIRST = 5
         /** 左側組合：音節切分組合的數量 */
@@ -545,8 +546,10 @@ class ZhuyinT9Engine(private val context: Context? = null) {
      */
     fun rollbackLastConfirmedSyllable(): Boolean {
         if (confirmedSyllables.isNotEmpty()) {
-            confirmedSyllables.removeLast()
-            confirmedKeyCounts.removeLast()
+            confirmedSyllables.removeAt(confirmedSyllables.size - 1)
+            if (confirmedKeyCounts.isNotEmpty()) {
+                confirmedKeyCounts.removeAt(confirmedKeyCounts.size - 1)
+            }
             lockedZhuyinCombo = null
             recalculate()
             return true
@@ -1985,6 +1988,9 @@ class ZhuyinT9Engine(private val context: Context? = null) {
     }
 
     fun close() {
+        try {
+            userDict?.onDictionaryChangedListener = null
+        } catch (_: Exception) {}
         mainHandler?.removeCallbacks(bigramSaveRunnable)
         try {
             bigramExecutor.execute { saveBigramToFile() }

@@ -1,6 +1,7 @@
 package com.bopomofo.t9ime
 
 import android.annotation.SuppressLint
+import com.bopomofo.t9ime.ui.FontCache
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
@@ -184,7 +185,11 @@ class ZhuyinInputMethodService : InputMethodService() {
     private var cachedVibrationEnabled = true
     private var cachedVibrationStrength = 5
     private var lastHapticTime = 0L
-    private val hapticExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val hapticExecutor = java.util.concurrent.ThreadPoolExecutor(
+        1, 1, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+        java.util.concurrent.ArrayBlockingQueue(1),
+        java.util.concurrent.ThreadPoolExecutor.DiscardOldestPolicy()
+    )
 
     private lateinit var btnMode123: Button
     private lateinit var btnLangToggle: Button
@@ -322,12 +327,16 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
         } catch (_: Exception) {}
         clipListener = null
-        googleRecognizer?.close()
+        try {
+            googleRecognizer?.close()
+        } catch (_: Exception) {}
         if (::engine.isInitialized) {
-            engine.close()
+            try {
+                engine.close()
+            } catch (_: Exception) {}
         }
         try {
-            hapticExecutor.shutdown()
+            hapticExecutor.shutdownNow()
         } catch (_: Exception) {}
     }
 
@@ -632,9 +641,10 @@ class ZhuyinInputMethodService : InputMethodService() {
             lastHapticTime = now
 
             val vib = vibrator
-            if (vib != null && vib.hasVibrator()) {
+            if (vib != null && vib.hasVibrator() && !hapticExecutor.isShutdown) {
                 val strength = cachedVibrationStrength.coerceIn(5, 100)
-                hapticExecutor.execute {
+                try {
+                    hapticExecutor.execute {
                     try {
                         val durationMs = when (type) {
                             HapticType.KEY_PRESS -> ((strength * 0.45f) + 6f).toLong().coerceIn(8L, 50L)
@@ -658,6 +668,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                         }
                     } catch (_: Exception) {}
                 }
+            } catch (_: Exception) {}
             }
         } catch (_: Exception) {
             // 忽略非致命震動異常
@@ -707,10 +718,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         layoutCandidateBar = root.findViewById(R.id.layout_candidate_bar)
         layoutZhuyinPreview = root.findViewById(R.id.layout_zhuyin_preview)
         tvZhuyinFullPreview = root.findViewById(R.id.tv_zhuyin_full_preview)
-        try {
-            val f = androidx.core.content.res.ResourcesCompat.getFont(this, R.font.bopomofo_font)
-            if (f != null) tvZhuyinFullPreview?.typeface = android.graphics.Typeface.create(f, android.graphics.Typeface.BOLD)
-        } catch (_: Exception) {}
+        tvZhuyinFullPreview?.typeface = FontCache.getBopomofoBoldTypeface(this)
         tvZhuyinFullPreview?.setOnClickListener {
             triggerHapticFeedback(HapticType.COMMIT)
             val textToCommit = tvZhuyinFullPreview?.text?.toString() ?: ""
@@ -1577,11 +1585,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun createZhuyinFullKey(ch: Char, weight: Float, longClickChar: String? = null): Button {
-        val bopomofoTypeface = try {
-            androidx.core.content.res.ResourcesCompat.getFont(this, R.font.bopomofo_font)
-        } catch (e: Exception) {
-            null
-        }
+        val boldTf = FontCache.getBopomofoBoldTypeface(this) ?: android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
         val isLand = isPhoneLandscapeMode()
         return Button(this).apply {
             text = ch.toString()
@@ -1591,11 +1595,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             minHeight = 0
             setPadding(0, 0, 0, 0)
             compoundDrawablePadding = 0
-            if (bopomofoTypeface != null) {
-                typeface = android.graphics.Typeface.create(bopomofoTypeface, android.graphics.Typeface.BOLD)
-            } else {
-                typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
-            }
+            typeface = boldTf
             paint.isFakeBoldText = true
             textLocale = java.util.Locale.TRADITIONAL_CHINESE
             setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
@@ -2674,6 +2674,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
 
     private fun refreshUI(candidates: List<DictEntry>) {
+        if (!::candidateContainer.isInitialized) return
         updateComposingPreview()
         updateCandidateBar(candidates)
         updateLeftZhuyinCombos()
@@ -2722,6 +2723,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun updateLeftZhuyinCombos() {
+        if (!::containerZhuyinCombos.isInitialized || !::layoutSymbols.isInitialized || !::scrollZhuyinCombos.isInitialized) return
         if (!engine.hasComposing() || currentMode != KeyboardMode.ZHUYIN) {
             layoutSymbols.visibility = View.VISIBLE
             scrollZhuyinCombos.visibility = View.GONE
@@ -2748,11 +2750,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         val currentTheme = ThemeManager.getCurrentTheme(this)
         val themeColors = ThemeManager.getThemeColors(this, currentTheme)
         val radiusPx = 6f * density
-        val bopomofoTypeface = try {
-            androidx.core.content.res.ResourcesCompat.getFont(this, R.font.bopomofo_font)
-        } catch (e: Exception) {
-            null
-        }
+        val boldTf = FontCache.getBopomofoBoldTypeface(this) ?: android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
 
         for (i in 0 until count) {
             val combo = combos[i]
@@ -2777,11 +2775,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             // 套用當前主題顏色與圓角邊框（徹底去除寫死橘色 #E65100，完全融合主題配色）
             btn.background = ThemeManager.createKeyDrawable(themeColors.actionKeyBg, themeColors.keyPressed, themeColors.stroke, radiusPx)
             btn.setTextColor(themeColors.accent)
-            if (bopomofoTypeface != null) {
-                btn.typeface = android.graphics.Typeface.create(bopomofoTypeface, android.graphics.Typeface.BOLD)
-            } else {
-                btn.typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
-            }
+            btn.typeface = boldTf
 
             // SwiftKey 單字音節模型：字串短小精確，字級調大清晰好讀
             val dynamicTextSize = when {
