@@ -100,13 +100,11 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
 
     init {
         initDefaultBigrams()
-        if (userDict != null) {
+        loadUserDictionaryEntries(trie, charZhuyinMap, fullZhuyinWordMap)
+        userDict.onDictionaryChangedListener = {
             loadUserDictionaryEntries(trie, charZhuyinMap, fullZhuyinWordMap)
-            userDict.onDictionaryChangedListener = {
-                loadUserDictionaryEntries(trie, charZhuyinMap, fullZhuyinWordMap)
-                if (currentKeys.isNotEmpty()) {
-                    recalculate()
-                }
+            if (currentKeys.isNotEmpty()) {
+                recalculate()
             }
         }
         if (context != null) {
@@ -499,8 +497,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     }
 
     /**
-     * 直接設置指定聲調（如大千實體鍵盤 3, 4, 6, 7 聲調鍵精確輸入）
-     * 若再次輸入同一個聲調則取消聲調 (Toggle 回無聲調)
+     * 直接設置指定聲調（供測試與實體鍵盤聲調鍵直接指定）
      */
     fun setTone(toneChar: Char): Pair<Char, List<DictEntry>> {
         if (currentKeys.isEmpty()) return Pair(' ', emptyList())
@@ -538,8 +535,6 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             emptyList()
         }
     }
-
-    fun hasRemainingKeys(): Boolean = getRemainingKeys().isNotEmpty()
 
     /**
      * SwiftKey 階梯式確認當前音節：
@@ -645,10 +640,6 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         previousTopWord = null
         recalculate()
         return cachedCandidates
-    }
-
-    fun selectZhuyinCombo(zhuyin: String): List<DictEntry> {
-        return confirmStepSyllable(zhuyin)
     }
 
     private var previousTopWord: String? = null
@@ -1061,14 +1052,6 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     }
 
 
-    /**
-     * 檢查給定按鍵序列在 Trie 中是否存在完全匹配或前綴延伸詞
-     */
-    fun hasPrefixOrExact(sequence: List<Int>): Boolean {
-        return trie.searchNode(sequence) != null
-    }
-
-
     var currentContextWord: String? = null
 
     private fun applyLockFilter(baseList: List<DictEntry>) {
@@ -1156,10 +1139,6 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             }
         }
         cachedCandidates = baseList
-    }
-
-    private fun recalculateCandidatesOnly() {
-        recalculate()
     }
 
     // ───────── 對外查詢 API ─────────
@@ -2056,7 +2035,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
 
     fun close() {
         try {
-            userDict?.onDictionaryChangedListener = null
+            userDict.onDictionaryChangedListener = null
         } catch (_: Exception) {}
         mainHandler?.removeCallbacks(bigramSaveRunnable)
         try {
