@@ -1276,6 +1276,98 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         return if (formattedRem.isNotEmpty()) "$confirmed $formattedRem" else confirmed
     }
 
+    /**
+     * 九鍵專用：只根據「使用者真實按下的鍵」產生輸入狀態預覽（上方 composing 文字）。
+     *
+     * 與 [getTopComposingWord]／[getFullComposingZhuyin] 的差異：後兩者取候選詞第一名，
+     * 其中包含「前綴預測」（只按 1 鍵卻回傳 3、4 音節的詞），會讓預測污染輸入狀態。
+     * 本函式完全不讀 cachedCandidates，輸出的注音符號數量永遠等於實際按鍵數（聲調鍵除外）：
+     * - 已由使用者確認的音節：原樣呈現
+     * - 其餘按鍵：由左而右貪婪取「剛好吃掉 N 鍵」的合法音節（N>=2）；單鍵或無合法音節時顯示該鍵的首個注音符號
+     * - 尾端聲調鍵：顯示使用者目前選的聲調；中間夾雜的聲調鍵略過
+     */
+    fun getKeyOnlyPreview(): String {
+        if (currentKeys.isEmpty()) return ""
+        val sb = StringBuilder()
+        for (syl in confirmedSyllables) sb.append(syl)
+
+        val remaining = getRemainingKeys()
+        val toneChar = if (currentToneIndex in 1 until TONE_SYMBOLS.size) TONE_SYMBOLS[currentToneIndex] else null
+        var i = 0
+        while (i < remaining.size) {
+            val key = remaining[i]
+            if (key == 11) {
+                if (i == remaining.size - 1 && toneChar != null) sb.append(toneChar)
+                i++
+                continue
+            }
+            var runLen = 0
+            while (i + runLen < remaining.size && remaining[i + runLen] != 11 && runLen < 4) runLen++
+
+            var consumed = 1
+            var piece: String? = null
+            for (take in runLen downTo 2) {
+                val syl = SyllableManager.getExactSyllables(remaining.subList(i, i + take)).firstOrNull()
+                if (syl != null && syl.length == take) {
+                    piece = syl
+                    consumed = take
+                    break
+                }
+            }
+            sb.append(piece ?: (KeyMapping.getChars(key).firstOrNull()?.toString() ?: ""))
+            i += consumed
+        }
+        return sb.toString()
+    }
+
+    /**
+     * 九鍵專用：輸入狀態快照，供「按下即輸入、滑動時精準還原」使用。
+     * 只保存參照與小型複本；還原時不重新計算候選，因此是 O(1) 且不會殘留任何預測狀態。
+     */
+    class InputSnapshot internal constructor(
+        internal val keys: List<Int>,
+        internal val toneIndex: Int,
+        internal val locked: String?,
+        internal val confirmed: List<String>,
+        internal val confirmedCounts: List<Int>,
+        internal val prevTop: String?,
+        internal val lastRecalcKeyCount: Int,
+        internal val candidates: List<DictEntry>,
+        internal val combos: List<String>
+    )
+
+    fun captureInputState(): InputSnapshot = InputSnapshot(
+        keys = currentKeys.toList(),
+        toneIndex = currentToneIndex,
+        locked = lockedZhuyinCombo,
+        confirmed = confirmedSyllables.toList(),
+        confirmedCounts = confirmedKeyCounts.toList(),
+        prevTop = previousTopWord,
+        lastRecalcKeyCount = lastRecalcKeyCount,
+        candidates = cachedCandidates,
+        combos = cachedZhuyinCombos
+    )
+
+    /** 目前輸入狀態是否與快照完全一致（用來確認在快照之後沒有其他手指又輸入了別的鍵） */
+    fun isSameInputState(s: InputSnapshot): Boolean =
+        currentKeys == s.keys && currentToneIndex == s.toneIndex && confirmedKeyCounts == s.confirmedCounts
+
+    fun restoreInputState(s: InputSnapshot): List<DictEntry> {
+        currentKeys.clear()
+        currentKeys.addAll(s.keys)
+        currentToneIndex = s.toneIndex
+        lockedZhuyinCombo = s.locked
+        confirmedSyllables.clear()
+        confirmedSyllables.addAll(s.confirmed)
+        confirmedKeyCounts.clear()
+        confirmedKeyCounts.addAll(s.confirmedCounts)
+        previousTopWord = s.prevTop
+        lastRecalcKeyCount = s.lastRecalcKeyCount
+        cachedCandidates = s.candidates
+        cachedZhuyinCombos = s.combos
+        return cachedCandidates
+    }
+
     fun getCandidates(): List<DictEntry> = cachedCandidates
 
     val currentCandidates: List<DictEntry>

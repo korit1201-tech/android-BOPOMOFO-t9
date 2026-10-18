@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.SystemClock
+import android.util.Log
 import android.util.AttributeSet
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -60,8 +61,10 @@ class SwipeKeyButton @JvmOverloads constructor(
     private var activePointerId = MotionEvent.INVALID_POINTER_ID
     private var lastTapUptimeMs = 0L
     private var isHoldingForCompass = false
+    private var compassDueUptimeMs = 0L
 
     companion object {
+        private const val TAG = "BopomofoIME_Touch"
         private const val COMPASS_HOLD_DELAY_MS = 250L      // 250ms 黃金長按時間
         private const val RAPID_TAP_COOLDOWN_MS = 150L      // 連打抑制：距上次擊鍵 < 150ms 延後啟動羅盤
         private const val STILL_RADIUS_DP = 12f             // 手指靜止半徑：容許自然生理微抖動，超過 12dp 視為滑動
@@ -84,11 +87,21 @@ class SwipeKeyButton @JvmOverloads constructor(
     private var tvLeft: TextView? = null
     private var tvRight: TextView? = null
 
-    private val showPopupRunnable = Runnable {
-        if (isPressed && isHoldingForCompass) {
-            isCompassActive = true
-            showPreviewPopup()
+    private val showPopupRunnable = Runnable { activateCompass("timer") }
+
+    /**
+     * 展開羅盤。不再依賴 View.isPressed（框架可能在版面變動時重設它），
+     * 只看本按鍵是否仍在「等待長按」狀態且手指尚未抬起。
+     */
+    private fun activateCompass(source: String) {
+        if (isCompassActive) return
+        if (!isHoldingForCompass || activePointerId == MotionEvent.INVALID_POINTER_ID) {
+            Log.d(TAG, "compass skip($source): holding=$isHoldingForCompass pointer=$activePointerId id=$id")
+            return
         }
+        isCompassActive = true
+        Log.d(TAG, "compass show($source): id=$id w=$width h=$height")
+        showPreviewPopup()
     }
 
     private fun initPopupView() {
@@ -119,12 +132,19 @@ class SwipeKeyButton @JvmOverloads constructor(
     }
 
     private fun showPreviewPopup() {
-        val labels = swipeLabelsProvider?.invoke() ?: return
-        if (labels.isEmpty()) return
+        val labels = swipeLabelsProvider?.invoke()
+        if (labels == null || labels.isEmpty()) {
+            Log.w(TAG, "popup abort: labels empty id=$id")
+            return
+        }
 
         initPopupView()
-        val popup = previewPopup ?: return
-        val view = popupView ?: return
+        val popup = previewPopup
+        val view = popupView
+        if (popup == null || view == null) {
+            Log.w(TAG, "popup abort: popup view not created id=$id")
+            return
+        }
 
         tvUp?.text = labels[Direction.UP] ?: ""
         tvDown?.text = labels[Direction.DOWN] ?: ""
@@ -147,8 +167,12 @@ class SwipeKeyButton @JvmOverloads constructor(
                 view.alpha = 0f
                 popup.showAtLocation(this, Gravity.NO_GRAVITY, xOff, yOff)
                 view.animate().scaleX(1.0f).scaleY(1.0f).alpha(1.0f).setDuration(90).start()
+                Log.d(TAG, "popup shown: id=$id x=$xOff y=$yOff size=$popupSize")
+            } else {
+                Log.w(TAG, "popup not shown: isShowing=${popup.isShowing} windowToken=${windowToken != null} id=$id")
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.e(TAG, "popup show failed id=$id", e)
         }
     }
 
@@ -246,8 +270,10 @@ class SwipeKeyButton @JvmOverloads constructor(
         val cooldownRemaining = RAPID_TAP_COOLDOWN_MS - (now - lastTapUptimeMs)
         val delay = COMPASS_HOLD_DELAY_MS + maxOf(0, cooldownRemaining)
         isHoldingForCompass = true
+        compassDueUptimeMs = now + delay
         postDelayed(showPopupRunnable, delay)
         lastTapUptimeMs = now
+        Log.d(TAG, "down: id=$id fast=$allowFastFlick delay=${delay}ms")
     }
 
     /**
@@ -259,10 +285,16 @@ class SwipeKeyButton @JvmOverloads constructor(
         val distSq = dx * dx + dy * dy
         val stillRadiusPx = STILL_RADIUS_DP * resources.displayMetrics.density
 
-        // 若手指移動距離已超過 6dp 且羅盤尚未展開，表示手指在滑移滾動而非長按，立即取消羅盤預備
-        if (isHoldingForCompass && !isCompassActive && distSq > stillRadiusPx * stillRadiusPx) {
-            removeCallbacks(showPopupRunnable)
-            isHoldingForCompass = false
+        if (isHoldingForCompass && !isCompassActive) {
+            if (!allowFastFlick && SystemClock.uptimeMillis() >= compassDueUptimeMs) {
+                // 長按時間已到：即使計時器 Runnable 因主執行緒忙碌尚未執行，也不能因為手指開始移動而丟失羅盤
+                activateCompass("move")
+            } else if (distSq > stillRadiusPx * stillRadiusPx) {
+                // 長按時間未到就移動超過靜止半徑：視為滑移滾動而非長按，取消羅盤預備
+                Log.d(TAG, "compass cancel(moved): id=$id dist=${kotlin.math.sqrt(distSq) / resources.displayMetrics.density}dp")
+                removeCallbacks(showPopupRunnable)
+                isHoldingForCompass = false
+            }
         }
 
         // 檢查是否展開羅盤或劃出方向

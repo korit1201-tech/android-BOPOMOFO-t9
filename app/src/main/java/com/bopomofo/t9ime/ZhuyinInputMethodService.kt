@@ -1133,6 +1133,10 @@ class ZhuyinInputMethodService : InputMethodService() {
         return root
     }
 
+    /** 九鍵各鍵最近一次按下的（按下前, 按下後）輸入狀態快照，供四向滑動時精準還原 */
+    private val swipeRollbackSnapshots =
+        arrayOfNulls<Pair<ZhuyinT9Engine.InputSnapshot, ZhuyinT9Engine.InputSnapshot>>(13)
+
     private fun setup12KeyLayout(root: View) {
         // 顯式開啟主鍵盤容器與 12 鍵區之多點觸控分割 (Multi-touch Split)，確保雙手極速交替跨鍵敲擊不丟失 Pointer
         root.findViewById<ViewGroup>(R.id.layout_main_frame)?.isMotionEventSplittingEnabled = true
@@ -1165,6 +1169,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                             isHomophoneSelectionMode = false
                             homophoneCharIndex = -1
                         }
+                        val stateBefore = engine.captureInputState()
                         if (keyNum == 11) {
                             val (_, candidates) = engine.cycleTone()
                             refreshUI(candidates)
@@ -1172,6 +1177,8 @@ class ZhuyinInputMethodService : InputMethodService() {
                             engine.pressKey(keyNum)
                             refreshUI(engine.getCandidates())
                         }
+                        // 記下此次按下前後的狀態，若隨後滑動則精準還原（不靠 backspace 推算）
+                        swipeRollbackSnapshots[keyNum] = stateBefore to engine.captureInputState()
                     }
                     KeyboardMode.NUMBER_SYM -> {
                         commitTextDirectly(getNumberChar(keyNum))
@@ -1187,7 +1194,17 @@ class ZhuyinInputMethodService : InputMethodService() {
                 dismissHomophonePopup()
                 when (currentMode) {
                     KeyboardMode.ZHUYIN -> {
-                        if (engine.hasComposing()) {
+                        val snap = swipeRollbackSnapshots[keyNum]
+                        swipeRollbackSnapshots[keyNum] = null
+                        if (snap != null && engine.isSameInputState(snap.second)) {
+                            // 精準還原到「這一下按鍵之前」的狀態（含聲調、已確認音節），不污染也不誤刪前面的鍵
+                            val candidates = engine.restoreInputState(snap.first)
+                            refreshUI(candidates)
+                            if (!engine.hasComposing()) {
+                                clearCandidateBar()
+                            }
+                        } else if (engine.hasComposing()) {
+                            // 保底：期間有其他手指又輸入了鍵，無法整體還原，退回刪除最後一鍵
                             val candidates = engine.backspace()
                             refreshUI(candidates)
                             if (!engine.hasComposing()) {
@@ -1195,7 +1212,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                             }
                         }
                         val zhuyin = getSwipeZhuyin(keyNum, direction)
-                        if (zhuyin != null) commitTextDirectly(zhuyin.toString())
+                        if (zhuyin != null) commitSwipeSymbol(zhuyin.toString())
                     }
                     KeyboardMode.NUMBER_SYM -> {
                         // 純數字模式不提供英文滑動輸入
@@ -2775,7 +2792,6 @@ class ZhuyinInputMethodService : InputMethodService() {
     private fun updateZhuyinFullPreview() {
         val previewText = when (currentMode) {
             KeyboardMode.ZHUYIN_FULL -> fullZhuyinBuffer.toString()
-            KeyboardMode.ZHUYIN -> if (engine.hasComposing()) engine.getFullComposingZhuyin() else ""
             else -> ""
         }
         if (previewText.isNotEmpty()) {
@@ -2808,9 +2824,41 @@ class ZhuyinInputMethodService : InputMethodService() {
             lastComposingEnd = -1
             return
         }
-        val previewWord = customComposingWord ?: engine.getTopComposingWord()
+        val custom = customComposingWord
+        if (custom == null && currentMode == KeyboardMode.ZHUYIN) {
+            // 九鍵：上方輸入狀態只顯示「真實按下的鍵」，預測詞只出現在候選列，絕不寫進輸入狀態
+            currentInputConnection?.setComposingText(engine.getKeyOnlyPreview(), 1)
+            return
+        }
+        val previewWord = custom ?: engine.getTopComposingWord()
         val finalPreview = if (isSimplified) ChineseConverter.toSimplified(previewWord) else previewWord
         currentInputConnection?.setComposingText(finalPreview, 1)
+    }
+
+    /**
+     * 九鍵四向滑動輸入單一注音符號：獨立上屏，不碰目前的組字。
+     * 組字中時先暫時清掉輸入框的 composing（否則 commitText 會把它整段取代掉），
+     * 上屏符號後再依真實按鍵還原 composing，符號會落在組字文字之前。
+     */
+    private fun commitSwipeSymbol(symbol: String) {
+        customComposingWord = null
+        replacedCharsMap.clear()
+        isHomophoneSelectionMode = false
+        homophoneCharIndex = -1
+        if (!engine.hasComposing()) {
+            commitTextDirectly(symbol)
+            return
+        }
+        val ic = currentInputConnection ?: return
+        ic.beginBatchEdit()
+        try {
+            ic.setComposingText("", 1)
+            ic.commitText(symbol, 1)
+            updateComposingPreview()
+        } finally {
+            ic.endBatchEdit()
+        }
+        lastCommittedWord = null
     }
 
     private fun updateLeftZhuyinCombos() {
