@@ -62,9 +62,9 @@ class SwipeKeyButton @JvmOverloads constructor(
     private var isHoldingForCompass = false
 
     companion object {
-        private const val COMPASS_HOLD_DELAY_MS = 350L      // 由 200ms 拉長至 350ms，避免快打猶豫誤觸
-        private const val RAPID_TAP_COOLDOWN_MS = 150L      // 連打抑制：距上次擊鍵 < 150ms 不啟動羅盤
-        private const val STILL_RADIUS_DP = 6f              // 手指靜止半徑：移動超過 6dp 視為滑動，立即取消羅盤預備
+        private const val COMPASS_HOLD_DELAY_MS = 250L      // 250ms 黃金長按時間
+        private const val RAPID_TAP_COOLDOWN_MS = 150L      // 連打抑制：距上次擊鍵 < 150ms 延後啟動羅盤
+        private const val STILL_RADIUS_DP = 12f             // 手指靜止半徑：容許自然生理微抖動，超過 12dp 視為滑動
         private const val SWIPE_THRESHOLD_RATIO = 0.35f     // 滑動判定門檻 = 按鍵寬度的 35%
         private const val MIN_SWIPE_THRESHOLD_DP = 22f      // 最小滑動像素防護
     }
@@ -242,14 +242,11 @@ class SwipeKeyButton @JvmOverloads constructor(
         }
 
         removeCallbacks(showPopupRunnable)
-        // 連打抑制判定：若距離上次點擊小於 150ms，視為快速連打，不啟動羅盤計時
         val now = SystemClock.uptimeMillis()
-        if (now - lastTapUptimeMs >= RAPID_TAP_COOLDOWN_MS) {
-            isHoldingForCompass = true
-            postDelayed(showPopupRunnable, COMPASS_HOLD_DELAY_MS)
-        } else {
-            isHoldingForCompass = false
-        }
+        val cooldownRemaining = RAPID_TAP_COOLDOWN_MS - (now - lastTapUptimeMs)
+        val delay = COMPASS_HOLD_DELAY_MS + maxOf(0, cooldownRemaining)
+        isHoldingForCompass = true
+        postDelayed(showPopupRunnable, delay)
         lastTapUptimeMs = now
     }
 
