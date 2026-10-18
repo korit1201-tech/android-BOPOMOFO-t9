@@ -55,14 +55,24 @@ class SwipeKeyButton @JvmOverloads constructor(
     private var downTime = 0L
     private var isCompassActive = false
     private var activeDirection: Direction? = null
+    private var activePointerId = MotionEvent.INVALID_POINTER_ID
+    private var lastTapUptimeMs = 0L
+    private var isHoldingForCompass = false
 
     companion object {
-        private const val SWIPE_THRESHOLD_DP = 28f
-        private const val COMPASS_HOLD_DELAY_MS = 200L
+        private const val COMPASS_HOLD_DELAY_MS = 350L      // 由 200ms 拉長至 350ms，避免快打猶豫誤觸
+        private const val RAPID_TAP_COOLDOWN_MS = 150L      // 連打抑制：距上次擊鍵 < 150ms 不啟動羅盤
+        private const val STILL_RADIUS_DP = 6f              // 手指靜止半徑：移動超過 6dp 視為滑動，立即取消羅盤預備
+        private const val SWIPE_THRESHOLD_RATIO = 0.35f     // 滑動判定門檻 = 按鍵寬度的 35%
+        private const val MIN_SWIPE_THRESHOLD_DP = 22f      // 最小滑動像素防護
     }
 
     private val swipeThresholdPx: Float
-        get() = SWIPE_THRESHOLD_DP * resources.displayMetrics.density
+        get() {
+            val minPx = MIN_SWIPE_THRESHOLD_DP * resources.displayMetrics.density
+            val ratioPx = width * SWIPE_THRESHOLD_RATIO
+            return if (ratioPx > minPx) ratioPx else minPx
+        }
 
     private var previewPopup: PopupWindow? = null
     private var popupView: View? = null
@@ -72,7 +82,7 @@ class SwipeKeyButton @JvmOverloads constructor(
     private var tvRight: TextView? = null
 
     private val showPopupRunnable = Runnable {
-        if (isPressed) {
+        if (isPressed && isHoldingForCompass) {
             isCompassActive = true
             showPreviewPopup()
         }
@@ -196,6 +206,7 @@ class SwipeKeyButton @JvmOverloads constructor(
 
     private fun dismissPreviewPopup() {
         removeCallbacks(showPopupRunnable)
+        isHoldingForCompass = false
         val popup = previewPopup
         if (popup != null && popup.isShowing) {
             try {
@@ -210,6 +221,7 @@ class SwipeKeyButton @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                activePointerId = event.getPointerId(0)
                 startX = event.x
                 startY = event.y
                 downTime = SystemClock.uptimeMillis()
@@ -226,40 +238,61 @@ class SwipeKeyButton @JvmOverloads constructor(
                 }
 
                 removeCallbacks(showPopupRunnable)
-                postDelayed(showPopupRunnable, COMPASS_HOLD_DELAY_MS)
+                // 連打抑制判定：若距離上次點擊小於 150ms，視為快速連打，不啟動羅盤計時
+                val now = SystemClock.uptimeMillis()
+                if (now - lastTapUptimeMs >= RAPID_TAP_COOLDOWN_MS) {
+                    isHoldingForCompass = true
+                    postDelayed(showPopupRunnable, COMPASS_HOLD_DELAY_MS)
+                } else {
+                    isHoldingForCompass = false
+                }
+                lastTapUptimeMs = now
                 return true
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 val index = event.actionIndex
-                startX = event.getX(index)
-                startY = event.getY(index)
-                downTime = SystemClock.uptimeMillis()
-                isCompassActive = false
-                activeDirection = null
-                isPressed = true
-
-                onDownAction?.invoke()
-
+                // 同鍵多點觸控/雙指極速連打：第二指落在同鍵瞬間，0ms 立即觸發新一擊，絕不吞鍵！
                 if (!allowFastFlick) {
-                    // 同鍵多點觸控/雙指極速連打：第二指落在同鍵瞬間，0ms 立即觸發新一擊，絕不吞鍵！
                     performClick()
                     onTapListener?.invoke()
                 }
 
+                // 若目前主指已失效，轉移給新落下的手指
+                if (activePointerId == MotionEvent.INVALID_POINTER_ID) {
+                    activePointerId = event.getPointerId(index)
+                    startX = event.getX(index)
+                    startY = event.getY(index)
+                    downTime = SystemClock.uptimeMillis()
+                    isCompassActive = false
+                    activeDirection = null
+                }
+                // 多指連打時強烈抑制羅盤長按
                 removeCallbacks(showPopupRunnable)
-                postDelayed(showPopupRunnable, COMPASS_HOLD_DELAY_MS)
+                isHoldingForCompass = false
+                lastTapUptimeMs = SystemClock.uptimeMillis()
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                val holdElapsed = SystemClock.uptimeMillis() - downTime
-                if (holdElapsed >= COMPASS_HOLD_DELAY_MS && !isCompassActive) {
-                    isCompassActive = true
-                    showPreviewPopup()
+                val pointerIdx = if (activePointerId != MotionEvent.INVALID_POINTER_ID) {
+                    event.findPointerIndex(activePointerId)
+                } else 0
+                if (pointerIdx < 0 || pointerIdx >= event.pointerCount) return true
+
+                val curX = event.getX(pointerIdx)
+                val curY = event.getY(pointerIdx)
+                val dx = curX - startX
+                val dy = curY - startY
+                val distSq = dx * dx + dy * dy
+                val stillRadiusPx = STILL_RADIUS_DP * resources.displayMetrics.density
+
+                // 若手指移動距離已超過 6dp 且羅盤尚未展開，表示手指在滑移滾動而非長按，立即取消羅盤預備
+                if (isHoldingForCompass && !isCompassActive && distSq > stillRadiusPx * stillRadiusPx) {
+                    removeCallbacks(showPopupRunnable)
+                    isHoldingForCompass = false
                 }
 
+                // 檢查是否展開羅盤或劃出方向
                 if (isCompassActive || allowFastFlick) {
-                    val dx = event.x - startX
-                    val dy = event.y - startY
                     val absDx = abs(dx)
                     val absDy = abs(dy)
                     val threshold = swipeThresholdPx
@@ -280,17 +313,35 @@ class SwipeKeyButton @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_POINTER_UP -> {
+                val index = event.actionIndex
+                val pointerId = event.getPointerId(index)
+                // 若抬起的是主控手指，將控制權平滑移交給其餘仍在螢幕上的手指，並取消羅盤倒數
+                if (pointerId == activePointerId) {
+                    removeCallbacks(showPopupRunnable)
+                    isHoldingForCompass = false
+                    val remainingIndex = if (index == 0) 1 else 0
+                    if (remainingIndex < event.pointerCount) {
+                        activePointerId = event.getPointerId(remainingIndex)
+                        startX = event.getX(remainingIndex)
+                        startY = event.getY(remainingIndex)
+                    } else {
+                        activePointerId = MotionEvent.INVALID_POINTER_ID
+                    }
+                }
                 return true
             }
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(showPopupRunnable)
+                isHoldingForCompass = false
                 isPressed = false
+                activePointerId = MotionEvent.INVALID_POINTER_ID
 
                 val selectedDir = activeDirection
                 val wasCompass = isCompassActive
                 dismissPreviewPopup()
 
-                // 若羅盤已展開且選中方向，或為允許快速輕彈滑動的按鈕（如空白鍵）且已劃出方向，則觸發 Swipe
+                // 核心防護：只有在明確劃出方向 (selectedDir != null) 時才調用 onSwipeListener（回滾退格並上屏注音）
+                // 若使用者只是停留猶豫後原地抬起 (selectedDir == null)，維持原本 0ms DOWN 的 tap，絕不觸發退格！
                 if (selectedDir != null && (wasCompass || allowFastFlick)) {
                     onSwipeListener?.invoke(selectedDir)
                 } else if (allowFastFlick) {
@@ -298,11 +349,13 @@ class SwipeKeyButton @JvmOverloads constructor(
                     performClick()
                     onTapListener?.invoke()
                 }
-                // 注：若 allowFastFlick == false，Tap 已在 ACTION_DOWN / ACTION_POINTER_DOWN 即刻完成，UP 無需重複觸發
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(showPopupRunnable)
+                isHoldingForCompass = false
                 isPressed = false
+                activePointerId = MotionEvent.INVALID_POINTER_ID
                 dismissPreviewPopup()
                 return true
             }
