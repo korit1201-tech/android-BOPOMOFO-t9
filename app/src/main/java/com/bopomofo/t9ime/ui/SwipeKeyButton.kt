@@ -53,8 +53,10 @@ class SwipeKeyButton @JvmOverloads constructor(
     private var startX = 0f
     private var startY = 0f
     private var downTime = 0L
-    private var isCompassActive = false
-    private var activeDirection: Direction? = null
+    var isCompassActive: Boolean = false
+        internal set
+    var activeDirection: Direction? = null
+        internal set
     private var activePointerId = MotionEvent.INVALID_POINTER_ID
     private var lastTapUptimeMs = 0L
     private var isHoldingForCompass = false
@@ -70,6 +72,7 @@ class SwipeKeyButton @JvmOverloads constructor(
     private val swipeThresholdPx: Float
         get() {
             val minPx = MIN_SWIPE_THRESHOLD_DP * resources.displayMetrics.density
+            if (allowFastFlick) return minPx  // 空白鍵維持固定小門檻，不隨按鍵寬度放大
             val ratioPx = width * SWIPE_THRESHOLD_RATIO
             return if (ratioPx > minPx) ratioPx else minPx
         }
@@ -218,58 +221,128 @@ class SwipeKeyButton @JvmOverloads constructor(
         activeDirection = null
     }
 
+    /**
+     * 手指落下或平滑滾入此按鍵（由 KeyboardTouchLayout 容器或自身 onTouchEvent 呼叫）
+     */
+    fun fingerDown(pointerId: Int, x: Float, y: Float) {
+        activePointerId = pointerId
+        startX = x
+        startY = y
+        downTime = SystemClock.uptimeMillis()
+        isCompassActive = false
+        activeDirection = null
+        isPressed = true
+
+        onDownAction?.invoke()
+
+        if (!allowFastFlick) {
+            // 12 鍵主鍵盤 (T9 Mode)：0ms 接觸即刻送出 Tap 結算，時序由物理接觸螢幕順序嚴格鎖定！
+            performClick()
+            onTapListener?.invoke()
+        }
+
+        removeCallbacks(showPopupRunnable)
+        // 連打抑制判定：若距離上次點擊小於 150ms，視為快速連打，不啟動羅盤計時
+        val now = SystemClock.uptimeMillis()
+        if (now - lastTapUptimeMs >= RAPID_TAP_COOLDOWN_MS) {
+            isHoldingForCompass = true
+            postDelayed(showPopupRunnable, COMPASS_HOLD_DELAY_MS)
+        } else {
+            isHoldingForCompass = false
+        }
+        lastTapUptimeMs = now
+    }
+
+    /**
+     * 手指在此按鍵內移動（由 KeyboardTouchLayout 容器或自身 onTouchEvent 呼叫）
+     */
+    fun fingerMove(x: Float, y: Float) {
+        val dx = x - startX
+        val dy = y - startY
+        val distSq = dx * dx + dy * dy
+        val stillRadiusPx = STILL_RADIUS_DP * resources.displayMetrics.density
+
+        // 若手指移動距離已超過 6dp 且羅盤尚未展開，表示手指在滑移滾動而非長按，立即取消羅盤預備
+        if (isHoldingForCompass && !isCompassActive && distSq > stillRadiusPx * stillRadiusPx) {
+            removeCallbacks(showPopupRunnable)
+            isHoldingForCompass = false
+        }
+
+        // 檢查是否展開羅盤或劃出方向
+        if (isCompassActive || allowFastFlick) {
+            val absDx = abs(dx)
+            val absDy = abs(dy)
+            val threshold = swipeThresholdPx
+
+            val isDominantX = absDx > absDy * 1.25f
+            val isDominantY = absDy > absDx * 1.25f
+            if ((absDx > threshold || absDy > threshold) && (isDominantX || isDominantY)) {
+                val dir = if (isDominantX) {
+                    if (dx > 0) Direction.RIGHT else Direction.LEFT
+                } else {
+                    if (dy > 0) Direction.DOWN else Direction.UP
+                }
+                updateActiveDirection(dir)
+            } else {
+                updateActiveDirection(null)
+            }
+        }
+    }
+
+    /**
+     * 手指抬起（由 KeyboardTouchLayout 容器或自身 onTouchEvent 呼叫）
+     */
+    fun fingerUp() {
+        removeCallbacks(showPopupRunnable)
+        isHoldingForCompass = false
+        isPressed = false
+        activePointerId = MotionEvent.INVALID_POINTER_ID
+
+        val selectedDir = activeDirection
+        val wasCompass = isCompassActive
+        dismissPreviewPopup()
+
+        // 核心防護：只有在明確劃出方向 (selectedDir != null) 時才調用 onSwipeListener（回滾退格並上屏注音）
+        // 若使用者只是停留猶豫後原地抬起 (selectedDir == null)，維持原本 0ms DOWN 的 tap，絕不觸發退格！
+        if (selectedDir != null && (wasCompass || allowFastFlick)) {
+            onSwipeListener?.invoke(selectedDir)
+        } else if (allowFastFlick) {
+            // 僅允許快速滑動的按鈕（如空白鍵）在 UP 結算 Tap
+            performClick()
+            onTapListener?.invoke()
+        }
+    }
+
+    /**
+     * 手指滾出此按鍵或觸控取消（由 KeyboardTouchLayout 容器或自身 onTouchEvent 呼叫）
+     */
+    fun fingerCancel() {
+        removeCallbacks(showPopupRunnable)
+        isHoldingForCompass = false
+        isPressed = false
+        activePointerId = MotionEvent.INVALID_POINTER_ID
+        dismissPreviewPopup()
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                activePointerId = event.getPointerId(0)
-                startX = event.x
-                startY = event.y
-                downTime = SystemClock.uptimeMillis()
-                isCompassActive = false
-                activeDirection = null
-                isPressed = true
-
-                onDownAction?.invoke()
-
-                if (!allowFastFlick) {
-                    // 12 鍵主鍵盤 (T9 Mode)：0ms 接觸即刻送出 Tap 結算，時序由物理接觸螢幕順序嚴格鎖定！
-                    performClick()
-                    onTapListener?.invoke()
-                }
-
-                removeCallbacks(showPopupRunnable)
-                // 連打抑制判定：若距離上次點擊小於 150ms，視為快速連打，不啟動羅盤計時
-                val now = SystemClock.uptimeMillis()
-                if (now - lastTapUptimeMs >= RAPID_TAP_COOLDOWN_MS) {
-                    isHoldingForCompass = true
-                    postDelayed(showPopupRunnable, COMPASS_HOLD_DELAY_MS)
-                } else {
-                    isHoldingForCompass = false
-                }
-                lastTapUptimeMs = now
+                fingerDown(event.getPointerId(0), event.x, event.y)
                 return true
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 val index = event.actionIndex
-                // 同鍵多點觸控/雙指極速連打：第二指落在同鍵瞬間，0ms 立即觸發新一擊，絕不吞鍵！
                 if (!allowFastFlick) {
                     performClick()
                     onTapListener?.invoke()
                 }
-
-                // 若目前主指已失效，轉移給新落下的手指
                 if (activePointerId == MotionEvent.INVALID_POINTER_ID) {
-                    activePointerId = event.getPointerId(index)
-                    startX = event.getX(index)
-                    startY = event.getY(index)
-                    downTime = SystemClock.uptimeMillis()
-                    isCompassActive = false
-                    activeDirection = null
+                    fingerDown(event.getPointerId(index), event.getX(index), event.getY(index))
+                } else {
+                    removeCallbacks(showPopupRunnable)
+                    isHoldingForCompass = false
+                    lastTapUptimeMs = SystemClock.uptimeMillis()
                 }
-                // 多指連打時強烈抑制羅盤長按
-                removeCallbacks(showPopupRunnable)
-                isHoldingForCompass = false
-                lastTapUptimeMs = SystemClock.uptimeMillis()
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -277,45 +350,12 @@ class SwipeKeyButton @JvmOverloads constructor(
                     event.findPointerIndex(activePointerId)
                 } else 0
                 if (pointerIdx < 0 || pointerIdx >= event.pointerCount) return true
-
-                val curX = event.getX(pointerIdx)
-                val curY = event.getY(pointerIdx)
-                val dx = curX - startX
-                val dy = curY - startY
-                val distSq = dx * dx + dy * dy
-                val stillRadiusPx = STILL_RADIUS_DP * resources.displayMetrics.density
-
-                // 若手指移動距離已超過 6dp 且羅盤尚未展開，表示手指在滑移滾動而非長按，立即取消羅盤預備
-                if (isHoldingForCompass && !isCompassActive && distSq > stillRadiusPx * stillRadiusPx) {
-                    removeCallbacks(showPopupRunnable)
-                    isHoldingForCompass = false
-                }
-
-                // 檢查是否展開羅盤或劃出方向
-                if (isCompassActive || allowFastFlick) {
-                    val absDx = abs(dx)
-                    val absDy = abs(dy)
-                    val threshold = swipeThresholdPx
-
-                    val isDominantX = absDx > absDy * 1.25f
-                    val isDominantY = absDy > absDx * 1.25f
-                    if ((absDx > threshold || absDy > threshold) && (isDominantX || isDominantY)) {
-                        val dir = if (isDominantX) {
-                            if (dx > 0) Direction.RIGHT else Direction.LEFT
-                        } else {
-                            if (dy > 0) Direction.DOWN else Direction.UP
-                        }
-                        updateActiveDirection(dir)
-                    } else {
-                        updateActiveDirection(null)
-                    }
-                }
+                fingerMove(event.getX(pointerIdx), event.getY(pointerIdx))
                 return true
             }
             MotionEvent.ACTION_POINTER_UP -> {
                 val index = event.actionIndex
                 val pointerId = event.getPointerId(index)
-                // 若抬起的是主控手指，將控制權平滑移交給其餘仍在螢幕上的手指，並取消羅盤倒數
                 if (pointerId == activePointerId) {
                     removeCallbacks(showPopupRunnable)
                     isHoldingForCompass = false
@@ -331,32 +371,11 @@ class SwipeKeyButton @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                removeCallbacks(showPopupRunnable)
-                isHoldingForCompass = false
-                isPressed = false
-                activePointerId = MotionEvent.INVALID_POINTER_ID
-
-                val selectedDir = activeDirection
-                val wasCompass = isCompassActive
-                dismissPreviewPopup()
-
-                // 核心防護：只有在明確劃出方向 (selectedDir != null) 時才調用 onSwipeListener（回滾退格並上屏注音）
-                // 若使用者只是停留猶豫後原地抬起 (selectedDir == null)，維持原本 0ms DOWN 的 tap，絕不觸發退格！
-                if (selectedDir != null && (wasCompass || allowFastFlick)) {
-                    onSwipeListener?.invoke(selectedDir)
-                } else if (allowFastFlick) {
-                    // 僅允許快速滑動的按鈕（如空白鍵）在 UP 結算 Tap
-                    performClick()
-                    onTapListener?.invoke()
-                }
+                fingerUp()
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                removeCallbacks(showPopupRunnable)
-                isHoldingForCompass = false
-                isPressed = false
-                activePointerId = MotionEvent.INVALID_POINTER_ID
-                dismissPreviewPopup()
+                fingerCancel()
                 return true
             }
         }

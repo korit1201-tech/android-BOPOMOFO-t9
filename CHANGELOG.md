@@ -2,6 +2,21 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.8.5] - 2026-10-18
+
+### 🚀 觸控手感重構 Phase 2：容器層觸控接管、滑鍵無縫出字與空白鍵輕彈修復 (Build 111)
+
+- **🏛️ 容器層觸控統一接管架構 (KeyboardTouchLayout)**：
+  - 新增 `KeyboardTouchLayout` 接管 12 鍵核心面板觸控事件（`onInterceptTouchEvent = true`），徹底破除 Android View 體系單一按鍵鎖定 `ACTION_DOWN` 的吞鍵限制。
+  - **手指不離屏連續滾動出字**：快打時手指在螢幕上滑移或滾動經過多顆按鍵，Hit-Test 精準感知手指落點轉移，舊鍵優雅結算、新鍵 0ms 即刻出字，極速盲打行雲流水、一顆不漏！
+  - **縫隙防抖平滑過渡**：手指劃過按鍵間 2dp 縫隙死區時，自動平滑維持當前按鍵狀態，不跳鍵、不中斷。
+- **🔒 羅盤與空白鍵手勢鎖定防護 (Gesture Lock Guard)**：
+  - 核心防護：當手指進入羅盤長按（`isCompassActive`）或空白鍵輕彈（`activeDirection != null`）時，強制鎖定該手指專屬手勢，手指拖選劃出邊界時**絕對不觸發換鍵轉移**，完美兼顧滑鍵連打與滑動拖選。
+- **⌨️ 空白鍵輕彈滑動門檻精準修復**：
+  - 修復 `allowFastFlick`（空白鍵）門檻被按鍵寬度拉大的問題，強制維持小門檻（`minPx = 22dp`），超寬空白鍵左右滑動切換中英模式恢復極致輕盈順暢。
+- **🧩 按鍵觸控解耦重構**：
+  - `SwipeKeyButton` 抽離 `fingerDown`、`fingerMove`、`fingerUp`、`fingerCancel` 獨立生命週期方法，支援容器調度與獨立點擊雙軌相容。
+
 ## [v2.8.4] - 2026-10-18
 
 ### 🎯 觸控手感重構 Phase 1：雙指 POINTER_UP 修復與羅盤連打抑制 (Build 110)

@@ -5,10 +5,10 @@
 [![Latest Release](https://img.shields.io/github/v/release/korit1201-tech/android-BOPOMOFO-t9?color=blue&label=Latest%20Release)](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%208.0%2B-green.svg)](https://korit.uk/apk/)
 [![License](https://img.shields.io/badge/License-MIT-orange.svg)](LICENSE)
-[![Download APK](https://img.shields.io/badge/Download-APK%20(v2.8.4)-2563eb.svg)](https://korit.uk/apk/)
+[![Download APK](https://img.shields.io/badge/Download-APK%20(v2.8.5)-2563eb.svg)](https://korit.uk/apk/)
 
 **專為繁體中文設計的極速、直覺、純本地離線九鍵/全鍵注音輸入法**  
-[📥 官方下載專區 (最新 v2.8.4 Build 110)](https://korit.uk/apk/) ｜ [📦 GitHub Releases](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases) ｜ [📜 更新日誌](CHANGELOG.md)
+[📥 官方下載專區 (最新 v2.8.5 Build 111)](https://korit.uk/apk/) ｜ [📦 GitHub Releases](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases) ｜ [📜 更新日誌](CHANGELOG.md)
 
 </div>
 
