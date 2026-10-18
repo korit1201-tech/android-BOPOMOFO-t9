@@ -89,5 +89,4 @@
 ---
 
 ## 📥 取得方式
-- **安裝包下載網頁**：[https://korit.uk/apk/](https://korit.uk/apk/)
-- **Telegram 自動交付**：已透過 Telegram Bot 直接發送 `bopomofo-v2.7.2.apk` 安裝包至使用者客戶端。
+- **GitHub Releases**：[https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases)

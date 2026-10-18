@@ -6,11 +6,11 @@
 ## 0. 接手狀態（2026-10-12，v2.5.0）⚠️ 先讀這段
 
 - 程式碼與文件已全部寫進專案工作目錄，**但還沒 commit、沒 build release APK、沒發 GitHub release**：
-  開發中途 shell 工具因工作目錄（網路共用 `\\RIKKU\ai\ime`，主機名稱無法解析）失效，改用 `\\192.168.1.172\ai\ime` 後檔案工具可用、shell 仍起不來。
+  開發中途 shell 工具因工作目錄（網路共用路徑，主機名稱無法解析）失效，改用有效路徑後檔案工具可用、shell 仍起不來。
 - 未提交的變更：`app/src/main/java/.../ZhuyinInputMethodService.kt`、`engine/TrieDictionary.kt`、`engine/ZhuyinT9Engine.kt`、`engine/SyllableManager.kt`、
   `app/build.gradle.kts`（versionCode 80 / versionName 2.5.0）、`CHANGELOG.md`、`docs/*`、`tools/*`。
 - **待辦（照順序）**：
-  1. 在新的 session 用有效的工作目錄開啟（建議直接用 `\\192.168.1.172\ai\ime` 或把專案複製到本機）。
+  1. 在新的 session 用有效的工作目錄開啟（建議直接用本機路徑或把專案複製到本機）。
   2. 編 release APK（第 3 節）→ 真機裝一次，跑第 8 節檢查表，**特別補驗：九鍵連打 `ㄅㄤㄨㄛ`，往下捲左側組合找到 `ㄅㄤㄨㄛ`，點選後候選應出現「幫我」**（CHANGELOG 已標明此項未在真機完整驗證）。
   3. **簽章比對（第 9 節）**：`gh release download v2.4.1 -p '*.apk'`，用 `apksigner verify --print-certs` 比對新舊 APK 的 SHA-256。**不同就不要發布為 latest**（會讓使用者無法 App 內升級）。
   4. `.gitignore` 補上 `__pycache__/` 與 `tools/phone/.ui.xml`（`tools/t9sim/__pycache__` 目前存在）。CHANGELOG 的 v2.4.2 / v2.4.3 條目沒有日期，請用 `git log` 補。
@@ -37,7 +37,7 @@
 
 - **JDK**：Android Studio 內建 JBR：`C:\Program Files\Android\Android Studio\jbr`（系統 PATH 沒有 java）。**SDK**：`%LOCALAPPDATA%\Android\Sdk`（platforms/android-34、build-tools/34.0.0、platform-tools）。
 - **Gradle**：wrapper 8.6，離線快取在 `~/.gradle`，**請加 `--offline`**。
-- ⚠️ `local.properties` 的 `sdk.dir` 可能指向別台機器（曾是 `/data/android-sdk`），**不要改使用者的這個檔案**；用「獨立 build 目錄」（第 3 節）。
+- ⚠️ `local.properties` 的 `sdk.dir` 可能指向特定開發環境路徑，**不要改使用者的這個檔案**；用「獨立 build 目錄」（第 3 節）。
 - ⚠️ 單元測試需要 `junit:junit:4.13.2`，離線快取沒有 → 跑 `testDebugUnitTest` 需連網。
 - ⚠️ 既有單元測試把引擎排序邏輯**複製一份**在測試內，測不到真引擎（引擎吃 Android `Context`）。要真正測引擎需 Robolectric 或抽出純 Kotlin（見 ROADMAP E2）。
 - 專案放網路共用資料夾時：Git Bash 要 `git -c safe.directory='*'`；**共用資料夾斷線或主機名稱解析失敗，shell / Grep 工具會整個失效（工作目錄不可用）**，改用 IP 路徑或本機副本。
@@ -45,7 +45,7 @@
 ## 3. 建置 APK（獨立 build 目錄）
 
 ```powershell
-$src = "\\192.168.1.172\ai\ime"      # 專案根目錄
+$src = "\\<host-or-ip>\ai\ime"      # 專案根目錄（或本機路徑）
 $dst = "C:\temp\t9build"             # 任意本機資料夾
 if (Test-Path "$dst\app\src") { Remove-Item -Recurse -Force "$dst\app\src" }   # 先刪，避免舊的暫時 patch 殘留
 robocopy $src $dst /E /XD build .gradle .git .idea /XF *.apk local.properties
