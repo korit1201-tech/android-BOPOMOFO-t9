@@ -2,6 +2,27 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.8.7] - 2026-10-19
+
+### 🎯 九鍵輸入狀態純淨化、四向滑動快照精準還原與羅盤喚醒重構 (Build 113)
+
+- **⌨️ 九鍵輸入狀態純淨化 (Key-Only Preview)**：
+  - 上方輸入狀態（Composing Preview）改由使用者真實按鍵序列構成（`getKeyOnlyPreview()`），不讀候選預測詞，注音符號數恆等於實體按鍵數。
+  - 移除九鍵模式下候選詞列上方多餘的注音浮動預覽膠囊（`updateZhuyinFullPreview`），介面回歸純粹簡潔，預測詞專注留於候選列。
+- **📸 按鍵精準快照與四向滑動無損還原 (Input State Snapshot & Restore)**：
+  - 新增 `captureInputState()` / `restoreInputState()` 狀態機快照機制，四向滑動時以記憶體快照進行 0ms 完美回滾（取代脆弱的退格按鍵逆推）。
+  - 若四向滑動期間有其他手指並行輸入，自動安全降級為退格保底機制。
+- **🔤 組字中單一注音滑動獨立上屏 (commitSwipeSymbol)**：
+  - 組字過程中從四向羅盤劃出的單一注音符號直接獨立提交上屏，不破壞既有組字狀態（Batch Edit 安全包覆，先清除暫存 Composing、上屏符號、再無縫還原組字預覽）。
+- **🧭 羅盤展開狀態機重構 (activateCompass)**：
+  - `SwipeKeyButton` 展開羅盤改由 `activateCompass()` 統一接管，徹底解耦 `isPressed` 狀態依賴；長按時間到達後即使手指有小幅位移亦能順利展開十字盤。
+  - 加入 `BopomofoIME_Touch` 追蹤日誌並完善例外拋出捕捉。
+- **🎯 候選詞加權上限與前綴回饋解耦**：
+  - `getEffectiveWeight()` 加入 `T9_DP_WEIGHT_CAP = 600,000` 封頂與短按鍵多字詞懲罰，徹底終結單鍵輸入時自建詞污染首位問題。
+  - 斷開 `previousTopWord` 跨鍵累積循環，僅在按鍵實質增加時延續加成，退格時立即清空無殘留。
+- **🧪 完整單元測試防護**：
+  - 新增 `KeyOnlyPreviewAndSnapshotTest`（10/10 通過）與 `PredictionPurityTest`，涵蓋純鍵預覽、快照還原、單鍵首選純度與退格無殘留等所有極限邊界。
+
 ## [v2.8.6] - 2026-10-18
 
 ### ⚡ 啟動效能重大突破：字典線程降權、簡拼離線預編譯 0 回溯與冷啟動秒開 (Build 112)
