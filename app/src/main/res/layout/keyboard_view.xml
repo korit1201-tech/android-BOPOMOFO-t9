@@ -252,7 +252,7 @@
             </FrameLayout>
 
             <!-- 中間 12 宮格 -->
-            <LinearLayout
+            <com.bopomofo.t9ime.ui.KeyboardTouchLayout
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
                 android:layout_weight="6"
@@ -458,7 +458,7 @@
                         android:textStyle="bold" />
                 </LinearLayout>
 
-            </LinearLayout>
+            </com.bopomofo.t9ime.ui.KeyboardTouchLayout>
 
             <!-- 右側操作欄 (Backspace, 清空, @) -->
             <LinearLayout
