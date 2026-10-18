@@ -180,6 +180,24 @@ class ZhuyinInputMethodService : InputMethodService() {
     private lateinit var handwritingCanvas: com.bopomofo.t9ime.ui.HandwritingCanvasView
     private var googleRecognizer: com.bopomofo.t9ime.engine.GoogleHandwritingRecognizer? = null
 
+    private fun ensureHandwritingRecognizer(): com.bopomofo.t9ime.engine.GoogleHandwritingRecognizer {
+        val existing = googleRecognizer
+        if (existing != null) return existing
+        return synchronized(this) {
+            googleRecognizer ?: com.bopomofo.t9ime.engine.GoogleHandwritingRecognizer(this).apply {
+                setup(
+                    languageTag = "zh-Hant",
+                    onModelReady = {
+                        android.util.Log.d("BopomofoIME", "Google ML Kit Digital Ink model ready")
+                    },
+                    onDownloading = {
+                        android.util.Log.d("BopomofoIME", "Google ML Kit Digital Ink model downloading...")
+                    }
+                )
+            }.also { googleRecognizer = it }
+        }
+    }
+
     private var rootView: View? = null
     private var vibrator: Vibrator? = null
     private var cachedVibrationEnabled = true
@@ -259,6 +277,8 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     override fun onCreate() {
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        android.util.Log.d("BopomofoIME_Perf", "[Perf] Service.onCreate 開始")
         super.onCreate()
         com.bopomofo.t9ime.util.CrashLogger.install(this)
         try {
@@ -280,20 +300,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         }
 
-        // 初始化 Google ML Kit 官方高精度手寫辨識引擎（背景預先載入/下載）
-        googleRecognizer = com.bopomofo.t9ime.engine.GoogleHandwritingRecognizer(this).apply {
-            setup(
-                languageTag = "zh-Hant",
-                onModelReady = {
-                    android.util.Log.d("BopomofoIME", "Google ML Kit Digital Ink model ready")
-                },
-                onDownloading = {
-                    android.util.Log.d("BopomofoIME", "Google ML Kit Digital Ink model downloading...")
-                }
-            )
-        }
-
-        // 初始化剪貼簿歷史與常用短語
+        // 剪貼簿歷史與常用短語初始化
         ClipboardHistoryManager.init(this)
         SnippetManager.init(this)
 
@@ -311,6 +318,9 @@ class ZhuyinInputMethodService : InputMethodService() {
             val im = getSystemService(Context.INPUT_SERVICE) as? InputManager
             im?.registerInputDeviceListener(inputDeviceListener, null)
         } catch (_: Exception) {}
+
+        val totalElapsed = android.os.SystemClock.elapsedRealtime() - t0
+        android.util.Log.d("BopomofoIME_Perf", "[Perf] Service.onCreate 完成，總耗時: ${totalElapsed}ms")
     }
 
     private val inputDeviceListener = object : InputManager.InputDeviceListener {
@@ -704,10 +714,17 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     override fun onCreateInputView(): View {
+        val tViewStart = android.os.SystemClock.elapsedRealtime()
+        android.util.Log.d("BopomofoIME_Perf", "[Perf] onCreateInputView 開始")
+
         candidateTextViewPool.clear()
         comboButtonPool.clear()
 
+        val tInflateStart = android.os.SystemClock.elapsedRealtime()
         val root = layoutInflater.inflate(R.layout.keyboard_view, null)
+        val inflateElapsed = android.os.SystemClock.elapsedRealtime() - tInflateStart
+        android.util.Log.d("BopomofoIME_Perf", "[Perf] keyboard_view.xml Inflate 耗時: ${inflateElapsed}ms")
+
         rootView = root
         candidateScroll = root.findViewById(R.id.candidate_scroll)
         candidateContainer = root.findViewById(R.id.candidate_container)
@@ -803,8 +820,9 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
 
         handwritingCanvas.onRecognizeListener = { strokes ->
-            if (googleRecognizer?.isReady() == true) {
-                googleRecognizer?.recognize(
+            val recognizer = ensureHandwritingRecognizer()
+            if (recognizer.isReady()) {
+                recognizer.recognize(
                     strokes,
                     onSuccess = { texts ->
                         if (isInputViewShown && currentMode == KeyboardMode.HANDWRITING) {
@@ -819,7 +837,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                     }
                 )
             } else {
-                val tip = if (googleRecognizer?.isDownloadingModel() == true) {
+                val tip = if (recognizer.isDownloadingModel()) {
                     listOf(DictEntry("【手寫模型下載中，請稍候...】", "", 999999))
                 } else {
                     listOf(DictEntry("【正在載入 Google 手寫模型...】", "", 999999))
@@ -1086,18 +1104,29 @@ class ZhuyinInputMethodService : InputMethodService() {
         btnTone5?.setOnClickListener { setToneFilter('˙') }
 
         try {
+            val tSetupStart = android.os.SystemClock.elapsedRealtime()
             setup12KeyLayout(root)
             setupZhuyinFullLayout(root)
             setupQwertyLayout(root)
             setupSymbolPanel(root)
             setupSideActions(root)
             setupBottomActions(root)
+            val setupElapsed = android.os.SystemClock.elapsedRealtime() - tSetupStart
 
             applyOneHandedMode()
+
+            val tThemeStart = android.os.SystemClock.elapsedRealtime()
             ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
+            val themeElapsed = android.os.SystemClock.elapsedRealtime() - tThemeStart
 
             updateKeyboardModeUI()
             updateHardwareKeyboardState()
+
+            val totalViewElapsed = android.os.SystemClock.elapsedRealtime() - tViewStart
+            android.util.Log.d(
+                "BopomofoIME_Perf",
+                "[Perf] onCreateInputView 完成: Setup耗時=${setupElapsed}ms, Theme耗時=${themeElapsed}ms, 總耗時=${totalViewElapsed}ms"
+            )
         } catch (e: Exception) {
             android.util.Log.e("BopomofoIME", "onCreateInputView 初始化異常", e)
         }
@@ -2384,6 +2413,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 btnClear?.text = "清空"
             }
             KeyboardMode.HANDWRITING -> {
+                ensureHandwritingRecognizer()
                 layout12Key.visibility = View.GONE
                 if (::layoutZhuyinFull.isInitialized) layoutZhuyinFull.visibility = View.GONE
                 layoutQwerty.visibility = View.GONE

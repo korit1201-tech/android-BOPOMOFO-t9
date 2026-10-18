@@ -67,7 +67,7 @@ object SyllableManager {
     }
 
     /**
-     * 重新載入字典前重置音節權重與快取，避免重複累加
+     * 重新載入字典前重置音節權重與快取，避免重複累加（供單元測試使用）
      */
     fun resetWeights() {
         SYLLABLE_WEIGHTS.clear()
@@ -75,6 +75,19 @@ object SyllableManager {
         synchronized(splitComboCache) {
             splitComboCache.clear()
             splitCacheTotal = 0L
+        }
+    }
+
+    /**
+     * 原子替換音節權重：在背景字典完成全量載入後一次性原子替換，避免載入中途 resetWeights 導致主線程查詢時序競態
+     */
+    fun applyNewWeights(newWeights: Map<String, Long>, newTotal: Long) {
+        SYLLABLE_WEIGHTS.clear()
+        SYLLABLE_WEIGHTS.putAll(newWeights)
+        totalSyllableWeight.set(newTotal)
+        synchronized(splitComboCache) {
+            splitComboCache.clear()
+            splitCacheTotal = newTotal
         }
     }
 

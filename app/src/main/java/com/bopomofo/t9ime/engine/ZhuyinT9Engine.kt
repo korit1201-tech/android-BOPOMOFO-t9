@@ -230,6 +230,10 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
 
     private fun startAsyncDictionaryLoading() {
         Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            val startTime = android.os.SystemClock.elapsedRealtime()
+            android.util.Log.d("BopomofoIME_Perf", "[Perf] 字典背景載入開始 (Thread priority set to BACKGROUND)")
+
             val newTrie = TrieDictionary()
             val newNextWordMap = mutableMapOf<String, MutableList<DictEntry>>()
             val newCharZhuyinMap = mutableMapOf<Char, MutableList<String>>()
@@ -239,6 +243,9 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             val newInitialToCharMap = mutableMapOf<Char, MutableList<DictEntry>>()
             loadDictionaryInternal(newTrie, newNextWordMap, newCharZhuyinMap, newInitialMap, newSoundToCharMap, newFullZhuyinWordMap, newInitialToCharMap)
             loadUserDictionaryEntries(newTrie, newCharZhuyinMap, newFullZhuyinWordMap)
+
+            val elapsed = android.os.SystemClock.elapsedRealtime() - startTime
+            android.util.Log.d("BopomofoIME_Perf", "[Perf] 字典全量解析完成，總耗時: ${elapsed}ms")
 
             val updateAction = {
                 trie = newTrie
@@ -363,13 +370,20 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     ) {
         val nextWordTrack = mutableMapOf<String, HashSet<String>>()
         val initialToCharTrack = mutableMapOf<Char, HashSet<String>>()
+        val localSyllableWeights = HashMap<String, Long>()
+        var localTotalSyllableWeight = 0L
         var accumulatedWeight = 0L
+        var lineCount = 0
+        var splitCallCount = 0
+        var splitTimeNs = 0L
+
+        val parseStartTime = android.os.SystemClock.elapsedRealtime()
         try {
-            SyllableManager.resetWeights()
             val stream = customStream ?: context?.assets?.open("dict_tw.txt") ?: return
             stream.use { inputStream ->
                 BufferedReader(InputStreamReader(inputStream), 65536).useLines { lines ->
                     for (line in lines) {
+                        lineCount++
                         val tab1 = line.indexOf('\t')
                         if (tab1 == -1) continue
                         val tab2 = line.indexOf('\t', tab1 + 1)
@@ -377,7 +391,9 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
 
                         val word = line.substring(0, tab1)
                         val zhuyin = line.substring(tab1 + 1, tab2)
-                        val weight = line.substring(tab2 + 1).toIntOrNull() ?: 100
+                        val tab3 = line.indexOf('\t', tab2 + 1)
+                        val weight = (if (tab3 != -1) line.substring(tab2 + 1, tab3) else line.substring(tab2 + 1)).toIntOrNull() ?: 100
+                        val precomputedInitials = if (tab3 != -1) line.substring(tab3 + 1) else null
 
                         val entry = DictEntry(word, zhuyin, weight)
                         targetTrie.insert(entry)
@@ -390,10 +406,17 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
                             fullList.add(entry)
                         }
 
-                        // 構建簡拼（聲母偷懶輸入）索引表 (2~6字詞)
+                        // 構建簡拼（聲母偷懶輸入）索引表 (2~6字詞，優先使用離線預處理欄位，0 回溯開銷)
                         val cleanZhuyin = zhuyin.filter { it !in "ˇˋˊ˙" }
-                        if (word.length in 2..6) {
+                        if (!precomputedInitials.isNullOrEmpty()) {
+                            val list = targetInitialMap.getOrPut(precomputedInitials) { ArrayList(4) }
+                            list.add(entry)
+                        } else if (word.length in 2..6) {
+                            splitCallCount++
+                            val t0 = System.nanoTime()
                             val syllables = SyllableManager.splitIntoSyllables(cleanZhuyin, word.length)
+                            splitTimeNs += (System.nanoTime() - t0)
+
                             if (syllables != null && syllables.size == word.length) {
                                 val initials = syllables.map { it[0] }.joinToString("")
                                 if (initials.isNotEmpty()) {
@@ -405,7 +428,10 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
 
                         // 統計單字音節歷史頻率（教育部 429 個合法音節）與記錄單字注音查表 + 反向音節索引
                         if (word.length == 1) {
-                            SyllableManager.addSyllableWeight(cleanZhuyin, weight)
+                            if (cleanZhuyin.isNotEmpty() && weight > 0) {
+                                localSyllableWeights[cleanZhuyin] = (localSyllableWeights[cleanZhuyin] ?: 0L) + weight
+                                localTotalSyllableWeight += weight
+                            }
                             val list = targetCharZhuyinMap.getOrPut(word[0]) { ArrayList(2) }
                             if (!list.contains(zhuyin)) {
                                 list.add(zhuyin)
@@ -449,6 +475,9 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
                 }
             }
 
+            // 原子性替換音節權重，避免中途重置
+            SyllableManager.applyNewWeights(localSyllableWeights, localTotalSyllableWeight)
+
             totalDictWeight = accumulatedWeight
             logTotalWeight = Math.log(maxOf(accumulatedWeight.toDouble(), 1.0))
 
@@ -464,6 +493,13 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             for ((_, list) in targetInitialToCharMap) {
                 list.sortByDescending { it.weight }
             }
+
+            val parseElapsed = android.os.SystemClock.elapsedRealtime() - parseStartTime
+            val splitMs = splitTimeNs / 1_000_000
+            android.util.Log.d(
+                "BopomofoIME_Perf",
+                "[Perf] 字典解析完成: 總行數=$lineCount 筆, 解析總耗時=${parseElapsed}ms (其中 splitIntoSyllables 呼叫 $splitCallCount 次，耗時 ${splitMs}ms)"
+            )
         } catch (e: Exception) {
             android.util.Log.e("BopomofoIME", "字典載入失敗", e)
         }
