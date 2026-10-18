@@ -658,6 +658,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         cachedCandidates = emptyList()
         cachedZhuyinCombos = emptyList()
         previousTopWord = null
+        previousPhonemeKeyCount = 0
     }
 
     fun hasComposing(): Boolean = currentKeys.isNotEmpty()
@@ -687,11 +688,13 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         confirmedSyllables.clear()
         confirmedKeyCounts.clear()
         previousTopWord = null
+        previousPhonemeKeyCount = 0
         recalculate()
         return cachedCandidates
     }
 
     private var previousTopWord: String? = null
+    private var previousPhonemeKeyCount: Int = 0
 
     /**
      * 現代音節與詞頻評分模型：
@@ -713,9 +716,13 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             return (1_000_000_000.0 + userBoost) * bigramBonus
         }
 
-        var rawWeight = entry.weight.toDouble()
-        if (!isExact && userBoost > 0) {
-            rawWeight *= (1.0 + minOf(userBoost, 2_000_000) / 1_000_000.0)
+        var rawWeight = minOf(entry.weight, T9_DP_WEIGHT_CAP).toDouble()  // 照抄 t9SegmentCost:892
+        if (userBoost > 0) {
+            val boostCap = if (entry.word.length == 1) 50_000 else 200_000  // 照抄 t9SegmentCost:893，加法
+            rawWeight += minOf(userBoost, boostCap)
+        }
+        if (!isExact && inputKeyCount <= 2 && entry.word.length >= 2) {
+            rawWeight *= if (entry.word.length == 2) 0.5 else 0.3  // 少按鍵時多字詞懲罰，單字不受影響
         }
 
         val lengthMultiplier = when {
@@ -755,6 +762,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             cachedCandidates = emptyList()
             cachedZhuyinCombos = emptyList()
             previousTopWord = null
+            previousPhonemeKeyCount = 0
             return
         }
 
@@ -785,7 +793,13 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
 
         val cleanKeys = currentKeys.filter { it != 11 }
         val phonemeKeyLen = cleanKeys.size
-        val prevTop = previousTopWord
+
+        // 偵測到按鍵數減少（退格）就清空 previousTopWord；continuityMultiplier 只在按鍵數增加時生效
+        if (phonemeKeyLen < previousPhonemeKeyCount) {
+            previousTopWord = null
+        }
+        val prevTop = if (phonemeKeyLen > previousPhonemeKeyCount) previousTopWord else null
+        previousPhonemeKeyCount = phonemeKeyLen
 
         val filteredExact = filterTone(exactResults)
         val filteredPrefix = filterTone(prefixResults)
