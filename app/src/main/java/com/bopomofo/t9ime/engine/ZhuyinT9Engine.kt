@@ -645,6 +645,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             return emptyList()
         }
 
+        previousTopWord = null
         recalculate()
         return cachedCandidates
     }
@@ -658,7 +659,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         cachedCandidates = emptyList()
         cachedZhuyinCombos = emptyList()
         previousTopWord = null
-        previousPhonemeKeyCount = 0
+        lastRecalcKeyCount = 0
     }
 
     fun hasComposing(): Boolean = currentKeys.isNotEmpty()
@@ -688,13 +689,13 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         confirmedSyllables.clear()
         confirmedKeyCounts.clear()
         previousTopWord = null
-        previousPhonemeKeyCount = 0
+        lastRecalcKeyCount = 0
         recalculate()
         return cachedCandidates
     }
 
     private var previousTopWord: String? = null
-    private var previousPhonemeKeyCount: Int = 0
+    private var lastRecalcKeyCount: Int = 0
 
     /**
      * 現代音節與詞頻評分模型：
@@ -758,11 +759,12 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     // ───────── 核心查詢邏輯 ─────────
 
     private fun recalculate() {
+        val keyCountGrew = currentKeys.size > lastRecalcKeyCount
         if (currentKeys.isEmpty()) {
             cachedCandidates = emptyList()
             cachedZhuyinCombos = emptyList()
             previousTopWord = null
-            previousPhonemeKeyCount = 0
+            lastRecalcKeyCount = 0
             return
         }
 
@@ -794,13 +796,6 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         val cleanKeys = currentKeys.filter { it != 11 }
         val phonemeKeyLen = cleanKeys.size
 
-        // 偵測到按鍵數減少（退格）就清空 previousTopWord；continuityMultiplier 只在按鍵數增加時生效
-        if (phonemeKeyLen < previousPhonemeKeyCount) {
-            previousTopWord = null
-        }
-        val prevTop = if (phonemeKeyLen > previousPhonemeKeyCount) previousTopWord else null
-        previousPhonemeKeyCount = phonemeKeyLen
-
         val filteredExact = filterTone(exactResults)
         val filteredPrefix = filterTone(prefixResults)
 
@@ -808,12 +803,12 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         val pool = mutableMapOf<String, Pair<DictEntry, Double>>()
 
         for (e in filteredExact) {
-            val score = getEffectiveWeight(e, phonemeKeyLen, isExact = true, prevTopWord = prevTop)
+            val score = getEffectiveWeight(e, phonemeKeyLen, isExact = true, prevTopWord = previousTopWord)
             pool[e.word] = Pair(e, score)
         }
 
         for (p in filteredPrefix) {
-            val score = getEffectiveWeight(p, phonemeKeyLen, isExact = false, prevTopWord = prevTop)
+            val score = getEffectiveWeight(p, phonemeKeyLen, isExact = false, prevTopWord = previousTopWord)
             val existing = pool[p.word]
             if (existing == null || score > existing.second) {
                 pool[p.word] = Pair(p, score)
@@ -839,7 +834,8 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             )
         }
 
-        previousTopWord = candidateList.firstOrNull()?.word
+        previousTopWord = if (keyCountGrew) candidateList.firstOrNull()?.word else null
+        lastRecalcKeyCount = currentKeys.size
 
         // 產生左側注音音節列表 (SwiftKey 階梯式推進模型：永遠只針對當前第一個待決策字顯示大字合法單音節)
         val comboSet = LinkedHashSet<String>()
