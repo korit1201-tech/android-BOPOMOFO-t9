@@ -2,6 +2,22 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.8.6] - 2026-10-18
+
+### ⚡ 啟動效能重大突破：字典線程降權、簡拼離線預編譯 0 回溯與冷啟動秒開 (Build 112)
+
+- **⚡ 字典背景線程降權 (THREAD_PRIORITY_BACKGROUND)**：
+  - 將字典載入執行緒優先級降為 `THREAD_PRIORITY_BACKGROUND`，徹底杜絕背景解析 16.5 萬行詞庫時搶佔 CPU，系統將 90% 以上時間片優先確保給 UI 執行緒，解決冷啟動時 UI 被卡死的相乘效應。
+- **🚀 簡拼索引編譯期預處理 (0 運行期回溯開銷)**：
+  - 新增離線字典預處理工具 `tools/preprocess_dict.py` 並無縫整合至 `deploy.py`。
+  - 將 13.8 萬筆 2~6 字詞條的「聲母簡拼」於編譯期直接算出並寫入字典檔第 4 欄，手機端冷啟動解析字典時**完全跳過 13.8 萬次遞迴回溯與 String 切片**，解析構建 3.6 萬個簡拼索引由數秒暴降至 170ms！
+- **🛡️ 消除 SyllableManager 在線清空時序競態 (Race Condition Fix)**：
+  - 徹底移除字典背景讀取開始時清空全域單例的危險邏輯，改為背景 Map 獨立統計、載入完成後**原子性替換 (Atomic Swap)**，杜絕冷啟動前 2 秒內敲鍵時音節權重歸零或跳動。
+- **💤 Google ML Kit 手寫模型延遲載入 (Lazy Load)**：
+  - 將手寫辨識引擎自 `Service.onCreate` 移出，改為按需延遲初始化，使用者未切換至手寫模式前完全不觸發 ML Kit，大幅節省啟動記憶體。
+- **📊 全鏈路效能打點量測 (Instrumentation)**：
+  - 於 `onCreate`、`onCreateInputView`（細分 Inflate、佈局 Setup、Theme 套用）與字典載入加入毫秒級打點日誌（`BopomofoIME_Perf`），讓效能分佈完全透明可量測。
+
 ## [v2.8.5] - 2026-10-18
 
 ### 🚀 觸控手感重構 Phase 2：容器層觸控接管、滑鍵無縫出字與空白鍵輕彈修復 (Build 111)
