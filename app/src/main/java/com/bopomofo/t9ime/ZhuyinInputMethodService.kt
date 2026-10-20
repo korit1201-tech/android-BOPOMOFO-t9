@@ -1863,7 +1863,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 override fun onVoiceStateChanged(isListening: Boolean, promptText: String) {
                     mainHandler.post {
                         if (isListening) {
-                            btnSymbolDrawer.text = "🎙️"
+                            btnSymbolDrawer.text = "Mic"
                             layoutVoiceIndicator?.visibility = View.VISIBLE
                             tvVoiceText?.text = promptText
                         } else {
