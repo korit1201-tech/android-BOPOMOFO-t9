@@ -1841,11 +1841,13 @@ class ZhuyinInputMethodService : InputMethodService() {
         btnVoiceCancel?.setOnClickListener {
             triggerHapticFeedback(HapticType.KEY_PRESS)
             voiceInputController?.cancel()
+            btnSymbolDrawer.text = "✛"
             layoutVoiceIndicator?.visibility = View.GONE
         }
 
         // 長按左上角「✛」號按鈕啟動語音輸入
         btnSymbolDrawer.setOnLongClickListener {
+            android.util.Log.i("BopomofoIME_Voice", "使用者長按左上角「✛」號，啟動語音辨識...")
             triggerHapticFeedback(HapticType.KEY_PRESS)
             startVoiceInput()
             true
@@ -1856,23 +1858,44 @@ class ZhuyinInputMethodService : InputMethodService() {
                 override fun onVoiceStateChanged(isListening: Boolean, promptText: String) {
                     mainHandler.post {
                         if (isListening) {
+                            btnSymbolDrawer.text = "🎙️"
                             layoutVoiceIndicator?.visibility = View.VISIBLE
                             tvVoiceText?.text = promptText
                         } else {
+                            btnSymbolDrawer.text = "✛"
                             layoutVoiceIndicator?.visibility = View.GONE
+                        }
+                    }
+                }
+
+                override fun onVoiceRmsChanged(rmsdB: Float) {
+                    mainHandler.post {
+                        if (voiceInputController?.isListening == true) {
+                            val level = when {
+                                rmsdB > 8f -> " ▃▅▇"
+                                rmsdB > 4f -> " ▃▅ "
+                                rmsdB > 1f -> " ▂  "
+                                else -> ""
+                            }
+                            val current = tvVoiceText?.text?.toString() ?: ""
+                            if (current.startsWith("🎙️")) {
+                                tvVoiceText?.text = "🎙️ 正在聆聽，請說話...$level"
+                            }
                         }
                     }
                 }
 
                 override fun onVoicePartialResult(partialText: String) {
                     mainHandler.post {
-                        tvVoiceText?.text = partialText
+                        tvVoiceText?.text = "「$partialText」"
                     }
                 }
 
                 override fun onVoiceResult(text: String) {
                     mainHandler.post {
+                        android.util.Log.i("BopomofoIME_Voice", "語音辨識成功上屏: $text")
                         triggerHapticFeedback(HapticType.KEY_PRESS)
+                        btnSymbolDrawer.text = "✛"
                         layoutVoiceIndicator?.visibility = View.GONE
                         // 直接上屏
                         currentInputConnection?.commitText(text, 1)
@@ -1881,10 +1904,13 @@ class ZhuyinInputMethodService : InputMethodService() {
 
                 override fun onVoiceError(errorMsg: String) {
                     mainHandler.post {
+                        android.util.Log.e("BopomofoIME_Voice", "UI 顯示語音錯誤: $errorMsg")
+                        btnSymbolDrawer.text = "✛"
                         tvVoiceText?.text = errorMsg
+                        // 延長停留時間至 2.5 秒，讓使用者能清楚看見錯誤代碼
                         mainHandler.postDelayed({
                             layoutVoiceIndicator?.visibility = View.GONE
-                        }, 1200)
+                        }, 2500)
                     }
                 }
             })
@@ -1894,6 +1920,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun startVoiceInput() {
         if (isCurrentInputPassword()) {
+            android.util.Log.w("BopomofoIME_Voice", "當前為密碼輸入框，禁止語音輸入")
             return
         }
         if (::engine.isInitialized && engine.hasComposing()) {
