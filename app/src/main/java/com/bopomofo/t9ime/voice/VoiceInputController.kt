@@ -178,7 +178,9 @@ class VoiceInputController(
                         VoiceLogger.i("RecognitionListener: onResults -> 取得候選文字清單: $matches")
                         val text = matches?.firstOrNull()?.trim()
                         if (!text.isNullOrEmpty()) {
-                            callback.onVoiceResult(text)
+                            val processed = VoicePunctuationProcessor.process(text)
+                            VoiceLogger.i("RecognitionListener: 口述標點處理前='$text', 處理後='$processed'")
+                            callback.onVoiceResult(processed)
                         } else {
                             callback.onVoiceError("未辨識出有效文字")
                         }
@@ -189,8 +191,9 @@ class VoiceInputController(
                         val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         val text = matches?.firstOrNull()?.trim()
                         if (!text.isNullOrEmpty()) {
-                            VoiceLogger.d("RecognitionListener: onPartialResults -> $text")
-                            callback.onVoicePartialResult(text)
+                            val processed = VoicePunctuationProcessor.process(text)
+                            VoiceLogger.d("RecognitionListener: onPartialResults -> $processed")
+                            callback.onVoicePartialResult(processed)
                         }
                     }
 
