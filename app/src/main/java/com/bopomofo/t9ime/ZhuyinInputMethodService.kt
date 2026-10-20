@@ -1833,6 +1833,11 @@ class ZhuyinInputMethodService : InputMethodService() {
         btnVoiceStop = root.findViewById(R.id.btn_voice_stop)
         btnVoiceCancel = root.findViewById(R.id.btn_voice_cancel)
 
+        val copyLogListener = View.OnClickListener {
+            com.bopomofo.t9ime.voice.VoiceLogger.copyToClipboard(this)
+        }
+        tvVoiceText?.setOnClickListener(copyLogListener)
+
         btnVoiceStop?.setOnClickListener {
             triggerHapticFeedback(HapticType.KEY_PRESS)
             voiceInputController?.stopListening()
@@ -1847,7 +1852,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
         // 長按左上角「✛」號按鈕啟動語音輸入
         btnSymbolDrawer.setOnLongClickListener {
-            android.util.Log.i("BopomofoIME_Voice", "使用者長按左上角「✛」號，啟動語音辨識...")
+            com.bopomofo.t9ime.voice.VoiceLogger.i("使用者長按左上角「✛」號，啟動語音辨識...")
             triggerHapticFeedback(HapticType.KEY_PRESS)
             startVoiceInput()
             true
@@ -1893,7 +1898,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
                 override fun onVoiceResult(text: String) {
                     mainHandler.post {
-                        android.util.Log.i("BopomofoIME_Voice", "語音辨識成功上屏: $text")
+                        com.bopomofo.t9ime.voice.VoiceLogger.i("語音辨識成功上屏: $text")
                         triggerHapticFeedback(HapticType.KEY_PRESS)
                         btnSymbolDrawer.text = "✛"
                         layoutVoiceIndicator?.visibility = View.GONE
@@ -1904,13 +1909,12 @@ class ZhuyinInputMethodService : InputMethodService() {
 
                 override fun onVoiceError(errorMsg: String) {
                     mainHandler.post {
-                        android.util.Log.e("BopomofoIME_Voice", "UI 顯示語音錯誤: $errorMsg")
                         btnSymbolDrawer.text = "✛"
-                        tvVoiceText?.text = errorMsg
-                        // 延長停留時間至 2.5 秒，讓使用者能清楚看見錯誤代碼
+                        tvVoiceText?.text = "$errorMsg (點擊複製Log)"
+                        // 延長停留時間至 5 秒，方便使用者點擊複製 Log
                         mainHandler.postDelayed({
                             layoutVoiceIndicator?.visibility = View.GONE
-                        }, 2500)
+                        }, 5000)
                     }
                 }
             })
@@ -1920,7 +1924,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun startVoiceInput() {
         if (isCurrentInputPassword()) {
-            android.util.Log.w("BopomofoIME_Voice", "當前為密碼輸入框，禁止語音輸入")
+            com.bopomofo.t9ime.voice.VoiceLogger.w("當前為密碼輸入框，禁止語音輸入")
             return
         }
         if (::engine.isInitialized && engine.hasComposing()) {
