@@ -2,6 +2,23 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.9.1] - 2026-10-21
+
+### 🛡️ 系統返回鍵時序重構、銀行安全視窗防穿透與預測性手勢返回支援 (Build 115)
+
+- **🛡️ 系統返回鍵時序解耦與完全隔離 (Back Key Decoupling)**：
+  - 徹底根治在銀行 App、安全網頁或具備資安防護框架的視窗中按下返回鍵導致退出頁面或跳轉的穿透問題。
+  - **`onKeyDown` 鎖定事件**：收到 `KEYCODE_BACK` 時呼叫 `event.startTracking()` 並回傳 `true`，向系統宣告由輸入法接管返回事件鏈，絕不於 `ACTION_DOWN` 階段過早銷毀焦點。
+  - **`onKeyUp` 執行關閉**：等到使用者手指真正抬起（`ACTION_UP`）時，才於輸入法內部執行 `handleBackPressed()` 收起鍵盤或面板，確保 `DOWN` 與 `UP` 兩個事件均完整被輸入法消費，絕不洩漏孤立的 `UP` 事件給背後 App。
+- **📱 Android 13/14 預測性手勢返回支援 (OnBackInvokedCallback)**：
+  - 在視窗初始化（`onConfigureWindow`）中為 Window 註冊 `OnBackInvokedCallback`（`PRIORITY_DEFAULT`）。
+  - 全面屏側邊手勢滑動返回直接由輸入法接管收鍵盤，無縫適配 Android 14 現代手勢導航機制。
+- **階梯式安全收合與防護 (handleBackPressed)**：
+  - 語音辨識中 $\rightarrow$ 優先取消語音錄製。
+  - 各級子面板開啟（自建詞、候選格柵、同音字、長句游標、特殊符號盤） $\rightarrow$ 優先收合該子面板，保留主鍵盤。
+  - 注音組字中 $\rightarrow$ 清空組字緩衝並收起鍵盤。
+  - 鍵盤顯示中 $\rightarrow$ 平滑收起輸入法視窗。
+
 ## [v2.9.0] - 2026-10-20
 
 ### 🎙️ 系統原生語音辨識、口述標點與排版控制、✛ 鍵科技感 Mic 角標 (Build 114)
