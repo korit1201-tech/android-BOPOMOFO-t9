@@ -45,8 +45,8 @@
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <!-- 最左側常駐特殊符號/方向鍵盤呼叫按鈕 -->
-        <Button
+        <!-- 最左側常駐特殊符號/方向鍵盤呼叫按鈕（右下角常駐 🎙 角標提示長按語音） -->
+        <com.bopomofo.t9ime.ui.SymbolDrawerButton
             android:textAllCaps="false"
             android:id="@+id/btn_symbol_drawer"
             style="?android:attr/borderlessButtonStyle"
