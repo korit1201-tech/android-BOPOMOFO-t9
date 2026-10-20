@@ -397,6 +397,15 @@ class ZhuyinInputMethodService : InputMethodService() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             win.isNavigationBarContrastEnforced = false
         }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            try {
+                win.onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT
+                ) {
+                    handleBackPressed()
+                }
+            } catch (_: Exception) {}
+        }
         val isLandscape = isPhoneLandscapeMode()
         val is9KeyMode = currentMode == KeyboardMode.ZHUYIN || currentMode == KeyboardMode.NUMBER_SYM
         if (isLandscape && is9KeyMode) {
@@ -4779,40 +4788,70 @@ class ZhuyinInputMethodService : InputMethodService() {
     private var isPhysicalSelecting = false
     private var backHandledInDown = false
 
+    /**
+     * 處理返回鍵或手勢返回的階梯式關閉邏輯：
+     * 1. 語音辨識中 -> 取消語音
+     * 2. 子面板開啟 -> 優先關閉子面板（自建詞、候選格柵、同音字、長句游標、特殊符號盤）
+     * 3. 組字中 -> 清空組字緩衝並收起鍵盤
+     * 4. 軟體鍵盤顯示中 -> 收起軟體鍵盤
+     * @return 若成功處理/消費返回事件則回傳 true，否則回傳 false
+     */
+    private fun handleBackPressed(): Boolean {
+        if (voiceInputController?.isListening == true) {
+            voiceInputController?.cancel()
+            return true
+        }
+        if (isCustomWordBuilderOpen) {
+            closeCustomWordBuilder()
+            return true
+        }
+        if (isCandidateGridOpen) {
+            closeCandidateGrid()
+            return true
+        }
+        if (isHomophoneSelectionMode) {
+            exitHomophoneSelectionMode()
+            return true
+        }
+        if (isSentenceSelecting) {
+            sentenceCursor = composingSentence.length
+            isSentenceSelecting = false
+            updateComposingDisplay()
+            return true
+        }
+        if (::symbolPanelController.isInitialized && symbolPanelController.isVisible) {
+            symbolPanelController.hideSymbolPanel()
+            return true
+        }
+        if (fullZhuyinBuffer.isNotEmpty() || composingSentence.isNotEmpty() || engine.hasComposing()) {
+            cancelComposing()
+            requestHideSelf(0)
+            return true
+        }
+        if (isInputViewShown) {
+            requestHideSelf(0)
+            return true
+        }
+        return false
+    }
+
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        // 0. 返回鍵 (Back Key) 優先處理：嚴格優先關閉輸入法/面板，徹底消費事件，絕不洩漏導致網頁或介面返回上一頁
+        // 0. 返回鍵 (Back Key) 優先處理：嚴格遵循 Android 原生標準事件追蹤，徹底消費事件，絕不洩漏導致網頁/銀行App跳轉上一頁
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            if (isCustomWordBuilderOpen) {
-                closeCustomWordBuilder()
-                backHandledInDown = true
-                return true
-            }
-            if (isCandidateGridOpen) {
-                closeCandidateGrid()
-                backHandledInDown = true
-                return true
-            }
-            if (isHomophoneSelectionMode) {
-                exitHomophoneSelectionMode()
-                backHandledInDown = true
-                return true
-            }
-            if (isSentenceSelecting) {
-                sentenceCursor = composingSentence.length
-                isSentenceSelecting = false
-                updateComposingDisplay()
-                backHandledInDown = true
-                return true
-            }
-            if (fullZhuyinBuffer.isNotEmpty() || composingSentence.isNotEmpty() || engine.hasComposing()) {
-                cancelComposing()
-                requestHideSelf(0)
-                backHandledInDown = true
-                return true
-            }
-            // 軟體鍵盤顯示時：按下返回鍵優先收起鍵盤並消費事件，絕不可放行給系統以防網頁/App跳轉上一頁
-            if (isInputViewShown) {
-                requestHideSelf(0)
+            val shouldHandle = (voiceInputController?.isListening == true) ||
+                    isCustomWordBuilderOpen ||
+                    isCandidateGridOpen ||
+                    isHomophoneSelectionMode ||
+                    isSentenceSelecting ||
+                    (::symbolPanelController.isInitialized && symbolPanelController.isVisible) ||
+                    fullZhuyinBuffer.isNotEmpty() ||
+                    composingSentence.isNotEmpty() ||
+                    engine.hasComposing() ||
+                    isInputViewShown
+
+            if (shouldHandle) {
+                event.startTracking()
                 backHandledInDown = true
                 return true
             }
@@ -5077,8 +5116,11 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            if (backHandledInDown || isInputViewShown) {
-                backHandledInDown = false
+            val handledInDown = backHandledInDown
+            backHandledInDown = false
+
+            if ((event.isTracking && !event.isCanceled) || handledInDown || isInputViewShown) {
+                handleBackPressed()
                 return true
             }
         }
