@@ -2,6 +2,42 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.9.0] - 2026-10-20
+
+### 🎙️ 系統原生語音辨識、口述標點與排版控制、✛ 鍵科技感 Mic 角標 (Build 114)
+
+- **🎙️ 原生離線優先語音辨識 (SpeechRecognizer)**：
+  - 整合 Android 系統原生 `SpeechRecognizer` API，長按左上角「✛」鍵即刻啟動語音輸入。
+  - **自動自適應語言與平滑降級**：優先支援繁體中文（`zh-TW`），系統已安裝離線語音包時自動優先離線轉錄；未安裝離線包時自動平滑走標準在線語音，杜絕 `ERROR_LANGUAGE_NOT_SUPPORTED (12)`。
+  - **Android 11+ Package Visibility 宣告**：在 `AndroidManifest.xml` 加入 `<queries>` 宣告 `RecognitionService`，根治 API 30+ 缺少可見性導致的 `ERROR_CLIENT (5)`。
+  - **動態麥克風權限透明申請**：內建透明 `VoicePermissionActivity`，首次長按時由輸入法服務透明拉起系統授權視窗，授權完畢立即自動繼續收音。
+- **✍️ 語音口述標點符號與排版控制 (VoicePunctuationProcessor)**：
+  - 說話時直接念出標點指令自動轉換為全形標點與排版動作：
+    - 口述「逗號 / 逗點」 $\rightarrow$ `，`
+    - 口述「句號 / 句點」 $\rightarrow$ `。`
+    - 口述「問號 / 疑問號」 $\rightarrow$ `？`
+    - 口述「驚嘆號 / 感嘆號」 $\rightarrow$ `！`
+    - 口述「頓號」 $\rightarrow$ `、`
+    - 口述「冒號」 $\rightarrow$ `：`
+    - 口述「分號」 $\rightarrow$ `；`
+    - 口述「換行 / 下一行」 $\rightarrow$ `\n`（換行）
+    - 口述「空格 / 空白」 $\rightarrow$ ` `（半形空白）
+    - 口述「刪節號 / 點點點」 $\rightarrow$ `……`
+    - 口述「破折號」 $\rightarrow$ `——`
+    - 口述「波浪號」 $\rightarrow$ `～`
+    - 口述「左引號 / 右引號」 $\rightarrow$ `「` / `」`
+  - 智慧全形標點前後空格消除與重複標點自動清理，且即時預覽與最終上屏皆同步轉譯。
+- **🎨 「✛」鍵簡潔科技感「Mic」角標 (SymbolDrawerButton)**：
+  - 新增 `SymbolDrawerButton` 繼承自 `AppCompatButton`，完全相容主題引擎與符號盤面板控制。
+  - 平時在「✛」鍵右下角常駐微型、粗體無襯線向量文字 **`Mic`**，自動隨主題文字顏色與透明度平滑融合，視覺乾淨且具有現代鍵盤科技感。
+  - 啟動語音收音時，按鍵文字動態切換為居中的 **`Mic`**，收音完畢自動切回「✛」並復原角標。
+- **🌊 即時音量動態波形與即時預覽浮層 (Voice Indicator)**：
+  - 語音辨識期間候選列無縫覆蓋顯示語音操作列，支援 `onRmsChanged` 即時音量動態波形（` ▂▃▅▇`）與 `onPartialResults` 即時轉錄字串預覽。
+  - 提供即時「停止」與「取消」按鈕，辨識完成後播放微震反饋並自動提交上屏。
+- **📋 專屬記憶體日誌與一鍵複製回報 (VoiceLogger)**：
+  - 內建循環記憶體診斷記錄器（保留最新 60 筆詳細日誌）。
+  - 若遇辨識失敗，錯誤提示後方附帶 `(點擊複製Log)`，點擊直接複製完整系統環境、語音服務與監聽回呼至剪貼簿，大幅簡化實機除錯難度。
+
 ## [v2.8.7] - 2026-10-19
 
 ### 🎯 九鍵輸入狀態純淨化、四向滑動快照精準還原與羅盤喚醒重構 (Build 113)
