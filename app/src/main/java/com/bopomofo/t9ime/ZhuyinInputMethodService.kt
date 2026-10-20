@@ -221,6 +221,12 @@ class ZhuyinInputMethodService : InputMethodService() {
     private lateinit var containerSymbolContent: FrameLayout
     private var layoutZhuyinPreview: LinearLayout? = null
     private var tvZhuyinFullPreview: TextView? = null
+    private var voiceInputController: com.bopomofo.t9ime.voice.VoiceInputController? = null
+    private var layoutVoiceIndicator: View? = null
+    private var tvVoiceText: TextView? = null
+    private var btnVoiceStop: Button? = null
+    private var btnVoiceCancel: Button? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val repeatHandler = Handler(Looper.getMainLooper())
     private var isRepeatingBackspace = false
@@ -346,6 +352,10 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            voiceInputController?.unregister()
+        } catch (_: Exception) {}
+        voiceInputController = null
         repeatHandler.removeCallbacksAndMessages(null)
         try {
             val im = getSystemService(Context.INPUT_SERVICE) as? InputManager
@@ -1814,6 +1824,89 @@ class ZhuyinInputMethodService : InputMethodService() {
             override fun isPasswordField(): Boolean = isCurrentInputPassword()
         })
         symbolPanelController.setup(root)
+        setupVoiceInput(root)
+    }
+
+    private fun setupVoiceInput(root: View) {
+        layoutVoiceIndicator = root.findViewById(R.id.layout_voice_indicator)
+        tvVoiceText = root.findViewById(R.id.tv_voice_text)
+        btnVoiceStop = root.findViewById(R.id.btn_voice_stop)
+        btnVoiceCancel = root.findViewById(R.id.btn_voice_cancel)
+
+        btnVoiceStop?.setOnClickListener {
+            triggerHapticFeedback(HapticType.KEY_PRESS)
+            voiceInputController?.stopListening()
+        }
+
+        btnVoiceCancel?.setOnClickListener {
+            triggerHapticFeedback(HapticType.KEY_PRESS)
+            voiceInputController?.cancel()
+            layoutVoiceIndicator?.visibility = View.GONE
+        }
+
+        // 長按左上角「✛」號按鈕啟動語音輸入
+        btnSymbolDrawer.setOnLongClickListener {
+            triggerHapticFeedback(HapticType.KEY_PRESS)
+            startVoiceInput()
+            true
+        }
+
+        if (voiceInputController == null) {
+            voiceInputController = com.bopomofo.t9ime.voice.VoiceInputController(this, object : com.bopomofo.t9ime.voice.VoiceInputCallback {
+                override fun onVoiceStateChanged(isListening: Boolean, promptText: String) {
+                    mainHandler.post {
+                        if (isListening) {
+                            layoutVoiceIndicator?.visibility = View.VISIBLE
+                            tvVoiceText?.text = promptText
+                        } else {
+                            layoutVoiceIndicator?.visibility = View.GONE
+                        }
+                    }
+                }
+
+                override fun onVoicePartialResult(partialText: String) {
+                    mainHandler.post {
+                        tvVoiceText?.text = partialText
+                    }
+                }
+
+                override fun onVoiceResult(text: String) {
+                    mainHandler.post {
+                        triggerHapticFeedback(HapticType.KEY_PRESS)
+                        layoutVoiceIndicator?.visibility = View.GONE
+                        // 直接上屏
+                        currentInputConnection?.commitText(text, 1)
+                    }
+                }
+
+                override fun onVoiceError(errorMsg: String) {
+                    mainHandler.post {
+                        tvVoiceText?.text = errorMsg
+                        mainHandler.postDelayed({
+                            layoutVoiceIndicator?.visibility = View.GONE
+                        }, 1200)
+                    }
+                }
+            })
+            voiceInputController?.register()
+        }
+    }
+
+    private fun startVoiceInput() {
+        if (isCurrentInputPassword()) {
+            return
+        }
+        if (::engine.isInitialized && engine.hasComposing()) {
+            engine.clear()
+            currentInputConnection?.finishComposingText()
+            clearCandidateBar()
+        }
+        if (fullZhuyinBuffer.isNotEmpty()) {
+            fullZhuyinBuffer.clear()
+            currentInputConnection?.finishComposingText()
+            clearCandidateBar()
+        }
+        voiceInputController?.startListening()
     }
 
     private fun showSymbolPanel() {
@@ -4981,6 +5074,10 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
+        try {
+            voiceInputController?.cancel()
+        } catch (_: Exception) {}
+        layoutVoiceIndicator?.visibility = View.GONE
         dismissHomophonePopup()
         if (isCustomWordBuilderOpen) {
             closeCustomWordBuilder()

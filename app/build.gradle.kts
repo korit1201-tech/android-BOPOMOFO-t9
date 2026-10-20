@@ -45,6 +45,9 @@ android {
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
+        unitTests.all {
+            it.jvmArgs("-Xmx2048m")
+        }
     }
 }
 
