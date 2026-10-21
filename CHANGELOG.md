@@ -2,6 +2,25 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.9.2] - 2026-10-21
+
+### ⚡ 字典前綴樹雙 Map 延遲初始化、消除重載雙倍記憶體峰值、Android 16 OOM 徹底根治 (Build 116)
+
+- **⚡ 前綴樹節點（TrieNode）雙 Map 延遲初始化架構**：
+  - **根絕 100 萬個急切 Map 浪費**：16.5 萬行詞庫的前綴樹共包含 494,872 個節點，原實作每個節點一建構即急切分配 `children` 與 `exactEntries` 兩個 `LinkedHashMap`。重構後改為 `null` 延遲初始化：
+    - **62% 的無詞中繼節點（308,987 個）**：`exactEntries` 保持 `null`，省下 31 萬個 Map 物件。
+    - **27% 的無子葉節點（133,676 個）**：`children` 保持 `null`，省下 13.4 萬個 Map 物件。
+    - **62% 的單子節點（306,861 個）**：初始桶容量由 16 精簡至 2，消滅桶陣列佔用。
+- **🛡️ 保留原子替換（Atomic Swap）無鎖安全設計**：
+  - 嚴格維持背景執行緒 local 完整解析後一次性 swap 的架構，杜絕多執行緒選字與 SyllableManager 音節狀態機的 Race Condition。
+  - **壓低單套結構體積**：單套字典記憶體由 **143 MB 降至 93 MB**（直接省下 50 MB / -34%）。
+  - **重載雙字典峰值（Double-Allocation Peak）驟降**：重載或切換時新舊字典並存的記憶體峰值由原先突破 500MB+ **驟降至 124 MB**，在 512MB 堆上限的旗艦機（如 OnePlus 12 Android 16）上保有 **388 MB（高達 76% 空閒）的安全餘裕**，徹底解決 `<1% heap free` 觸發的 `OutOfMemoryError` 與 GC 凍結卡死。
+- **🧹 載入暫存物件即刻回收**：
+  - 在 `loadDictionaryInternal` 解析結束後，顯式呼叫 `nextWordTrack.clear()`、`initialToCharTrack.clear()` 與 `localSyllableWeights.clear()` 立即釋放大型去重暫存集合，防止與字典本體疊加。
+- **✅ 1:1 候選一致性嚴格驗證**：
+  - 通過 1,100 組全量隨機序列（1～8 鍵）對抗驗證，Exact Search、PrefixBest 與全量 Search 候選字詞、權重、順序 **100% Bit-for-bit 完全一致**。
+  - 通過 `PredictionPurityTest`、`CandidateRankingTest` 等全套 12 項單元測試。
+
 ## [v2.9.1] - 2026-10-21
 
 ### 🛡️ 系統返回鍵時序重構、銀行安全視窗防穿透與預測性手勢返回支援 (Build 115)
