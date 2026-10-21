@@ -494,6 +494,11 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
                 list.sortByDescending { it.weight }
             }
 
+            // 顯式清空載入過程中的大型暫存去重集合，避免與新舊字典疊加形成記憶體峰值
+            nextWordTrack.clear()
+            initialToCharTrack.clear()
+            localSyllableWeights.clear()
+
             val parseElapsed = android.os.SystemClock.elapsedRealtime() - parseStartTime
             val splitMs = splitTimeNs / 1_000_000
             android.util.Log.d(

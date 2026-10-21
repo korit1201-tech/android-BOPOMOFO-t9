@@ -33,14 +33,48 @@ val UserWordEntry.cleanZhuyin: String
  * 前綴樹節點
  */
 class TrieNode {
-    val children = mutableMapOf<Int, TrieNode>()
-    // LinkedHashMap<word, DictEntry>：插入時去重，相同詞取 weight 最大者，
-    // 避免 searchExact 每次執行昂貴的 distinctBy 操作
-    val exactEntries = LinkedHashMap<String, DictEntry>()
+    private var childrenMap: LinkedHashMap<Int, TrieNode>? = null
+    private var exactMap: LinkedHashMap<String, DictEntry>? = null
 
     /** 依權重排序的前 [TOP_ENTRIES_SIZE] 名詞條快取（九鍵斷詞使用），插入新詞時失效 */
     @Volatile
     var topEntriesCache: List<DictEntry>? = null
+
+    val children: Map<Int, TrieNode>
+        get() = childrenMap ?: emptyMap()
+
+    val exactEntries: Map<String, DictEntry>
+        get() = exactMap ?: emptyMap()
+
+    fun getChild(key: Int): TrieNode? = childrenMap?.get(key)
+
+    fun getOrCreateChild(key: Int): TrieNode {
+        var map = childrenMap
+        if (map == null) {
+            // 62% 的節點僅有 1 個子節點，初始容量設為 2 避免預設 16 桶的記憶體浪費
+            map = LinkedHashMap(2)
+            childrenMap = map
+        }
+        var child = map[key]
+        if (child == null) {
+            child = TrieNode()
+            map[key] = child
+        }
+        return child
+    }
+
+    fun putExactEntry(entry: DictEntry) {
+        var map = exactMap
+        if (map == null) {
+            map = LinkedHashMap(2)
+            exactMap = map
+        }
+        val existing = map[entry.word]
+        if (existing == null || entry.weight > existing.weight) {
+            map[entry.word] = entry
+            topEntriesCache = null
+        }
+    }
 
     /**
      * 此節點權重最高的幾個詞條。一個節點常有上百個詞條（九鍵一鍵對應多個注音），
@@ -49,10 +83,11 @@ class TrieNode {
     fun topEntries(): List<DictEntry> {
         val cached = topEntriesCache
         if (cached != null) return cached
-        val computed = if (exactEntries.size <= TOP_ENTRIES_SIZE) {
-            exactEntries.values.toList()
+        val map = exactMap ?: return emptyList()
+        val computed = if (map.size <= TOP_ENTRIES_SIZE) {
+            map.values.toList()
         } else {
-            exactEntries.values.sortedByDescending { it.weight }.take(TOP_ENTRIES_SIZE)
+            map.values.sortedByDescending { it.weight }.take(TOP_ENTRIES_SIZE)
         }
         topEntriesCache = computed
         return computed
@@ -102,14 +137,9 @@ class TrieDictionary {
     private fun insertSequence(seq: List<Int>, entry: DictEntry) {
         var curr = root
         for (k in seq) {
-            curr = curr.children.getOrPut(k) { TrieNode() }
+            curr = curr.getOrCreateChild(k)
         }
-        // 相同詞取 weight 最大者，避免 searchExact 執行 distinctBy
-        val existing = curr.exactEntries[entry.word]
-        if (existing == null || entry.weight > existing.weight) {
-            curr.exactEntries[entry.word] = entry
-            curr.topEntriesCache = null
-        }
+        curr.putExactEntry(entry)
     }
 
     /**
@@ -118,7 +148,7 @@ class TrieDictionary {
     fun searchNode(sequence: List<Int>): TrieNode? {
         var curr = root
         for (k in sequence) {
-            val next = curr.children[k] ?: return null
+            val next = curr.getChild(k) ?: return null
             curr = next
         }
         return curr
