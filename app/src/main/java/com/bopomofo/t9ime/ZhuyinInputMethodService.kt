@@ -1673,10 +1673,29 @@ class ZhuyinInputMethodService : InputMethodService() {
         row3.removeAllViews()
         row4.removeAllViews()
 
-        val r1 = listOf('ㄅ' to "1", 'ㄉ' to "2", 'ˇ' to "3", 'ˋ' to "4", 'ㄓ' to "5", 'ˊ' to "6", '˙' to "7", 'ㄚ' to "8", 'ㄞ' to "9", 'ㄢ' to "0")
-        val r2 = listOf('ㄆ', 'ㄊ', 'ㄍ', 'ㄐ', 'ㄔ', 'ㄗ', 'ㄧ', 'ㄛ', 'ㄟ', 'ㄣ')
-        val r3 = listOf('ㄇ', 'ㄋ', 'ㄎ', 'ㄑ', 'ㄕ', 'ㄘ', 'ㄨ', 'ㄜ', 'ㄠ', 'ㄤ')
-        val r4 = listOf('ㄈ', 'ㄌ', 'ㄏ', 'ㄒ', 'ㄖ', 'ㄙ', 'ㄩ', 'ㄝ', 'ㄡ', 'ㄥ', 'ㄦ')
+        val layoutStyle = PreferencesRepository.getFullKeyboardLayoutStyle(this)
+        val isGboardStyle = (layoutStyle == PreferencesRepository.STYLE_GBOARD)
+
+        val r1: List<Pair<Char, String?>>
+        val r2: List<Pair<Char, String?>> = listOf('ㄆ', 'ㄊ', 'ㄍ', 'ㄐ', 'ㄔ', 'ㄗ', 'ㄧ', 'ㄛ', 'ㄟ', 'ㄣ').map { it to null }
+        val r3: List<Pair<Char, String?>> = listOf('ㄇ', 'ㄋ', 'ㄎ', 'ㄑ', 'ㄕ', 'ㄘ', 'ㄨ', 'ㄜ', 'ㄠ', 'ㄤ').map { it to null }
+        val r4: List<Pair<Char, String?>>
+        val appendDelRow1: Boolean
+        val appendDelRow4: Boolean
+
+        if (isGboardStyle) {
+            // 手機主流風格 (Gboard / SwiftKey)：Row 4 右側放退格鍵，Row 1 最右側放 ㄦ
+            r1 = listOf('ㄅ' to "1", 'ㄉ' to "2", 'ˇ' to "3", 'ˋ' to "4", 'ㄓ' to "5", 'ˊ' to "6", '˙' to "7", 'ㄚ' to "8", 'ㄞ' to "9", 'ㄢ' to "0", 'ㄦ' to "-")
+            r4 = listOf('ㄈ', 'ㄌ', 'ㄏ', 'ㄒ', 'ㄖ', 'ㄙ', 'ㄩ', 'ㄝ', 'ㄡ', 'ㄥ').map { it to null }
+            appendDelRow1 = false
+            appendDelRow4 = true
+        } else {
+            // 電腦大千標準風格：Row 1 右側放退格鍵，Row 4 放 ㄥ ㄦ
+            r1 = listOf('ㄅ' to "1", 'ㄉ' to "2", 'ˇ' to "3", 'ˋ' to "4", 'ㄓ' to "5", 'ˊ' to "6", '˙' to "7", 'ㄚ' to "8", 'ㄞ' to "9", 'ㄢ' to "0")
+            r4 = listOf('ㄈ', 'ㄌ', 'ㄏ', 'ㄒ', 'ㄖ', 'ㄙ', 'ㄩ', 'ㄝ', 'ㄡ', 'ㄥ', 'ㄦ').map { it to null }
+            appendDelRow1 = true
+            appendDelRow4 = false
+        }
 
         val isLand = isPhoneLandscapeMode()
         val splitSpacerWeight = 2.0f
@@ -1691,14 +1710,14 @@ class ZhuyinInputMethodService : InputMethodService() {
                 row.addView(createZhuyinFullKey(item.first, 1f, item.second))
             }
             if (appendDel) {
-                row.addView(createZhuyinFullDelKey(1.1f))
+                row.addView(createZhuyinFullDelKey(1.2f))
             }
         }
 
-        addRowKeys(row1, r1.map { it.first to it.second }, 5, true)
-        addRowKeys(row2, r2.map { it to null }, 5, false)
-        addRowKeys(row3, r3.map { it to null }, 5, false)
-        addRowKeys(row4, r4.map { it to null }, 5, false)
+        addRowKeys(row1, r1, 5, appendDelRow1)
+        addRowKeys(row2, r2, 5, false)
+        addRowKeys(row3, r3, 5, false)
+        addRowKeys(row4, r4, 5, appendDelRow4)
 
         val currentTheme = ThemeManager.getCurrentTheme(this)
         ThemeManager.applyTheme(layoutZhuyinFull, currentTheme)
@@ -2486,8 +2505,14 @@ class ZhuyinInputMethodService : InputMethodService() {
                 btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 13f else 15f)
                 btnSpaceSwipe.text = formatSpaceChineseSubModeLabel("中文", isCompact = false)
                 btnQwertyToggle.visibility = View.GONE
-                if (::btnComma.isInitialized) btnComma.text = if (isTraditionalMode()) "，" else ","
-                if (::btnPeriod.isInitialized) btnPeriod.text = if (isTraditionalMode()) "。" else "."
+                if (::btnComma.isInitialized) {
+                    btnComma.visibility = View.VISIBLE
+                    btnComma.text = if (isTraditionalMode()) "，" else ","
+                }
+                if (::btnPeriod.isInitialized) {
+                    btnPeriod.visibility = View.VISIBLE
+                    btnPeriod.text = if (isTraditionalMode()) "。" else "."
+                }
 
                 update12KeyLabelsZhuyin()
                 if (::btnSymAt.isInitialized) {
@@ -2507,8 +2532,15 @@ class ZhuyinInputMethodService : InputMethodService() {
                 btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 11.5f else 13.5f)
                 btnSpaceSwipe.text = formatSpaceChineseSubModeLabel("中文", isCompact = true)
                 btnQwertyToggle.visibility = View.GONE
-                if (::btnComma.isInitialized) btnComma.text = if (isTraditionalMode()) "，" else ","
-                if (::btnPeriod.isInitialized) btnPeriod.text = if (isTraditionalMode()) "。" else "."
+                val showPunc = PreferencesRepository.isShowBottomPunctuation(this)
+                if (::btnComma.isInitialized) {
+                    btnComma.visibility = if (showPunc) View.VISIBLE else View.GONE
+                    btnComma.text = if (isTraditionalMode()) "，" else ","
+                }
+                if (::btnPeriod.isInitialized) {
+                    btnPeriod.visibility = if (showPunc) View.VISIBLE else View.GONE
+                    btnPeriod.text = if (isTraditionalMode()) "。" else "."
+                }
             }
             KeyboardMode.NUMBER_SYM -> {
                 layout12Key.visibility = View.VISIBLE
@@ -2528,8 +2560,14 @@ class ZhuyinInputMethodService : InputMethodService() {
                 btnSpaceSwipe.text = spaceSpannable
                 btnQwertyToggle.visibility = View.VISIBLE
                 btnQwertyToggle.text = "( )"
-                if (::btnComma.isInitialized) btnComma.text = ","
-                if (::btnPeriod.isInitialized) btnPeriod.text = "%"
+                if (::btnComma.isInitialized) {
+                    btnComma.visibility = View.VISIBLE
+                    btnComma.text = ","
+                }
+                if (::btnPeriod.isInitialized) {
+                    btnPeriod.visibility = View.VISIBLE
+                    btnPeriod.text = "%"
+                }
 
                 update12KeyLabelsNumbers()
                 if (::btnSymAt.isInitialized) {
@@ -2552,8 +2590,14 @@ class ZhuyinInputMethodService : InputMethodService() {
                 btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 12f else 14f)
                 btnSpaceSwipe.text = formatSpaceChineseSubModeLabel("English", isCompact = !isLand)
                 btnQwertyToggle.visibility = View.GONE
-                if (::btnComma.isInitialized) btnComma.text = ","
-                if (::btnPeriod.isInitialized) btnPeriod.text = "."
+                if (::btnComma.isInitialized) {
+                    btnComma.visibility = View.VISIBLE
+                    btnComma.text = ","
+                }
+                if (::btnPeriod.isInitialized) {
+                    btnPeriod.visibility = View.VISIBLE
+                    btnPeriod.text = "."
+                }
 
                 updateQwertyKeysText()
                 if (::btnSymAt.isInitialized) {
@@ -3509,9 +3553,6 @@ class ZhuyinInputMethodService : InputMethodService() {
                 DictEntry("、(按 \\)", "", 999_992),
                 DictEntry("～(按 `)", "", 999_991)
             )
-        } else if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty() && !isHomophoneSelectionMode && !isHardwareKeyboardConnected) {
-            val zhuyinEntry = DictEntry("【$fullZhuyinBuffer】", fullZhuyinBuffer.toString(), 999_999_999)
-            listOf(zhuyinEntry) + candidates
         } else {
             candidates
         }
@@ -3550,7 +3591,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             val isPageIndicator = (i == count && pageIndicatorText != null)
             val entry = if (!isPageIndicator) displayCandidates[i] else DictEntry(pageIndicatorText!!, "", 0)
 
-            val isZhuyinHeader = (!isHardwareKeyboardConnected && currentMode == KeyboardMode.ZHUYIN_FULL && entry.word.startsWith("【") && entry.word.endsWith("】")) || (isSymbolLeadMode && i == 0)
+            val isZhuyinHeader = isSymbolLeadMode && i == 0
             val rawWord = if (isSimplified && !isPageIndicator) ChineseConverter.toSimplified(entry.word) else entry.word
             val isSelectingState = isSentenceSelecting || isCandidateGridOpen || isHomophoneSelectionMode || isSymbolLeadMode
             val displayWord = if (isPhysicalMode && isSelectingState && !isZhuyinHeader && !isPageIndicator && !isSymbolLeadMode && i < 9) {
@@ -3626,7 +3667,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                     true
                 }
             } else {
-                val isFirstCandidate = if (isHardwareKeyboardConnected) i == 0 else (i == 0 || (currentMode == KeyboardMode.ZHUYIN_FULL && i == 1))
+                val isFirstCandidate = (i == 0)
                 tv.setTextColor(
                     if (isFirstCandidate) themeColors.candidateText
                     else themeColors.textPrimary

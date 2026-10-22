@@ -145,9 +145,20 @@ class UserDictionaryManager private constructor(private val context: Context?) {
      * 計算候選詞個人化增幅權重
      * 使用者選定/確認過的字詞賦予絕對優選增幅 (≥ 1,000,000)，超越字典既定權重穩居首選
      * 支援時間衰減模型 (Recency Boost)：近期剛選過之詞享有即時優先置頂權重
+     * 支援讀音一致性校驗 (Reading-Aware Guard)：若指定了期望注音且記錄讀音不符，則拒絕灌入加權
      */
-    fun getBoost(word: String): Int {
+    fun getBoost(word: String, expectedZhuyin: String? = null): Int {
         val entry = synchronized(memoryDict) { memoryDict[word] } ?: return 0
+
+        // 讀音一致性保護：若有提供期望讀音，且使用者記錄中存有明確讀音，去聲調後比對不符則不予加成
+        if (expectedZhuyin != null && entry.zhuyin.isNotBlank()) {
+            val entryClean = entry.zhuyin.filter { it !in "ˇˋˊ˙ " }
+            val expectedClean = expectedZhuyin.filter { it !in "ˇˋˊ˙ " }
+            if (entryClean.isNotEmpty() && expectedClean.isNotEmpty() && entryClean != expectedClean) {
+                return 0
+            }
+        }
+
         val baseBoost = if (word.length == 1) {
             1_000_000 + minOf(entry.count * 100_000, 10_000_000)
         } else {

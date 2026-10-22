@@ -3,7 +3,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true"
-    android:background="#F5F5F7">
+    android:background="@color/kb_bg">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -16,7 +16,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="All's good注音九宮格輸入法"
-            android:textColor="#212121"
+            android:textColor="@color/kb_text_primary"
             android:textSize="22sp"
             android:textStyle="bold" />
 
@@ -25,7 +25,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:text="支援 T9 智能預測、個人化詞庫記憶與手寫辨識"
-            android:textColor="#757575"
+            android:textColor="@color/kb_text_secondary"
             android:textSize="13sp" />
 
         <!-- 區塊一：系統設定引導 -->
@@ -42,7 +42,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="⚙️ 快速啟用引導"
-                android:textColor="#212121"
+                android:textColor="@color/kb_text_primary"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -75,7 +75,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="📳 按鍵觸控震動設定"
-                android:textColor="#212121"
+                android:textColor="@color/kb_text_primary"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -91,7 +91,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:text="按鍵觸覺震動反饋"
-                    android:textColor="#424242"
+                    android:textColor="@color/kb_text_primary"
                     android:textSize="14sp" />
 
                 <androidx.appcompat.widget.SwitchCompat
@@ -117,7 +117,7 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="震動強度調整"
-                        android:textColor="#424242"
+                        android:textColor="@color/kb_text_primary"
                         android:textSize="13sp" />
 
                     <TextView
@@ -155,7 +155,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="🎯 輸入習慣與發音容錯"
-                android:textColor="#212121"
+                android:textColor="@color/kb_text_primary"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -164,7 +164,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:text="調整注音模糊音比對與候選字演算法偏好。"
-                android:textColor="#757575"
+                android:textColor="@color/kb_text_secondary"
                 android:textSize="12sp" />
 
             <LinearLayout
@@ -184,7 +184,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="發音容錯輸入（前後鼻音模糊）"
-                        android:textColor="#424242"
+                        android:textColor="@color/kb_text_primary"
                         android:textSize="14sp" />
 
                     <TextView
@@ -192,7 +192,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
                         android:text="開啟時提供 ㄣ/ㄥ、ㄢ/ㄤ 容錯候補（精確按鍵始終最優先）；關閉時僅嚴格匹配輸入按鍵。"
-                        android:textColor="#757575"
+                        android:textColor="@color/kb_text_secondary"
                         android:textSize="11sp" />
                 </LinearLayout>
 
@@ -217,7 +217,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="🎨 鍵盤外觀與主題風格"
-                android:textColor="#212121"
+                android:textColor="@color/kb_text_primary"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -226,7 +226,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:text="選擇您喜愛的介面配色，支援深色模式與自訂主題風格。"
-                android:textColor="#757575"
+                android:textColor="@color/kb_text_secondary"
                 android:textSize="12sp" />
 
             <Spinner
@@ -234,6 +234,83 @@
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
                 android:layout_marginTop="10dp" />
+        </LinearLayout>
+
+                <!-- 區塊：全鍵盤佈局風格與按鍵偏好 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_key"
+            android:elevation="1dp"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="⌨️ 全鍵盤佈局與偏好設定"
+                android:textColor="@color/kb_text_primary"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="依您的打字習慣與手感切換鍵位配置與底排功能按鍵。"
+                android:textColor="@color/kb_text_secondary"
+                android:textSize="12sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="全鍵盤排版風格"
+                android:textColor="@color/kb_text_primary"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <Spinner
+                android:id="@+id/spinner_full_keyboard_style"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="6dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="底排顯示標點符號鍵（，與。）"
+                        android:textColor="@color/kb_text_primary"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="開啟時底排保留快速標點鍵；關閉時隱藏標點鍵並自動加寬空白鍵面積。"
+                        android:textColor="@color/kb_text_secondary"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switch_show_bottom_punctuation"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
         </LinearLayout>
 
         <!-- 區塊二：個人化詞庫與匯入匯出 -->
@@ -250,7 +327,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="📚 個人化詞庫管理 (本機記憶)"
-                android:textColor="#212121"
+                android:textColor="@color/kb_text_primary"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -260,7 +337,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:text="目前已記錄：0 個常用專屬詞彙"
-                android:textColor="#424242"
+                android:textColor="@color/kb_text_primary"
                 android:textSize="14sp" />
 
             <TextView
@@ -268,7 +345,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:text="打字時點選越多次的詞，系統會自動加權排在越前面。所有紀錄皆保存在本機，安全不聯網。"
-                android:textColor="#757575"
+                android:textColor="@color/kb_text_secondary"
                 android:textSize="12sp" />
 
             <LinearLayout
@@ -329,7 +406,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="✏️ 打字效果即時測試"
-                android:textColor="#212121"
+                android:textColor="@color/kb_text_primary"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -337,7 +414,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:background="#FAFAFA"
+                android:background="@drawable/bg_key" android:textColor="@color/kb_text_primary" android:textColorHint="@color/kb_text_secondary"
                 android:hint="點擊這裡喚起鍵盤測試輸入..."
                 android:padding="12dp"
                 android:textSize="16sp" />
@@ -357,7 +434,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="🚀 關於與版本更新"
-                android:textColor="#212121"
+                android:textColor="@color/kb_text_primary"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -367,7 +444,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:text="目前版本：v2.1.0"
-                android:textColor="#424242"
+                android:textColor="@color/kb_text_primary"
                 android:textSize="14sp" />
 
             <TextView
@@ -376,7 +453,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:text="作者：korit1201-tech"
-                android:textColor="#616161"
+                android:textColor="@color/kb_text_secondary"
                 android:textSize="13sp" />
 
             <TextView
@@ -395,7 +472,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="點擊手動比對 GitHub Releases 最新版本，發現新版可直接在應用內下載並安裝更新。"
-                android:textColor="#757575"
+                android:textColor="@color/kb_text_secondary"
                 android:textSize="12sp" />
 
             <Button
@@ -420,7 +497,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="🛠️ 系統診斷與崩潰日誌"
-                android:textColor="#212121"
+                android:textColor="@color/kb_text_primary"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -429,7 +506,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:text="若輸入法遇到異常閃退、輸入框卡頓或異常中斷，可在此檢視診斷紀錄並複製提供給開發者除錯。"
-                android:textColor="#757575"
+                android:textColor="@color/kb_text_secondary"
                 android:textSize="13sp" />
 
             <Button
@@ -455,7 +532,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="📜 第三方開源語料與技術致謝"
-                android:textColor="#212121"
+                android:textColor="@color/kb_text_primary"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -465,7 +542,7 @@
                 android:layout_marginTop="8dp"
                 android:lineSpacingExtra="4dp"
                 android:text="本輸入法之離線詞庫與技術參考以下優秀開源專案，特此致謝：\n\n• 新酷音輸入法 (chewing/libchewing-data)\n  官方繁體中文全量高頻詞庫與注音語料。\n\n• PIME 輸入法平台 (easyprog/pime)\n  啟發跨音節動態規劃組句、游標回退改字與實體外接鍵盤互動架構。\n\n• 琦琦輸入法 (polobread/KeyKey)\n  引用 chichi77Collection (MIT 授權, Copyright 2026 Chui-Ping Cheng)，收錄 29 類現代生活流行語、ACG 動漫、高科技、AI 與生醫法律分類詞庫。\n\n• 小麥注音 (openvanilla/McBopomofo)\n  提供精準字音、音節與注音詞頻參考 (MIT 授權)。\n\n• fcitx5-android-t9-phone (Rizumu85)\n  啟發 12 鍵注音手勢九宮格設計理念。"
-                android:textColor="#555555"
+                android:textColor="@color/kb_text_secondary"
                 android:textSize="13sp" />
 
             <TextView
