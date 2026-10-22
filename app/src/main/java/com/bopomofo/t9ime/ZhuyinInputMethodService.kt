@@ -27,6 +27,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.media.AudioManager
 import android.os.Build
 import android.os.VibrationEffect
@@ -214,6 +215,8 @@ class ZhuyinInputMethodService : InputMethodService() {
     private lateinit var btnMode123: Button
     private lateinit var btnLangToggle: Button
     private lateinit var btnFullEnter: Button
+    private lateinit var btnFullBackspace: Button
+    private lateinit var btnFullEr: com.bopomofo.t9ime.ui.ZhuyinFullCompassKey
     private lateinit var btnSpaceSwipe: SwipeKeyButton
     private lateinit var btnQwertyToggle: SwipeKeyButton
     private lateinit var spacerBottomBar: View
@@ -325,8 +328,24 @@ class ZhuyinInputMethodService : InputMethodService() {
             im?.registerInputDeviceListener(inputDeviceListener, null)
         } catch (_: Exception) {}
 
+        // 註冊偏好設定即時監聽（全鍵盤風格、標點顯示變動時立即可見）
+        try {
+            getSharedPreferences("ime_prefs", Context.MODE_PRIVATE)
+                .registerOnSharedPreferenceChangeListener(prefsChangeListener)
+        } catch (_: Exception) {}
+
         val totalElapsed = android.os.SystemClock.elapsedRealtime() - t0
         android.util.Log.d("BopomofoIME_Perf", "[Perf] Service.onCreate 完成，總耗時: ${totalElapsed}ms")
+    }
+
+    private val prefsChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == PreferencesRepository.KEY_FULL_KEYBOARD_LAYOUT_STYLE ||
+            key == PreferencesRepository.KEY_SHOW_BOTTOM_PUNCTUATION) {
+            mainHandler.post {
+                checkAndApplyFullKeyboardLayout(force = true)
+                updateKeyboardModeUI()
+            }
+        }
     }
 
     private val inputDeviceListener = object : InputManager.InputDeviceListener {
@@ -352,6 +371,10 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            getSharedPreferences("ime_prefs", Context.MODE_PRIVATE)
+                .unregisterOnSharedPreferenceChangeListener(prefsChangeListener)
+        } catch (_: Exception) {}
         try {
             voiceInputController?.unregister()
         } catch (_: Exception) {}
@@ -595,6 +618,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
             applyAdaptiveKeyboardHeight()
             applyOneHandedMode()
+            checkAndApplyFullKeyboardLayout()
             updateKeyboardModeUI()
             updateHardwareKeyboardState(hasPhysical)
         }
@@ -877,6 +901,39 @@ class ZhuyinInputMethodService : InputMethodService() {
         btnFullEnter.setOnClickListener {
             triggerHapticFeedback()
             performEnterAction()
+        }
+        btnFullBackspace = root.findViewById(R.id.btn_full_backspace)
+        btnFullBackspace.setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.isPressed = true
+                    triggerHapticFeedback()
+                    performBackspace()
+                    isRepeatingBackspace = true
+                    repeatHandler.postDelayed(backspaceRunnable, INITIAL_REPEAT_DELAY)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.isPressed = false
+                    isRepeatingBackspace = false
+                    repeatHandler.removeCallbacks(backspaceRunnable)
+                    true
+                }
+                else -> false
+            }
+        }
+        btnFullEr = root.findViewById(R.id.btn_full_er)
+        btnFullEr.primaryText = "ㄦ"
+        btnFullEr.subText = "-"
+        btnFullEr.leftOption = "~"
+        btnFullEr.rightOption = "-"
+        btnFullEr.onCommitZhuyin = { ch ->
+            triggerHapticFeedback()
+            handleZhuyinFullKey(ch)
+        }
+        btnFullEr.onCommitDirectText = { txt ->
+            triggerHapticFeedback()
+            commitTextDirectly(txt)
         }
         btnSpaceSwipe = root.findViewById(R.id.btn_space_swipe)
         btnQwertyToggle = root.findViewById(R.id.btn_qwerty_toggle)
@@ -1655,12 +1712,57 @@ class ZhuyinInputMethodService : InputMethodService() {
         updateKeyboardModeUI()
     }
 
+    private var lastAppliedFullLayoutStyle: String? = null
+
+    private fun checkAndApplyFullKeyboardLayout(force: Boolean = false) {
+        val root = rootView ?: return
+        val style = PreferencesRepository.getFullKeyboardLayoutStyle(this)
+        val row1 = root.findViewById<LinearLayout>(R.id.zhuyin_full_row_1)
+        val needsRebuild = force ||
+                lastAppliedFullLayoutStyle != style ||
+                row1 == null ||
+                row1.childCount == 0
+
+        if (needsRebuild) {
+            setupZhuyinFullLayout(root)
+        }
+    }
+
+    data class FullKeySpec(
+        val zhuyin: Char,
+        val sub: String,
+        val left: String,
+        val right: String
+    )
+
+    private fun createZhuyinFullCompassKey(spec: FullKeySpec, weight: Float = 1f): com.bopomofo.t9ime.ui.ZhuyinFullCompassKey {
+        return com.bopomofo.t9ime.ui.ZhuyinFullCompassKey(this).apply {
+            primaryText = spec.zhuyin.toString()
+            subText = spec.sub
+            leftOption = spec.left
+            rightOption = spec.right
+            val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, weight).apply {
+                setMargins(1, 1, 1, 1)
+            }
+            layoutParams = params
+            onCommitZhuyin = { ch ->
+                triggerHapticFeedback()
+                handleZhuyinFullKey(ch)
+            }
+            onCommitDirectText = { txt ->
+                triggerHapticFeedback()
+                commitTextDirectly(txt)
+            }
+        }
+    }
+
     /**
-     * 41 鍵大千注音全鍵盤配置：
-     * Row 1: ㄅ ㄉ ˇ ˋ ㄓ ˊ ˙ ㄚ ㄞ ㄢ (長按輸出數字 1~0)
-     * Row 2: ㄆ ㄊ ㄍ ㄐ ㄔ ㄗ ㄧ ㄛ ㄟ ㄣ
-     * Row 3: ㄇ ㄋ ㄎ ㄑ ㄕ ㄘ ㄨ ㄜ ㄠ ㄤ
-     * Row 4: ㄈ ㄌ ㄏ ㄒ ㄖ ㄙ ㄩ ㄝ ㄡ ㄥ ㄦ
+     * 41 鍵大千注音全鍵盤配置 (符合 Gboard 視覺與功能標準)：
+     * Row 1: ㄅ(1) ㄉ(2) ˇ(3) ˋ(4) ㄓ(5) ˊ(6) ˙(7) ㄚ(8) ㄞ(9) ㄢ(0)
+     * Row 2: ㄆ(q) ㄊ(w) ㄍ(e) ㄐ(r) ㄔ(t) ㄗ(y) ㄧ(u) ㄛ(i) ㄟ(o) ㄣ(p)
+     * Row 3: ㄇ(a) ㄋ(s) ㄎ(d) ㄑ(f) ㄕ(g) ㄘ(h) ㄨ(j) ㄜ(k) ㄠ(l) ㄤ(:)
+     * Row 4: ㄈ(z) ㄌ(x) ㄏ(c) ㄒ(v) ㄖ(b) ㄙ(n) ㄩ(m) ㄝ(…) ㄡ(!) ㄥ(?)
+     * 底欄: [?123] [，] [9鍵·繁] [空白(注音)] [ㄦ(-)] [⌫] [↵]
      */
     private fun setupZhuyinFullLayout(root: View) {
         val row1 = root.findViewById<LinearLayout>(R.id.zhuyin_full_row_1) ?: return
@@ -1674,50 +1776,88 @@ class ZhuyinInputMethodService : InputMethodService() {
         row4.removeAllViews()
 
         val layoutStyle = PreferencesRepository.getFullKeyboardLayoutStyle(this)
+        lastAppliedFullLayoutStyle = layoutStyle
         val isGboardStyle = (layoutStyle == PreferencesRepository.STYLE_GBOARD)
 
-        val r1: List<Pair<Char, String?>>
-        val r2: List<Pair<Char, String?>> = listOf('ㄆ', 'ㄊ', 'ㄍ', 'ㄐ', 'ㄔ', 'ㄗ', 'ㄧ', 'ㄛ', 'ㄟ', 'ㄣ').map { it to null }
-        val r3: List<Pair<Char, String?>> = listOf('ㄇ', 'ㄋ', 'ㄎ', 'ㄑ', 'ㄕ', 'ㄘ', 'ㄨ', 'ㄜ', 'ㄠ', 'ㄤ').map { it to null }
-        val r4: List<Pair<Char, String?>>
-        val appendDelRow1: Boolean
-        val appendDelRow4: Boolean
+        val r1 = listOf(
+            FullKeySpec('ㄅ', "1", "！", "1"),
+            FullKeySpec('ㄉ', "2", "@", "2"),
+            FullKeySpec('ˇ', "3", "#", "3"),
+            FullKeySpec('ˋ', "4", "$", "4"),
+            FullKeySpec('ㄓ', "5", "%", "5"),
+            FullKeySpec('ˊ', "6", "^", "6"),
+            FullKeySpec('˙', "7", "&", "7"),
+            FullKeySpec('ㄚ', "8", "*", "8"),
+            FullKeySpec('ㄞ', "9", "(", "9"),
+            FullKeySpec('ㄢ', "0", ")", "0")
+        )
 
-        if (isGboardStyle) {
-            // 手機主流風格 (Gboard / SwiftKey)：Row 4 右側放退格鍵，Row 1 最右側放 ㄦ
-            r1 = listOf('ㄅ' to "1", 'ㄉ' to "2", 'ˇ' to "3", 'ˋ' to "4", 'ㄓ' to "5", 'ˊ' to "6", '˙' to "7", 'ㄚ' to "8", 'ㄞ' to "9", 'ㄢ' to "0", 'ㄦ' to "-")
-            r4 = listOf('ㄈ', 'ㄌ', 'ㄏ', 'ㄒ', 'ㄖ', 'ㄙ', 'ㄩ', 'ㄝ', 'ㄡ', 'ㄥ').map { it to null }
-            appendDelRow1 = false
-            appendDelRow4 = true
-        } else {
-            // 電腦大千標準風格：Row 1 右側放退格鍵，Row 4 放 ㄥ ㄦ
-            r1 = listOf('ㄅ' to "1", 'ㄉ' to "2", 'ˇ' to "3", 'ˋ' to "4", 'ㄓ' to "5", 'ˊ' to "6", '˙' to "7", 'ㄚ' to "8", 'ㄞ' to "9", 'ㄢ' to "0")
-            r4 = listOf('ㄈ', 'ㄌ', 'ㄏ', 'ㄒ', 'ㄖ', 'ㄙ', 'ㄩ', 'ㄝ', 'ㄡ', 'ㄥ', 'ㄦ').map { it to null }
-            appendDelRow1 = true
-            appendDelRow4 = false
+        val r2 = listOf(
+            FullKeySpec('ㄆ', "q", "Q", "q"),
+            FullKeySpec('ㄊ', "w", "W", "w"),
+            FullKeySpec('ㄍ', "e", "E", "e"),
+            FullKeySpec('ㄐ', "r", "R", "r"),
+            FullKeySpec('ㄔ', "t", "T", "t"),
+            FullKeySpec('ㄗ', "y", "Y", "y"),
+            FullKeySpec('ㄧ', "u", "U", "u"),
+            FullKeySpec('ㄛ', "i", "I", "i"),
+            FullKeySpec('ㄟ', "o", "O", "o"),
+            FullKeySpec('ㄣ', "p", "P", "p")
+        )
+
+        val r3 = listOf(
+            FullKeySpec('ㄇ', "a", "A", "a"),
+            FullKeySpec('ㄋ', "s", "S", "s"),
+            FullKeySpec('ㄎ', "d", "D", "d"),
+            FullKeySpec('ㄑ', "f", "F", "f"),
+            FullKeySpec('ㄕ', "g", "G", "g"),
+            FullKeySpec('ㄘ', "h", "H", "h"),
+            FullKeySpec('ㄨ', "j", "J", "j"),
+            FullKeySpec('ㄜ', "k", "K", "k"),
+            FullKeySpec('ㄠ', "l", "L", "l"),
+            FullKeySpec('ㄤ', ":", ";", ":")
+        )
+
+        val r4 = mutableListOf(
+            FullKeySpec('ㄈ', "z", "Z", "z"),
+            FullKeySpec('ㄌ', "x", "X", "x"),
+            FullKeySpec('ㄏ', "c", "C", "c"),
+            FullKeySpec('ㄒ', "v", "V", "v"),
+            FullKeySpec('ㄖ', "b", "B", "b"),
+            FullKeySpec('ㄙ', "n", "N", "n"),
+            FullKeySpec('ㄩ', "m", "M", "m"),
+            FullKeySpec('ㄝ', "…", "……", "…"),
+            FullKeySpec('ㄡ', "!", "！", "!"),
+            FullKeySpec('ㄥ', "?", "？", "?")
+        )
+
+        if (!isGboardStyle) {
+            // 電腦大千風格：ㄦ 在第 4 排最右邊
+            r4.add(FullKeySpec('ㄦ', "-", "~", "-"))
         }
 
         val isLand = isPhoneLandscapeMode()
         val splitSpacerWeight = 2.0f
 
-        val addRowKeys = { row: LinearLayout, keys: List<Pair<Char, String?>>, splitIndex: Int, appendDel: Boolean ->
-            for ((index, item) in keys.withIndex()) {
+        val addRowKeys = { row: LinearLayout, keys: List<FullKeySpec>, splitIndex: Int, appendDel: Boolean ->
+            for ((index, spec) in keys.withIndex()) {
                 if (isLand && index == splitIndex) {
                     row.addView(View(this).apply {
                         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, splitSpacerWeight)
                     })
                 }
-                row.addView(createZhuyinFullKey(item.first, 1f, item.second))
+                row.addView(createZhuyinFullCompassKey(spec, 1f))
             }
             if (appendDel) {
                 row.addView(createZhuyinFullDelKey(1.2f))
             }
         }
 
-        addRowKeys(row1, r1, 5, appendDelRow1)
+        // Gboard 風格：退格鍵在底欄；PC 風格：退格鍵在第 1 排右側
+        addRowKeys(row1, r1, 5, !isGboardStyle)
         addRowKeys(row2, r2, 5, false)
         addRowKeys(row3, r3, 5, false)
-        addRowKeys(row4, r4, 5, appendDelRow4)
+        addRowKeys(row4, r4, 5, false)
 
         val currentTheme = ThemeManager.getCurrentTheme(this)
         ThemeManager.applyTheme(layoutZhuyinFull, currentTheme)
@@ -2081,8 +2221,14 @@ class ZhuyinInputMethodService : InputMethodService() {
             val topZhuyin = if (customComposingWord == null) (topEntry?.zhuyin ?: "") else ""
             commitProcessedWordWithUserDict(topWord, topZhuyin)
         } else {
-            currentInputConnection?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
-            currentInputConnection?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+            val ic = currentInputConnection
+            val info = currentInputEditorInfo
+            val imeAction = (info?.imeOptions ?: 0) and android.view.inputmethod.EditorInfo.IME_MASK_ACTION
+            if (ic != null && imeAction != android.view.inputmethod.EditorInfo.IME_ACTION_NONE &&
+                imeAction != android.view.inputmethod.EditorInfo.IME_ACTION_UNSPECIFIED) {
+                if (ic.performEditorAction(imeAction)) return
+            }
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
         }
     }
 
@@ -2522,15 +2668,19 @@ class ZhuyinInputMethodService : InputMethodService() {
                 btnClear?.text = "清空"
             }
             KeyboardMode.ZHUYIN_FULL -> {
+                checkAndApplyFullKeyboardLayout()
                 layout12Key.visibility = View.GONE
                 if (::layoutZhuyinFull.isInitialized) layoutZhuyinFull.visibility = View.VISIBLE
                 layoutQwerty.visibility = View.GONE
                 if (::layoutHandwriting.isInitialized) layoutHandwriting.visibility = View.GONE
 
-                btnMode123.text = formatMode123Label("123")
+                val layoutStyle = PreferencesRepository.getFullKeyboardLayoutStyle(this)
+                val isGboardStyle = (layoutStyle == PreferencesRepository.STYLE_GBOARD)
+
+                btnMode123.text = formatMode123Label("?123")
                 btnLangToggle.text = if (isSimplified) "9鍵·簡" else "9鍵·繁"
-                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 11.5f else 13.5f)
-                btnSpaceSwipe.text = formatSpaceChineseSubModeLabel("中文", isCompact = true)
+                btnSpaceSwipe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (isLand) 12f else 14f)
+                btnSpaceSwipe.text = formatSpaceChineseSubModeLabel("注音", isCompact = true)
                 btnQwertyToggle.visibility = View.GONE
                 val showPunc = PreferencesRepository.isShowBottomPunctuation(this)
                 if (::btnComma.isInitialized) {
@@ -2538,8 +2688,18 @@ class ZhuyinInputMethodService : InputMethodService() {
                     btnComma.text = if (isTraditionalMode()) "，" else ","
                 }
                 if (::btnPeriod.isInitialized) {
-                    btnPeriod.visibility = if (showPunc) View.VISIBLE else View.GONE
+                    btnPeriod.visibility = if (!isGboardStyle && showPunc) View.VISIBLE else View.GONE
                     btnPeriod.text = if (isTraditionalMode()) "。" else "."
+                }
+                if (::btnFullEr.isInitialized) {
+                    btnFullEr.visibility = if (isGboardStyle) View.VISIBLE else View.GONE
+                }
+                if (::btnFullBackspace.isInitialized) {
+                    btnFullBackspace.visibility = if (isGboardStyle) View.VISIBLE else View.GONE
+                }
+                if (::btnFullEnter.isInitialized) {
+                    btnFullEnter.visibility = View.VISIBLE
+                    btnFullEnter.text = "↵"
                 }
             }
             KeyboardMode.NUMBER_SYM -> {
@@ -2651,29 +2811,112 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun updateBottomBarOrder() {
         if (!::layoutBottomBar.isInitialized || !::btnPeriod.isInitialized || !::btnSpaceSwipe.isInitialized) return
+        val isZhuyinFull = currentMode == KeyboardMode.ZHUYIN_FULL
         val isEnglish = currentMode == KeyboardMode.ENGLISH_QWERTY
-        val periodIndex = layoutBottomBar.indexOfChild(btnPeriod)
-        val spaceIndex = layoutBottomBar.indexOfChild(btnSpaceSwipe)
-        if (periodIndex == -1 || spaceIndex == -1) return
+        val layoutStyle = PreferencesRepository.getFullKeyboardLayoutStyle(this)
+        val isGboardStyle = (layoutStyle == PreferencesRepository.STYLE_GBOARD)
 
-        if (isEnglish) {
-            // 英文模式：逗號 [,] -> 句號 [.] -> 空白鍵 [Space] -> 常用縮寫 ['] -> 換行 [↵]
-            if (periodIndex > spaceIndex) {
-                layoutBottomBar.removeView(btnPeriod)
-                val newSpaceIndex = layoutBottomBar.indexOfChild(btnSpaceSwipe)
-                layoutBottomBar.addView(btnPeriod, newSpaceIndex)
-            }
-        } else {
-            // 中文/數字/其他模式恢復原本佈局：逗號 [，] -> 空白鍵 [Space] -> 句號 [。] -> ...
-            if (periodIndex < spaceIndex) {
-                layoutBottomBar.removeView(btnPeriod)
-                val newSpaceIndex = layoutBottomBar.indexOfChild(btnSpaceSwipe)
-                val insertIndex = if (::spacerBottomBar.isInitialized && layoutBottomBar.indexOfChild(spacerBottomBar) > newSpaceIndex) {
-                    layoutBottomBar.indexOfChild(spacerBottomBar) + 1
-                } else {
-                    newSpaceIndex + 1
+        if (::btnLangToggle.isInitialized && ::btnMode123.isInitialized && ::btnFullEnter.isInitialized) {
+            if (isZhuyinFull && isGboardStyle) {
+                // Gboard 注音全鍵盤排版 (100% 比照使用者截圖)：
+                // [?123] [，] [9鍵·繁] [   注音 (空白 Space)   ] [ ㄦ ] [ ⌫ ] [ ↵ ]
+                if (::btnFullEr.isInitialized) btnFullEr.visibility = View.VISIBLE
+                if (::btnFullBackspace.isInitialized) btnFullBackspace.visibility = View.VISIBLE
+                btnFullEnter.visibility = View.VISIBLE
+
+                // 1) 確保 btnComma 排在 btnMode123 後方 (左側)
+                val m123Idx = layoutBottomBar.indexOfChild(btnMode123)
+                if (::btnComma.isInitialized) {
+                    val commaIdx = layoutBottomBar.indexOfChild(btnComma)
+                    if (m123Idx != -1 && commaIdx != m123Idx + 1) {
+                        layoutBottomBar.removeView(btnComma)
+                        val newM123Idx = layoutBottomBar.indexOfChild(btnMode123)
+                        layoutBottomBar.addView(btnComma, newM123Idx + 1)
+                    }
                 }
-                layoutBottomBar.addView(btnPeriod, insertIndex)
+
+                // 2) 確保 btnLangToggle 排在 btnComma (或 btnMode123) 後方 (左側)
+                val anchor = if (::btnComma.isInitialized && btnComma.visibility == View.VISIBLE) btnComma else btnMode123
+                val anchorIdx = layoutBottomBar.indexOfChild(anchor)
+                val langIdx = layoutBottomBar.indexOfChild(btnLangToggle)
+                if (anchorIdx != -1 && langIdx != anchorIdx + 1) {
+                    layoutBottomBar.removeView(btnLangToggle)
+                    val newAnchorIdx = layoutBottomBar.indexOfChild(anchor)
+                    layoutBottomBar.addView(btnLangToggle, newAnchorIdx + 1)
+                }
+
+                // 3) 確保右側三顆鍵按順序排列在最後：btnFullEr -> btnFullBackspace -> btnFullEnter
+                if (::btnFullEr.isInitialized) {
+                    layoutBottomBar.removeView(btnFullEr)
+                    layoutBottomBar.addView(btnFullEr)
+                    (btnFullEr.layoutParams as? LinearLayout.LayoutParams)?.let {
+                        it.weight = 1.0f
+                        btnFullEr.layoutParams = it
+                    }
+                }
+                if (::btnFullBackspace.isInitialized) {
+                    layoutBottomBar.removeView(btnFullBackspace)
+                    layoutBottomBar.addView(btnFullBackspace)
+                    (btnFullBackspace.layoutParams as? LinearLayout.LayoutParams)?.let {
+                        it.weight = 1.15f
+                        btnFullBackspace.layoutParams = it
+                    }
+                }
+                layoutBottomBar.removeView(btnFullEnter)
+                layoutBottomBar.addView(btnFullEnter)
+                (btnFullEnter.layoutParams as? LinearLayout.LayoutParams)?.let {
+                    it.weight = 1.25f
+                    btnFullEnter.layoutParams = it
+                }
+
+            } else if (isZhuyinFull || isEnglish) {
+                // PC 大千全鍵盤或英文全鍵盤
+                if (::btnFullEr.isInitialized) btnFullEr.visibility = View.GONE
+                if (::btnFullBackspace.isInitialized) btnFullBackspace.visibility = View.GONE
+                btnFullEnter.visibility = View.VISIBLE
+
+                val m123Idx = layoutBottomBar.indexOfChild(btnMode123)
+                val langIdx = layoutBottomBar.indexOfChild(btnLangToggle)
+                if (m123Idx != -1 && langIdx != m123Idx + 1) {
+                    layoutBottomBar.removeView(btnLangToggle)
+                    val newM123Idx = layoutBottomBar.indexOfChild(btnMode123)
+                    layoutBottomBar.addView(btnLangToggle, newM123Idx + 1)
+                }
+
+                layoutBottomBar.removeView(btnFullEnter)
+                layoutBottomBar.addView(btnFullEnter)
+                (btnFullEnter.layoutParams as? LinearLayout.LayoutParams)?.let {
+                    it.weight = 1.4f
+                    btnFullEnter.layoutParams = it
+                }
+            } else {
+                // 9 鍵模式 / 數字模式 / 手寫模式：
+                // [123] [，] [空白] [。] [切換鍵]
+                if (::btnFullEr.isInitialized) btnFullEr.visibility = View.GONE
+                if (::btnFullBackspace.isInitialized) btnFullBackspace.visibility = View.GONE
+                btnFullEnter.visibility = View.GONE
+
+                // 切換鍵移回最右側
+                layoutBottomBar.removeView(btnLangToggle)
+                layoutBottomBar.addView(btnLangToggle)
+                (btnLangToggle.layoutParams as? LinearLayout.LayoutParams)?.let {
+                    it.weight = 1.0f
+                    btnLangToggle.layoutParams = it
+                }
+
+                // 調整句號與空白鍵順序
+                val periodIndex = layoutBottomBar.indexOfChild(btnPeriod)
+                val spaceIndex = layoutBottomBar.indexOfChild(btnSpaceSwipe)
+                if (periodIndex != -1 && spaceIndex != -1 && periodIndex < spaceIndex) {
+                    layoutBottomBar.removeView(btnPeriod)
+                    val newSpaceIndex = layoutBottomBar.indexOfChild(btnSpaceSwipe)
+                    val insertIndex = if (::spacerBottomBar.isInitialized && layoutBottomBar.indexOfChild(spacerBottomBar) > newSpaceIndex) {
+                        layoutBottomBar.indexOfChild(spacerBottomBar) + 1
+                    } else {
+                        newSpaceIndex + 1
+                    }
+                    layoutBottomBar.addView(btnPeriod, insertIndex)
+                }
             }
         }
     }
