@@ -230,6 +230,11 @@ object ThemeManager {
         boldTf: Typeface?
     ) {
         when {
+            view is com.bopomofo.t9ime.ui.ZhuyinFullCompassKey -> {
+                view.background = createKeyDrawable(colors.keyBg, colors.keyPressed, colors.stroke, radiusPx)
+                view.setTextColor(colors.textPrimary, colors.textSecondary)
+                view.updatePaintTypefaces()
+            }
             view.id == R.id.candidate_scroll || view.id == R.id.candidate_container -> {
                 view.setBackgroundColor(colors.candidateBg)
             }
