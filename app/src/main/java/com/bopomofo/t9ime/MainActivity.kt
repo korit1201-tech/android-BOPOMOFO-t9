@@ -107,8 +107,61 @@ class MainActivity : AppCompatActivity() {
         setupVibrationSettings()
         setupTolerantInputSettings()
         setupThemeSettings()
+        setupFullKeyboardSettings()
         setupThirdPartyNotices()
         setupCrashLogSettings()
+    }
+
+    private fun setupFullKeyboardSettings() {
+        val spinnerStyle = findViewById<android.widget.Spinner>(R.id.spinner_full_keyboard_style)
+        val switchBottomPunc = findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switch_show_bottom_punctuation)
+
+        if (spinnerStyle != null) {
+            val styleOptions = listOf(
+                "📱 主流手機風格 (類 Gboard / SwiftKey，退格在第 4 排)",
+                "💻 電腦標準風格 (標準大千 PC 排列，退格在第 1 排)"
+            )
+            val styleValues = listOf(
+                PreferencesRepository.STYLE_GBOARD,
+                PreferencesRepository.STYLE_STANDARD_PC
+            )
+
+            val adapter = android.widget.ArrayAdapter(
+                this,
+                android.R.layout.simple_spinner_item,
+                styleOptions
+            ).apply {
+                setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            }
+            spinnerStyle.adapter = adapter
+
+            val currentStyle = PreferencesRepository.getFullKeyboardLayoutStyle(this)
+            val initialIndex = styleValues.indexOf(currentStyle).coerceAtLeast(0)
+            spinnerStyle.setSelection(initialIndex)
+
+            spinnerStyle.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                    val selectedStyle = styleValues[position]
+                    if (selectedStyle != PreferencesRepository.getFullKeyboardLayoutStyle(this@MainActivity)) {
+                        PreferencesRepository.setFullKeyboardLayoutStyle(this@MainActivity, selectedStyle)
+                        val styleName = if (selectedStyle == PreferencesRepository.STYLE_GBOARD) "主流手機風格 (Gboard)" else "電腦標準風格"
+                        Toast.makeText(this@MainActivity, "⌨️ 全鍵盤排版已切換為：$styleName", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+            }
+        }
+
+        if (switchBottomPunc != null) {
+            val isShow = PreferencesRepository.isShowBottomPunctuation(this)
+            switchBottomPunc.isChecked = isShow
+            switchBottomPunc.setOnCheckedChangeListener { _, isChecked ->
+                PreferencesRepository.setShowBottomPunctuation(this, isChecked)
+                val msg = if (isChecked) "✅ 已開啟底排標點鍵（，與。）" else "🔒 已隱藏底排標點（已大幅加寬空白鍵）"
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun setupTolerantInputSettings() {

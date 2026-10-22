@@ -1184,7 +1184,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
 
             // 2. 將第一字的單字候選 (如 幫、榜、綁、胖) 納入候選列，標註其 consumedKeys，讓使用者可單字上屏
             if (!firstSylWords.isNullOrEmpty()) {
-                for (singleEntry in firstSylWords.sortedByDescending { it.weight + userDict.getBoost(it.word) }) {
+                for (singleEntry in firstSylWords.sortedByDescending { it.weight + userDict.getBoost(it.word, it.zhuyin) }) {
                     if (resultList.none { it.word == singleEntry.word }) {
                         resultList.add(singleEntry.copy(consumedKeys = firstSylKeyCount))
                     }
@@ -1192,13 +1192,13 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             }
 
             if (resultList.isNotEmpty()) {
-                cachedCandidates = resultList.sortedByDescending { it.weight + userDict.getBoost(it.word) }
+                cachedCandidates = resultList.sortedByDescending { it.weight + userDict.getBoost(it.word, it.zhuyin) }
                 return
             }
 
             // 3. 終極保底：直接提取第一音節的所有單字，絕不允許空白
             if (!firstSylWords.isNullOrEmpty()) {
-                cachedCandidates = firstSylWords.sortedByDescending { it.weight + userDict.getBoost(it.word) }
+                cachedCandidates = firstSylWords.sortedByDescending { it.weight + userDict.getBoost(it.word, it.zhuyin) }
                 return
             }
         }
@@ -1516,7 +1516,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             // 2. 字典反向索引中的所有單字同音字
             for (e in soundMatches) {
                 if (userCharSet.contains(e.word)) continue
-                val boost = userDict.getBoost(e.word)
+                val boost = userDict.getBoost(e.word, e.zhuyin)
                 val baseWeight = e.weight + boost
                 val toneBonus = if (toneChar != null) {
                     if (e.zhuyin.contains(toneChar)) 20_000_000 else 0
@@ -1590,7 +1590,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             val sortedExact = exactZhuyinWords.sortedByDescending {
                 val toneScore = if (toneChar != null && it.zhuyin.contains(toneChar)) 20_000_000L else 0L
                 val bgScore = getBigramBoost(effectiveContext, it.word) * 500L
-                toneScore + bgScore + it.weight + userDict.getBoost(it.word)
+                toneScore + bgScore + it.weight + userDict.getBoost(it.word, it.zhuyin)
             }
             for (e in sortedExact) {
                 if (seenWords.add(e.word)) {
@@ -2092,7 +2092,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
                 if (!words.isNullOrEmpty()) {
                     for (entry in words) {
                         if (entry.word.length != len) continue
-                        val boost = userDict.getBoost(entry.word)
+                        val boost = userDict.getBoost(entry.word, entry.zhuyin)
                         val effectiveWeight = entry.weight + boost
                         val logProb = Math.log(maxOf(effectiveWeight.toDouble(), 1.0)) - logTotal
                         val bonus = (entry.word.length - 1) * wordBonus - (if (isInitialAbbrev) 1.5 else 0.0)

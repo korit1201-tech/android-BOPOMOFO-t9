@@ -130,4 +130,27 @@ class PredictionPurityTest {
             afterBackspacedCandidatesB.take(20)
         )
     }
+
+    @Test
+    fun testNoCrossSyllableBoostPollution() {
+        // 模擬使用者高頻選擇「她 (ㄊㄚ)」50 次
+        val userDict = com.bopomofo.t9ime.engine.UserDictionaryManager.getInstance()
+        repeat(50) {
+            userDict.recordUsage("她", "ㄊㄚ")
+        }
+
+        // 1. 驗證全鍵盤輸入「ㄧㄏㄤ」，首選必須是「一行」，絕非「她行」
+        val fullResults = engine.searchFullZhuyin("ㄧㄏㄤ")
+        assertTrue("全鍵盤輸入 ㄧㄏㄤ 必須有候選字", fullResults.isNotEmpty())
+        assertEquals("全鍵盤輸入 ㄧㄏㄤ 首選詞必須是 一行", "一行", fullResults[0].word)
+
+        // 2. 驗證全鍵盤輸入「ㄧ」，首選必須是「一」，絕非「她」
+        val singleResults = engine.searchFullZhuyin("ㄧ")
+        assertTrue("全鍵盤輸入 ㄧ 必須有候選字", singleResults.isNotEmpty())
+        assertEquals("全鍵盤輸入 ㄧ 首選字必須是 一", "一", singleResults[0].word)
+        assertTrue("候選字前 5 名絕不得包含 她", singleResults.take(5).none { it.word == "她" })
+
+        // 清理測試資料
+        userDict.clearDictionary()
+    }
 }

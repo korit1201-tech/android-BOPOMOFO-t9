@@ -229,4 +229,42 @@ object PreferencesRepository {
             getPrefs(context)?.edit()?.putBoolean(KEY_FLOATING_DOCKED, docked)?.apply()
         } catch (_: Exception) {}
     }
+
+    // 全鍵盤佈局風格 (gboard: 手機主流風格 / standard_pc: 電腦大千標準)
+    const val KEY_FULL_KEYBOARD_LAYOUT_STYLE = "pref_full_keyboard_layout_style"
+    const val STYLE_GBOARD = "gboard"
+    const val STYLE_STANDARD_PC = "standard_pc"
+    const val DEFAULT_FULL_KEYBOARD_LAYOUT_STYLE = STYLE_GBOARD
+
+    fun getFullKeyboardLayoutStyle(context: Context): String {
+        return try {
+            getPrefs(context)?.getString(KEY_FULL_KEYBOARD_LAYOUT_STYLE, DEFAULT_FULL_KEYBOARD_LAYOUT_STYLE) ?: DEFAULT_FULL_KEYBOARD_LAYOUT_STYLE
+        } catch (_: Exception) {
+            DEFAULT_FULL_KEYBOARD_LAYOUT_STYLE
+        }
+    }
+
+    fun setFullKeyboardLayoutStyle(context: Context, style: String) {
+        try {
+            getPrefs(context)?.edit()?.putString(KEY_FULL_KEYBOARD_LAYOUT_STYLE, style)?.apply()
+        } catch (_: Exception) {}
+    }
+
+    // 底排標點鍵顯示開關 (true: 顯示，false: 隱藏並加寬空白鍵)
+    const val KEY_SHOW_BOTTOM_PUNCTUATION = "pref_show_bottom_punctuation"
+    const val DEFAULT_SHOW_BOTTOM_PUNCTUATION = true
+
+    fun isShowBottomPunctuation(context: Context): Boolean {
+        return try {
+            getPrefs(context)?.getBoolean(KEY_SHOW_BOTTOM_PUNCTUATION, DEFAULT_SHOW_BOTTOM_PUNCTUATION) ?: DEFAULT_SHOW_BOTTOM_PUNCTUATION
+        } catch (_: Exception) {
+            DEFAULT_SHOW_BOTTOM_PUNCTUATION
+        }
+    }
+
+    fun setShowBottomPunctuation(context: Context, show: Boolean) {
+        try {
+            getPrefs(context)?.edit()?.putBoolean(KEY_SHOW_BOTTOM_PUNCTUATION, show)?.apply()
+        } catch (_: Exception) {}
+    }
 }
