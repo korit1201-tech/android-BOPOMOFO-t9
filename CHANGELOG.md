@@ -2,6 +2,15 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.9.5] - 2026-10-23
+
+### 🐛 修復 Telegram/LINE 等多行輸入框按 Enter 縮起鍵盤問題 (Build 119)
+
+- **📝 多行輸入框與 NO_ENTER_ACTION 規範適配**：
+  - 檢測當前輸入框是否為多行（`TYPE_TEXT_FLAG_MULTI_LINE`）或帶有 `IME_FLAG_NO_ENTER_ACTION` 旗標。
+  - 在 Telegram、LINE、記事本等多行通訊與文本輸入框中，Enter 鍵優先直接插入換行符號（`\n`），防止誤觸發 `performEditorAction` 導致鍵盤縮起或訊息意外送出。
+  - 單行輸入框（如搜尋列、網址列）仍保留執行指定 Action（Search/Go/Done）的行為。
+
 ## [v2.9.2] - 2026-10-21
 
 ### ⚡ 字典前綴樹雙 Map 延遲初始化、消除重載雙倍記憶體峰值、Android 16 OOM 徹底根治 (Build 116)
