@@ -2223,7 +2223,20 @@ class ZhuyinInputMethodService : InputMethodService() {
         } else {
             val ic = currentInputConnection
             val info = currentInputEditorInfo
-            val imeAction = (info?.imeOptions ?: 0) and android.view.inputmethod.EditorInfo.IME_MASK_ACTION
+            val inputType = info?.inputType ?: 0
+            val imeOptions = info?.imeOptions ?: 0
+
+            val isMultiLine = (inputType and android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE) != 0
+            val noEnterAction = (imeOptions and android.view.inputmethod.EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
+            val imeAction = imeOptions and android.view.inputmethod.EditorInfo.IME_MASK_ACTION
+
+            // 若為多行輸入框（如 Telegram / LINE 聊天框）或標記 NO_ENTER_ACTION，一律安全換行，絕不收起鍵盤
+            if (isMultiLine || noEnterAction) {
+                ic?.commitText("\n", 1)
+                return
+            }
+
+            // 單行輸入框且指定具體動作（搜尋、前往、完成等）才執行 Action
             if (ic != null && imeAction != android.view.inputmethod.EditorInfo.IME_ACTION_NONE &&
                 imeAction != android.view.inputmethod.EditorInfo.IME_ACTION_UNSPECIFIED) {
                 if (ic.performEditorAction(imeAction)) return
