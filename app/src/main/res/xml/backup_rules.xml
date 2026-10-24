@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 以下的自動備份規則（android:fullBackupContent）。
+     剪貼簿歷史可能含有密碼、驗證碼等敏感內容，不可進入雲端備份。
+     對應 ClipboardHistoryManager.PREF_NAME = "ime_clipboard_prefs"。
+     個人詞庫（bopomofo_user_dict.json）與主題等設定仍會備份，換手機後可還原。 -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="ime_clipboard_prefs.xml" />
+    <!-- 使用者下載的完整詞對資料包：可重新下載，不需要備份 -->
+    <exclude domain="file" path="bigram_full.bin" />
+</full-backup-content>

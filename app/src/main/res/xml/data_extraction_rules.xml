@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12 以上的備份與裝置轉移規則（android:dataExtractionRules）。
+     剪貼簿歷史既不進雲端備份，也不隨「換手機直接傳輸」帶到新裝置。
+     對應 ClipboardHistoryManager.PREF_NAME = "ime_clipboard_prefs"。 -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="ime_clipboard_prefs.xml" />
+        <exclude domain="file" path="bigram_full.bin" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="ime_clipboard_prefs.xml" />
+        <exclude domain="file" path="bigram_full.bin" />
+    </device-transfer>
+</data-extraction-rules>
