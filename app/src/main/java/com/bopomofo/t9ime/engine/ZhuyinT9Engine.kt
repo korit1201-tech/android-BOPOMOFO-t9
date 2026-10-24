@@ -22,6 +22,10 @@ import java.io.InputStreamReader
 class ZhuyinT9Engine(rawContext: Context? = null) {
     private val context = rawContext?.applicationContext ?: rawContext
 
+    /** close() 之後為 true：背景詞庫載入會中止並丟棄結果，避免輸入法服務重啟時新舊引擎的詞庫同時佔用記憶體而 OOM */
+    @Volatile
+    private var closed = false
+
     @Volatile
     private var trie = TrieDictionary()
     private var currentKeys = mutableListOf<Int>()
@@ -324,13 +328,15 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             val newFullZhuyinWordMap = mutableMapOf<String, MutableList<DictEntry>>()
             val newInitialToCharMap = mutableMapOf<Char, MutableList<DictEntry>>()
             loadDictionaryInternal(newTrie, newNextWordMap, newCharZhuyinMap, newInitialMap, newSoundToCharMap, newFullZhuyinWordMap, newInitialToCharMap)
+            if (closed) return@Thread
             loadUserDictionaryEntries(newTrie, newCharZhuyinMap, newFullZhuyinWordMap)
             val newBigramModel = loadBigramModelFromStorage()
 
             val elapsed = android.os.SystemClock.elapsedRealtime() - startTime
             android.util.Log.d("BopomofoIME_Perf", "[Perf] 字典全量解析完成，總耗時: ${elapsed}ms")
 
-            val updateAction = {
+            val updateAction = update@{
+                if (closed) return@update
                 trie = newTrie
                 bigramModel = newBigramModel
                 nextWordMap = newNextWordMap
@@ -467,6 +473,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             stream.use { inputStream ->
                 BufferedReader(InputStreamReader(inputStream), 65536).useLines { lines ->
                     for (line in lines) {
+                        if (closed) break
                         lineCount++
                         val tab1 = line.indexOf('\t')
                         if (tab1 == -1) continue
@@ -2272,9 +2279,19 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     }
 
     fun close() {
+        closed = true
         try {
             userDict.onDictionaryChangedListener = null
         } catch (_: Exception) {}
+        // 釋放約 150MB 的詞庫，不等舊引擎物件被回收
+        trie = TrieDictionary()
+        nextWordMap = mutableMapOf()
+        charZhuyinMap = mutableMapOf()
+        initialMap = mutableMapOf()
+        soundToCharMap = mutableMapOf()
+        fullZhuyinWordMap = mutableMapOf()
+        initialToCharMap = mutableMapOf()
+        bigramModel = null
         mainHandler?.removeCallbacks(bigramSaveRunnable)
         try {
             bigramExecutor.execute { saveBigramToFile() }

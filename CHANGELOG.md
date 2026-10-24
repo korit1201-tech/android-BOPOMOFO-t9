@@ -2,6 +2,15 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.10.1] - 2026-10-24
+
+### 🐛 修正輸入法重啟時記憶體不足（OOM）當機 (Build 121)
+
+- **🐛 修正載入詞庫時 `OutOfMemoryError` 當機（使用者實機 3 次當機紀錄：v2.9.4、v2.9.5）**：
+  - 根因：詞庫載入後單一引擎約佔 150 MB；輸入法服務被系統重啟時，舊引擎的背景載入執行緒沒有被中止、`close()` 也沒釋放詞庫，新舊引擎同時存在，三份就逼近 512 MB 堆積上限。
+  - 修正：`ZhuyinT9Engine.close()` 設定 `closed` 旗標，背景載入逐行檢查並立即中止、結果丟棄；`close()` 同時釋放詞庫與 bigram 模型。
+  - 新增 `EngineCloseReleaseTest`。
+
 ## [v2.10.0] - 2026-10-24
 
 ### 🧠 內建詞對關聯資料：同音異字依「前一個詞」自動選對，全鍵盤不打聲調大幅進步 (Build 120)

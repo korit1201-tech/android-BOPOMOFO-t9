@@ -3,11 +3,11 @@
 > 重點：**怎麼不用 build APK 就快速量化演算法改動（Python 模擬器 `tools/t9sim`）**、**怎麼用手機自動化驗證（`tools/phone/t9.sh`）**、以及**我們踩過的坑**。
 > 改完請務必照第 8 節檢查表驗證。改善規劃見 `docs/ROADMAP_TODO.md`。
 
-## 0. 接手狀態（2026-10-24，v2.10.0）⚠️ 先讀這段
+## 0. 接手狀態（2026-10-24，v2.10.1）⚠️ 先讀這段
 
 - 分支 `feat/bigram-lm`（從 main 切出，**尚未合併、未 push**）：新增「預訓練 bigram 語言模型」（`assets/bigram_core.bin`，4.3 MB），
   九鍵／全鍵盤／整句組字都用它。設計、數字、授權見 `docs/BIGRAM_LM_PLAN.md`；重建與評估見第 10 節。
-- 已用 `python3 deploy.py --skip-github` 發出 v2.10.0 APK（`/data/apk/bopomofo-v2.10.0.apk`，latest/beta 連結已指過去，Telegram 已送）。
+- 已用 `python3 deploy.py --skip-github` 發出 v2.10.1 APK（修 OOM 當機，見 CHANGELOG；`/data/apk/bopomofo-v2.10.1.apk`，latest/beta 連結已指過去，Telegram 已送）。
   **刻意沒發 GitHub release／沒推 tag**：App 內更新器讀 `releases/latest`，會推給所有使用者，而這版還沒在真機驗證。
 - **待辦（照順序）**：
   1. 真機驗證（清單見 `docs/BIGRAM_LM_PLAN.md` §9）：九鍵與全鍵盤各打幾句自然句、確認輸入延遲無感、備份排除、設定頁不當機。
@@ -174,3 +174,9 @@ cd tools/t9sim && python -i sim.py   # REPL：ks = seq("ㄅㄤㄨㄛ", True); cl
 - 調參旋鈕在 `ZhuyinT9Engine`：`bigramScaleT9Cost/T9Weight/Full/Sentence`、`fullNoToneFirstBonus`（30,000；舊值 500 萬曾讓一聲字蓋過常用字）。
 - 基準（v2.9.5 → v2.10.0，top1）：全鍵盤無聲調 62.3→81.5、有聲調 85.8→89.5；九鍵無聲調鍵 59.9→68.3、有聲調鍵 63.2→71.9；整句 10.5→17.5。
 - 語料來源與授權：`THIRD-PARTY-NOTICES.md` §5（KeyKey AI 語料，MIT）。
+
+## 11. 已知記憶體事實（OOM 調查，v2.10.1）
+
+- 載入詞庫後單一 `ZhuyinT9Engine` 約 150 MB（JVM 量測；手機上 largeHeap 上限 512 MB）。**不可同時存在多個引擎**。
+- 服務重啟時舊引擎必須 `close()`（會中止背景載入並釋放詞庫）；新增任何持有詞庫的物件都要在 `close()` 釋放。
+- 後續可做：縮小詞庫記憶體（目前 Trie 用 LinkedHashMap，改陣列式／預編譯詞庫可降到數十 MB，屬 ROADMAP 第二層）。
