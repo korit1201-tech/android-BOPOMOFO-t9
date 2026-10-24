@@ -5,15 +5,8 @@
 
 ## 0. 接手狀態（2026-10-24，v2.10.1）⚠️ 先讀這段
 
-- 分支 `feat/bigram-lm`（從 main 切出，**尚未合併、未 push**）：新增「預訓練 bigram 語言模型」（`assets/bigram_core.bin`，4.3 MB），
-  九鍵／全鍵盤／整句組字都用它。設計、數字、授權見 `docs/BIGRAM_LM_PLAN.md`；重建與評估見第 10 節。
-- 已用 `python3 deploy.py --skip-github` 發出 v2.10.1 APK（修 OOM 當機，見 CHANGELOG；`/data/apk/bopomofo-v2.10.1.apk`，latest/beta 連結已指過去，Telegram 已送）。
-  **刻意沒發 GitHub release／沒推 tag**：App 內更新器讀 `releases/latest`，會推給所有使用者，而這版還沒在真機驗證。
-- **待辦（照順序）**：
-  1. 真機驗證（清單見 `docs/BIGRAM_LM_PLAN.md` §9）：九鍵與全鍵盤各打幾句自然句、確認輸入延遲無感、備份排除、設定頁不當機。
-  2. 通過後：`git checkout main && git merge feat/bigram-lm`，再 `python3 deploy.py --skip-build --skip-tg` 補發 GitHub release（會推 tag）。
-  3. 還沒決定的事：全鍵盤「是否做成 設定項：不打聲調／會打聲調」（`fullNoToneFirstBonus`，見計畫文件）、擴充語料（目前只涵蓋 54% 的相鄰詞對）、
-     選配的大型資料包下載（機制尚未實作，格式已預留 `bigram_full.bin`）。
+- v2.10.0（bigram）與 v2.10.1（修 OOM 當機）都已合併到 `main`、推上 GitHub 並發 release（latest = v2.10.1）。`feat/bigram-lm` 已併入，可刪。
+- **待辦**：真機長期觀察（尤其輸入法被系統重啟時是否還 OOM）；縮小詞庫記憶體（第 11 節）；擴充 bigram 語料、選配大型資料包、全鍵盤聲調設定項（見 `docs/BIGRAM_LM_PLAN.md`）。
 - 回滾：把 `/data/apk/bopomofo-latest.apk`、`bopomofo-beta.apk` 兩個符號連結指回 `bopomofo-v2.9.5.apk`，
   再重跑 deploy.py 內的 `update_caddy_apk_filename`（或手改 `/home/korit/infra/caddy/apk-filename.caddy` 後 `sudo systemctl reload caddy`）。
 - 本機專屬、不進版控的東西：`tools/`（含 `tools/bigram/` 資料管線與語料）、`deploy.py`、keystore。換電腦要先搬這些。
