@@ -58,8 +58,65 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     @Volatile
     private var fullZhuyinWordMap = mutableMapOf<String, MutableList<DictEntry>>()
 
-    // Bigram 語境關聯索引：prevWord -> (nextWord -> weight)
+    // Bigram 語境關聯索引：prevWord -> (nextWord -> weight)（手寫詞對與使用者打字時學到的，整數權重）
     private val bigramMap = HashMap<String, MutableMap<String, Int>>()
+
+    /** 預先訓練的詞對關聯強度（來自 assets/bigram_core.bin，可再疊加使用者下載的完整資料包）。 */
+    @Volatile
+    private var bigramModel: BigramModel? = null
+
+    fun setBigramModel(model: BigramModel?) {
+        bigramModel = model
+    }
+
+    fun loadBigramModelForTest(file: java.io.File) {
+        bigramModel = BigramModel.load(file)
+    }
+
+    /**
+     * 載入詞對模型：優先用使用者下載的完整資料包（filesDir/bigram_full.bin，格式或版本不符就略過），
+     * 沒有就用 APK 內建的核心包（assets/bigram_core.bin）。任何失敗都只記錄並退回「沒有模型」，不影響打字。
+     */
+    private fun loadBigramModelFromStorage(): BigramModel? {
+        val ctx = context ?: return null
+        try {
+            val full = java.io.File(ctx.filesDir, BIGRAM_FULL_FILE)
+            if (full.isFile) {
+                BigramModel.load(full)?.let { return it }
+                android.util.Log.w("BopomofoIME", "完整詞對資料包格式不符，改用內建核心包")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("BopomofoIME", "讀取完整詞對資料包失敗，改用內建核心包", e)
+        }
+        return try {
+            ctx.assets.open(BIGRAM_CORE_ASSET).use { BigramModel.load(it) }
+        } catch (e: java.io.FileNotFoundException) {
+            null
+        } catch (e: Exception) {
+            android.util.Log.e("BopomofoIME", "載入內建詞對模型失敗", e)
+            null
+        }
+    }
+
+    /**
+     * 各模式把「詞對加分（nat）」併入自己分數的強度倍率。預設值由 BigramBenchmarkTest 在 600 句驗證集上掃描決定
+     * （2026-10-24）：用詞庫詞頻當基準的模型下，這幾個值在合理範圍內結果幾乎不變（九鍵權重 3~10、全鍵盤 2~8
+     * 都在同一個高原），所以不是精細調出來的臨界值。internal 只為了讓測試能掃參數。
+     */
+    internal var bigramScaleT9Cost = 3.0
+    internal var bigramScaleT9Weight = 6.0
+    internal var bigramScaleFull = 4.0
+    internal var bigramScaleSentence = 1.0
+
+    /**
+     * 全鍵盤單音節輸入「沒有打聲調符號」時，給「沒有聲調符號的字（一聲）」的固定加分。
+     * 一聲字在注音裡本來就不寫符號，所以舊版把沒打聲調視為「想打一聲」；但習慣省略聲調的人，
+     * 這個加分（舊值 500 萬，遠大於任何詞頻）會讓所有一聲同音字（窩、渦、萵…）蓋過常用字。
+     * 驗證集實測（出貨模型，逐詞第 1 名；不打聲調／打聲調）：500 萬（舊值）66.3%／89.8%、3 萬 81.5%／89.5%、
+     * 0 82.8%／88.6%。會打聲調的人一聲字不寫符號，所以歸零對他們有小幅退步；取 3 萬當折衷：
+     * 習慣省略聲調的主要用法大幅進步，會打聲調的人只少 0.4 個百分點。
+     */
+    internal var fullNoToneFirstBonus = 30_000
 
     @Volatile
     var isDictionaryLoaded = false
@@ -70,6 +127,10 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
 
     companion object {
         val TONE_SYMBOLS = listOf(' ', 'ˇ', 'ˋ', 'ˊ', '˙')
+
+        /** APK 內建的詞對核心包；使用者下載的完整包放在 filesDir（備份規則已排除）。 */
+        const val BIGRAM_CORE_ASSET = "bigram_core.bin"
+        const val BIGRAM_FULL_FILE = "bigram_full.bin"
 
         // ── 九鍵專用斷詞參數（成本 = -ln(詞頻/總詞頻) + 每詞固定成本，越低越好） ──
         /** 每多一個詞的固定成本：偏好用較少、較長的詞組成整句 */
@@ -228,6 +289,27 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         }
     }
 
+    /** 線性詞頻依語境放大：weight × e^(加分)，上限 e^4 並夾在 Int 範圍內（DictEntry.weight 是 Int）。 */
+    private fun bigramScaled(weight: Int, prevWord: String?, candidateWord: String): Int {
+        val nat = getBigramBonus(prevWord, candidateWord) * bigramScaleFull
+        if (nat <= 0.0) return weight
+        val scaled = weight.toDouble() * Math.exp(minOf(nat, 4.0))
+        return if (scaled > 1_900_000_000.0) 1_900_000_000 else scaled.toInt()
+    }
+
+    /**
+     * 「前一個詞 → 候選詞」的對數加分（nat，≥ 0）。
+     * 取預先訓練模型與（手寫＋使用者學習）整數權重換算值中較大的那個，不重複計算：
+     * 整數權重 b 以 ln(1 + b/80) 換算，與舊版九鍵成本公式一致（b=800 ≈ 2.4 nat）。
+     */
+    fun getBigramBonus(prevWord: String?, candidateWord: String): Double {
+        if (prevWord == null) return 0.0
+        val trained = bigramModel?.bonus(prevWord, candidateWord) ?: 0.0
+        val learned = getBigramBoost(prevWord, candidateWord)
+        val learnedNat = if (learned > 0) Math.log1p(learned / 80.0) else 0.0
+        return if (trained > learnedNat) trained else learnedNat
+    }
+
     private fun startAsyncDictionaryLoading() {
         Thread({
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
@@ -243,12 +325,14 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             val newInitialToCharMap = mutableMapOf<Char, MutableList<DictEntry>>()
             loadDictionaryInternal(newTrie, newNextWordMap, newCharZhuyinMap, newInitialMap, newSoundToCharMap, newFullZhuyinWordMap, newInitialToCharMap)
             loadUserDictionaryEntries(newTrie, newCharZhuyinMap, newFullZhuyinWordMap)
+            val newBigramModel = loadBigramModelFromStorage()
 
             val elapsed = android.os.SystemClock.elapsedRealtime() - startTime
             android.util.Log.d("BopomofoIME_Perf", "[Perf] 字典全量解析完成，總耗時: ${elapsed}ms")
 
             val updateAction = {
                 trie = newTrie
+                bigramModel = newBigramModel
                 nextWordMap = newNextWordMap
                 charZhuyinMap = newCharZhuyinMap
                 initialMap = newInitialMap
@@ -714,8 +798,9 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
      */
     private fun getEffectiveWeight(entry: DictEntry, inputKeyCount: Int, isExact: Boolean, prevTopWord: String? = null): Double {
         val userBoost = userDict.getBoost(entry.word)
-        val bigramBoost = getBigramBoost(currentContextWord, entry.word)
-        val bigramBonus = if (bigramBoost > 0) 1.0 + minOf(bigramBoost, 2500) / 800.0 else 1.0
+        val bigramNat = getBigramBonus(currentContextWord, entry.word) * bigramScaleT9Weight
+        // 舊公式 1 + min(b, 2500)/800，b = 80(e^n - 1)；上限 n = 3.4 對應舊的 b ≈ 2400
+        val bigramBonus = if (bigramNat > 0) 1.0 + (Math.exp(minOf(bigramNat, 3.4)) - 1.0) / 10.0 else 1.0
 
         // 完全匹配且使用者曾選過：給予高優先級，但乘上 Bigram 語境加成讓強上下文可競爭
         if (isExact && userBoost > 0) {
@@ -909,8 +994,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         val logTotal = if (logTotalWeight > 0) logTotalWeight else 17.91
         val tolerantPenalty = if (entry.isTolerant) T9_TOLERANT_PENALTY else 0.0
 
-        val bigramBoost = getBigramBoost(prevWord, entry.word)
-        val bigramDiscount = if (bigramBoost > 0) minOf(2.8, Math.log1p(bigramBoost / 80.0)) else 0.0
+        val bigramDiscount = minOf(2.8, getBigramBonus(prevWord, entry.word) * bigramScaleT9Cost)
 
         return (logTotal - Math.log(maxOf(weight, 1).toDouble()) + T9_WORD_PENALTY + tolerantPenalty - bigramDiscount).coerceAtLeast(0.5)
     }
@@ -1506,22 +1590,22 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
                         val toneBonus = if (toneChar != null) {
                             if (u.zhuyin.contains(toneChar)) 20_000_000 else 0
                         } else {
-                            if (!u.zhuyin.any { it in "ˇˋˊ˙" }) 5_000_000 else 0
+                            if (!u.zhuyin.any { it in "ˇˋˊ˙" }) fullNoToneFirstBonus else 0
                         }
                         singleEntries.add(DictEntry(u.word, u.zhuyin, baseWeight + toneBonus))
                     }
                 }
             }
 
-            // 2. 字典反向索引中的所有單字同音字
+            // 2. 字典反向索引中的所有單字同音字（依前一個詞的語境放大詞頻，讓「很」勝過同音的冷僻字）
             for (e in soundMatches) {
                 if (userCharSet.contains(e.word)) continue
                 val boost = userDict.getBoost(e.word, e.zhuyin)
-                val baseWeight = e.weight + boost
+                val baseWeight = bigramScaled(e.weight + boost, effectiveContext, e.word)
                 val toneBonus = if (toneChar != null) {
                     if (e.zhuyin.contains(toneChar)) 20_000_000 else 0
                 } else {
-                    if (!e.zhuyin.any { it in "ˇˋˊ˙" }) 5_000_000 else 0
+                    if (!e.zhuyin.any { it in "ˇˋˊ˙" }) fullNoToneFirstBonus else 0
                 }
                 singleEntries.add(DictEntry(e.word, e.zhuyin, baseWeight + toneBonus))
             }
@@ -1589,8 +1673,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         if (!exactZhuyinWords.isNullOrEmpty()) {
             val sortedExact = exactZhuyinWords.sortedByDescending {
                 val toneScore = if (toneChar != null && it.zhuyin.contains(toneChar)) 20_000_000L else 0L
-                val bgScore = getBigramBoost(effectiveContext, it.word) * 500L
-                toneScore + bgScore + it.weight + userDict.getBoost(it.word, it.zhuyin)
+                toneScore + bigramScaled(it.weight + userDict.getBoost(it.word, it.zhuyin), effectiveContext, it.word).toLong()
             }
             for (e in sortedExact) {
                 if (seenWords.add(e.word)) {
@@ -2098,8 +2181,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
                         val bonus = (entry.word.length - 1) * wordBonus - (if (isInitialAbbrev) 1.5 else 0.0)
 
                         // Bigram 上下文語境加分
-                        val bigramBoost = getBigramBoost(prevWord, entry.word)
-                        val bigramBonus = if (bigramBoost > 0) minOf(6.0, Math.log1p(bigramBoost / 50.0) * 1.8) else 0.0
+                        val bigramBonus = minOf(6.0, getBigramBonus(prevWord, entry.word) * 1.8 * bigramScaleSentence)
 
                         var hasToneMismatch = false
                         var exactToneMatchCount = 0

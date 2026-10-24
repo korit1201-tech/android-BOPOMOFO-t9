@@ -3,20 +3,20 @@
 > 重點：**怎麼不用 build APK 就快速量化演算法改動（Python 模擬器 `tools/t9sim`）**、**怎麼用手機自動化驗證（`tools/phone/t9.sh`）**、以及**我們踩過的坑**。
 > 改完請務必照第 8 節檢查表驗證。改善規劃見 `docs/ROADMAP_TODO.md`。
 
-## 0. 接手狀態（2026-10-12，v2.5.0）⚠️ 先讀這段
+## 0. 接手狀態（2026-10-24，v2.10.0）⚠️ 先讀這段
 
-- 程式碼與文件已全部寫進專案工作目錄，**但還沒 commit、沒 build release APK、沒發 GitHub release**：
-  開發中途 shell 工具因工作目錄（網路共用路徑，主機名稱無法解析）失效，改用有效路徑後檔案工具可用、shell 仍起不來。
-- 未提交的變更：`app/src/main/java/.../ZhuyinInputMethodService.kt`、`engine/TrieDictionary.kt`、`engine/ZhuyinT9Engine.kt`、`engine/SyllableManager.kt`、
-  `app/build.gradle.kts`（versionCode 80 / versionName 2.5.0）、`CHANGELOG.md`、`docs/*`、`tools/*`。
+- 分支 `feat/bigram-lm`（從 main 切出，**尚未合併、未 push**）：新增「預訓練 bigram 語言模型」（`assets/bigram_core.bin`，4.3 MB），
+  九鍵／全鍵盤／整句組字都用它。設計、數字、授權見 `docs/BIGRAM_LM_PLAN.md`；重建與評估見第 10 節。
+- 已用 `python3 deploy.py --skip-github` 發出 v2.10.0 APK（`/data/apk/bopomofo-v2.10.0.apk`，latest/beta 連結已指過去，Telegram 已送）。
+  **刻意沒發 GitHub release／沒推 tag**：App 內更新器讀 `releases/latest`，會推給所有使用者，而這版還沒在真機驗證。
 - **待辦（照順序）**：
-  1. 在新的 session 用有效的工作目錄開啟（建議直接用本機路徑或把專案複製到本機）。
-  2. 編 release APK（第 3 節）→ 真機裝一次，跑第 8 節檢查表，**特別補驗：九鍵連打 `ㄅㄤㄨㄛ`，往下捲左側組合找到 `ㄅㄤㄨㄛ`，點選後候選應出現「幫我」**（CHANGELOG 已標明此項未在真機完整驗證）。
-  3. **簽章比對（第 9 節）**：`gh release download v2.4.1 -p '*.apk'`，用 `apksigner verify --print-certs` 比對新舊 APK 的 SHA-256。**不同就不要發布為 latest**（會讓使用者無法 App 內升級）。
-  4. `.gitignore` 補上 `__pycache__/` 與 `tools/phone/.ui.xml`（`tools/t9sim/__pycache__` 目前存在）。CHANGELOG 的 v2.4.2 / v2.4.3 條目沒有日期，請用 `git log` 補。
-  5. `git add` 上述檔案 → `git commit -m "feat: 九鍵斷詞與注音組合重構 ... (v2.5.0)"` → `git tag v2.5.0` → `git push origin main --tags` →
-     `gh release create v2.5.0 <apk> --title ... --notes-file ...`（release notes 取自 CHANGELOG v2.5.0 段落；資產命名沿用 `bopomofo-v2.5.0.apk`）。
-- 本地工作區在 v2.4.3 之後沒有其他人的未提交變更（開工時 `git status` 為乾淨）。
+  1. 真機驗證（清單見 `docs/BIGRAM_LM_PLAN.md` §9）：九鍵與全鍵盤各打幾句自然句、確認輸入延遲無感、備份排除、設定頁不當機。
+  2. 通過後：`git checkout main && git merge feat/bigram-lm`，再 `python3 deploy.py --skip-build --skip-tg` 補發 GitHub release（會推 tag）。
+  3. 還沒決定的事：全鍵盤「是否做成 設定項：不打聲調／會打聲調」（`fullNoToneFirstBonus`，見計畫文件）、擴充語料（目前只涵蓋 54% 的相鄰詞對）、
+     選配的大型資料包下載（機制尚未實作，格式已預留 `bigram_full.bin`）。
+- 回滾：把 `/data/apk/bopomofo-latest.apk`、`bopomofo-beta.apk` 兩個符號連結指回 `bopomofo-v2.9.5.apk`，
+  再重跑 deploy.py 內的 `update_caddy_apk_filename`（或手改 `/home/korit/infra/caddy/apk-filename.caddy` 後 `sudo systemctl reload caddy`）。
+- 本機專屬、不進版控的東西：`tools/`（含 `tools/bigram/` 資料管線與語料）、`deploy.py`、keystore。換電腦要先搬這些。
 
 ## 1. 專案結構：三種輸入模式的邏輯是**各自獨立**的
 
@@ -148,13 +148,29 @@ cd tools/t9sim && python -i sim.py   # REPL：ks = seq("ㄅㄤㄨㄛ", True); cl
 
 ## 9. 發版流程與簽章（⚠️ 重要）
 
-1. 升版號：`app/build.gradle.kts` 的 `versionCode`（+1）與 `versionName`（新功能 minor，修 bug patch）。
-2. `CHANGELOG.md` 最上面新增條目：**根因、修正、效果（附量測方式與數字）、影響範圍、已知限制**；README 同步更新。
-3. 編 release APK（第 3 節）。GitHub release 資產名稱沿用 `bopomofo-v<版本>.apk`（App 內更新器找 `.apk` 結尾檔）。
-4. ⚠️ **簽章**：`release` 沿用 **debug 簽章**（本機 `~/.android/debug.keystore`，每台電腦不同）。Android 只允許簽章相同的 APK 覆蓋安裝；
-   新電腦編出的 APK 若簽章和使用者手上版本不同，App 內更新會失敗（「與現有套件衝突」）。
-   發版前比對：`java -jar <sdk>/build-tools/34.0.0/lib/apksigner.jar verify --print-certs <APK>`，看 `certificate SHA-256 digest`。
-   本機 debug 簽章指紋 `ce65c06a331ba5256c3df2d7b0684b620eef3a6532bb2ff7c1f8efcdb1ff7eed`；**v2.4.1 release APK 的指紋尚未比對**（下載未完成時被中斷）。
-   長期解法見 ROADMAP F1（正式 release keystore）。
-5. `git commit`（慣例 `feat: ... (v2.5.0)`）→ `git tag v2.5.0` → `git push origin main --tags` → `gh release create v2.5.0 <apk> --title ... --notes-file ...`。
-   App 內更新器讀 `releases/latest`（**不含 draft 與 pre-release**；簽章不確定時可先發 draft）。
+**一律用 `deploy.py`（專案根目錄，不進版控）**，不要手動 build 後亂放。
+
+1. 升版號：`app/build.gradle.kts` 的 `versionCode`（+1）與 `versionName`；`CHANGELOG.md` 最上面新增 `## [vX.Y.Z] - 日期` 條目（deploy.py 會解析標題與條列當發布說明）；README 版本字樣同步。
+2. 先 commit 到分支（deploy 的 GitHub 步驟會 `git tag -f`）。
+3. `python3 deploy.py [--skip-build] [--skip-tg] [--skip-github] [--title ...] [--items ...]`。流程：
+   `tools/preprocess_dict.py`（冪等）→ `./gradlew assembleRelease`（數分鐘，請放背景）→ 複製到 `/data/apk/bopomofo-v<ver>.apk` 並更新 latest/beta 符號連結 →
+   打包 `CORE_SOURCE_FILES`（新增核心原始檔要加進 deploy.py 這個清單）→ 更新 Caddy `infra/caddy/apk-filename.caddy`（下載檔名）並 reload →
+   更新 `/data/apk/index.html` → Telegram 推送 APK → GitHub release（`git push -f origin <tag>` + `gh release create --latest`，**公開且觸發 App 內更新**）。
+   還沒驗證的版本請加 `--skip-github`。
+4. ⚠️ **簽章**：release 沿用 debug 簽章，歷代 APK 指紋全部相同：`ce65c06a331ba5256c3df2d7b0684b620eef3a6532bb2ff7c1f8efcdb1ff7eed`。
+   Gradle 實際使用 `~/.android/debug.keystore`；`/data/ai/debug.keystore` 是內容相同的副本；兩份都只在這台機器上，**請另外備份**（遺失＝使用者無法覆蓋安裝）。
+   驗證：`apksigner verify --print-certs <apk>`，指紋必須相同。
+5. 發版後驗證：APK 版本（aapt2 dump badging）、`unzip -l` 含新資產、指紋、`curl -I` 下載檔名為 `bopomofo-v<ver>.apk`。
+6. 完整基礎建設說明（Caddy、DNS）在 `/home/korit/infra/README.md`。
+
+## 10. Bigram 模型：重建、評估、調參（`tools/bigram/`，本機專屬）
+
+- 一鍵重建：`tools/bigram/run_all.sh`（`fetch_corpus.sh` 下載並驗證 SHA-256 → `build_pairs.py` 斷詞統計 → `build_eval.py` 切 held-out 評估集 → `build_model.py` 產 `bigram_core.bin`）。
+  現有產物可 bit-identical 重建；語料與驗證集已有本機副本在 `tools/bigram/data/`。
+- 檔案格式 BGM1（little-endian）與統計方式（discounted PMI，基準為詞庫 unigram）見 `docs/BIGRAM_LM_PLAN.md` §5.1；Kotlin 端 `engine/BigramModel.kt`，與 Python 的雜湊常數由 `BigramModelTest` 交叉驗證，改格式兩邊要一起改。
+- 評估：`app/src/test/java/.../BigramBenchmarkTest.kt`（資料 `app/src/test/resources/bigram_eval.tsv`，600 子句／3,219 詞，逐詞以前一個真實詞當上下文）。
+  環境變數：`BENCH_CONFIGS`（`label|model|t9cost|t9weight|full|sentence[|firstTone]`，以 `;` 分隔）、`BENCH_OUT`、`BENCH_MISSES`；
+  **必須** `./gradlew cleanTestDebugUnitTest testDebugUnitTest`（Gradle 不追蹤環境變數，否則會被 up-to-date 略過）。
+- 調參旋鈕在 `ZhuyinT9Engine`：`bigramScaleT9Cost/T9Weight/Full/Sentence`、`fullNoToneFirstBonus`（30,000；舊值 500 萬曾讓一聲字蓋過常用字）。
+- 基準（v2.9.5 → v2.10.0，top1）：全鍵盤無聲調 62.3→81.5、有聲調 85.8→89.5；九鍵無聲調鍵 59.9→68.3、有聲調鍵 63.2→71.9；整句 10.5→17.5。
+- 語料來源與授權：`THIRD-PARTY-NOTICES.md` §5（KeyKey AI 語料，MIT）。
