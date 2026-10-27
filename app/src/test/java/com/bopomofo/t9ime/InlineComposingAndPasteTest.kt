@@ -62,16 +62,16 @@ class InlineComposingAndPasteTest {
 
     @Test
     fun testInlineComposingPreference() {
-        // 預設值為 true (開啟行內底線組字)
-        assertTrue(PreferencesRepository.isInlineComposingEnabled(mockContext))
-
-        // 關閉行內組字 (相容模式)
-        PreferencesRepository.setInlineComposingEnabled(mockContext, false)
+        // 途徑 3 規範：預設值為 false (Gboard 標準模式，不向輸入框送注音底線)
         assertFalse(PreferencesRepository.isInlineComposingEnabled(mockContext))
 
-        // 重新開啟
+        // 使用者手動開啟行內組字底線
         PreferencesRepository.setInlineComposingEnabled(mockContext, true)
         assertTrue(PreferencesRepository.isInlineComposingEnabled(mockContext))
+
+        // 使用者手動關閉
+        PreferencesRepository.setInlineComposingEnabled(mockContext, false)
+        assertFalse(PreferencesRepository.isInlineComposingEnabled(mockContext))
     }
 
 
