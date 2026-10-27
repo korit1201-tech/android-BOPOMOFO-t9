@@ -849,7 +849,13 @@ class ZhuyinInputMethodService : InputMethodService() {
                 clearCandidateBar()
                 engine.clear()
                 fullZhuyinBuffer.clear()
+                composingSentence.clear()
+                composingSyllables.clear()
+                pinnedSentenceChars.clear()
+                sentenceCursor = 0
+                isSentenceSelecting = false
                 currentInputConnection?.finishComposingText()
+                updateZhuyinFullPreview()
             }
         }
         handwritingCanvas = root.findViewById(R.id.handwriting_canvas)
@@ -3266,9 +3272,35 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun updateZhuyinFullPreview() {
-        val previewText = when (currentMode) {
-            KeyboardMode.ZHUYIN_FULL -> fullZhuyinBuffer.toString()
-            else -> ""
+        val previewText = when {
+            // 實體鍵盤或長句組字模式
+            composingSentence.isNotEmpty() || (isHardwareKeyboardConnected && fullZhuyinBuffer.isNotEmpty()) -> {
+                val sb = StringBuilder()
+                val cursor = sentenceCursor.coerceIn(0, composingSentence.length)
+                sb.append(composingSentence.substring(0, cursor))
+                if (fullZhuyinBuffer.isNotEmpty()) {
+                    sb.append(fullZhuyinBuffer)
+                }
+                sb.append(composingSentence.substring(cursor))
+                sb.toString()
+            }
+            // 全鍵盤模式 (軟鍵盤大千注音)
+            currentMode == KeyboardMode.ZHUYIN_FULL -> fullZhuyinBuffer.toString()
+            // 九鍵模式 (T9 注音)
+            currentMode == KeyboardMode.ZHUYIN -> {
+                if (customComposingWord != null) {
+                    customComposingWord!!
+                } else if (engine.hasComposing()) {
+                    val fullZhuyin = engine.getFullComposingZhuyin()
+                    if (fullZhuyin.isNotEmpty()) fullZhuyin else engine.getKeyOnlyPreview()
+                } else {
+                    ""
+                }
+            }
+            // 其他模式容錯
+            else -> {
+                if (fullZhuyinBuffer.isNotEmpty()) fullZhuyinBuffer.toString() else ""
+            }
         }
         if (previewText.isNotEmpty()) {
             val currentTheme = ThemeManager.getCurrentTheme(this)
@@ -3840,7 +3872,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     }
 
     private fun updateCandidateBar(candidates: List<DictEntry>) {
-        if (!engine.hasComposing() && fullZhuyinBuffer.isEmpty()) {
+        if (!engine.hasComposing() && fullZhuyinBuffer.isEmpty() && composingSentence.isEmpty()) {
             layoutZhuyinPreview?.visibility = View.GONE
             tvZhuyinFullPreview?.text = ""
         }
@@ -4675,6 +4707,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 currentInputConnection?.finishComposingText()
             }
             clearCandidateBar()
+            updateZhuyinFullPreview()
             return
         }
 
@@ -4690,6 +4723,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         if (!shouldBypassInlineComposing()) {
             currentInputConnection?.setComposingText(displayText, 1)
         }
+        updateZhuyinFullPreview()
 
         // 候選列更新
         if (isSentenceSelecting && cursor < composingSentence.length) {
