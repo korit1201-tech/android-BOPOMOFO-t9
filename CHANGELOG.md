@@ -2,6 +2,21 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.10.2] - 2026-10-27
+
+### 🛡️ 特殊輸入框防護（TYPE_NULL/相容模式）與 Firefox 網址列剪貼簿貼上加固 (Build 122)
+
+- **🛡️ 實現方案 1：防護 TYPE_NULL 與特殊 App 避免重複注音**：
+  - **原因剖析**：部分特定 App（終端機 Termux、Unity/遊戲自訂輸入框等）的 `InputConnection` 缺乏 Android 標準 Composing Span 支援，每次呼叫 `setComposingText` 都被 App 當成一般的文字直接追加，造成 `ㄏㄏㄨㄏㄨㄟㄏㄨㄟㄔ會議` 的文字累積與重複問題。
+  - **徹底防護**：
+    1. 實作 `shouldBypassInlineComposing()`：自動檢測 `inputType == TYPE_NULL`（0）及已知終端機 App，停用行內底線組字，改在輸入法候選列/預覽列顯示注音與句子，確認時一次性 `commitText` 上屏。
+    2. 設定頁面新增「在輸入框顯示組字底線」開關（相容模式）：使用者可手動切換，徹底消除任何第三方 App 的 Composing 缺陷。
+- **📋 加固剪貼簿貼上與修復手機 Firefox 網址列貼上問題**：
+  - **原子交易提交**：將 `safeCommitText` 以 `beginBatchEdit()` 與 `endBatchEdit()` 包裹，並嚴格遵循先 `finishComposingText()` 再 `commitText()` 順序，徹底解決 Firefox 網址列全選與 AutoComplete 造成提交丟失的問題。
+  - **多層級貼上 Fallback**：工具列「貼上」按鈕新增三重安全備援（系統即時同步 → 歷史記憶體快取 → primaryClip → contextMenuAction），杜絕 Android 10+ 限制回傳 null 時靜默失敗。
+  - **恢復候選列置頂「📋 貼上」建議膠囊**：複製網址或文字後進入 Firefox 網址列，候選列首位即刻顯示貼上膠囊，一鍵點擊瞬間完成貼上。
+  - **防止焦點搶奪**：符號面板與剪貼簿所有 View 均加入 `isFocusable = false`，防止鍵盤內部按鈕奪取焦點導致瀏覽器 InputConnection 斷開。
+
 ## [v2.10.1] - 2026-10-24
 
 ### 🐛 修正輸入法重啟時記憶體不足（OOM）當機 (Build 121)
