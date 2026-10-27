@@ -2,6 +2,19 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.10.3] - 2026-10-27
+
+### ⚡ 緊急修復 Telegram 等通訊軟體注音殘留與徹底解決長按網址列貼上問題 (Build 123)
+
+- **⚡ 緊急修復出字時注音殘留上屏 bug（根除 `ㄋㄧ你`、`ㄍㄨㄞㄕ剛剛`）**：
+  - **根因剖析**：先前為了原子化在 `ic.commitText()` 前誤呼叫了 `finishComposingText()`，導致系統在出字瞬間將底線內的注音原樣固化結算，隨後又追加漢字。
+  - **徹底修正**：完全還原標準順序（`commitText` 覆蓋組字區間後結算），徹底恢復 Telegram、LINE 等通訊工具絲滑乾淨的打字體驗。
+- **🧹 依使用者偏好移除候選字列貼上膠囊**：
+  - 徹底移除候選列「📋 貼上」膠囊，保持候選字列 100% 純粹乾淨，不干擾選字視覺。
+- **🌐 徹底修復手機 Firefox 網址列「長按貼上」常常失效的問題**：
+  - **根因剖析**：先前輸入法在 `onStartInput` 與 `onStartInputView` 中，無論有無組字都會主動向外部目標輸入框呼叫 `currentInputConnection?.finishComposingText()`。當使用者在 Firefox 網址列長按準備貼上時，鍵盤彈起瞬間對目標輸入框發出無謂的重設訊號，直接打碎了 Firefox 網址列的選取範圍（Selection）與長按水滴游標/浮動選單，導致長按貼上失靈或閃退。
+  - **徹底修正**：改為「僅當輸入法內部確實有未結算組字時才重設」，無組字狀態下絕不發送任何外部重設事件，確保 Firefox 等瀏覽器長按選單與系統貼上 100% 穩定不被中斷。
+
 ## [v2.10.2] - 2026-10-27
 
 ### 🛡️ 特殊輸入框防護（TYPE_NULL/相容模式）與 Firefox 網址列剪貼簿貼上加固 (Build 122)

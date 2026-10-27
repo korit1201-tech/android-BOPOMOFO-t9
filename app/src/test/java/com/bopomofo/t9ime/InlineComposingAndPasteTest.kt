@@ -74,18 +74,6 @@ class InlineComposingAndPasteTest {
         assertTrue(PreferencesRepository.isInlineComposingEnabled(mockContext))
     }
 
-    @Test
-    fun testPasteChipEntryFormat() {
-        val rawText = "https://example.com/test?q=hello\nworld"
-        val preview = rawText.trim().replace("\r", " ").replace("\n", " ")
-        val shortPreview = if (preview.length > 12) preview.take(12) + "…" else preview
-        val chipTitle = "📋 貼上：「$shortPreview」"
-        val entry = DictEntry(chipTitle, rawText, 999_999_999)
-
-        assertTrue(entry.word.startsWith("📋 貼上"))
-        assertEquals("📋 貼上：「https://exam…」", entry.word)
-        assertEquals(rawText, entry.zhuyin)
-    }
 
     @Test
     fun testTypeNullBypassLogic() {
