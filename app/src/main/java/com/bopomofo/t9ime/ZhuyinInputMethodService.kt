@@ -266,6 +266,51 @@ class ZhuyinInputMethodService : InputMethodService() {
     private var btnTone5: Button? = null
     private var editingCurrentToneFilter: Char? = null
     private var clipListener: android.content.ClipboardManager.OnPrimaryClipChangedListener? = null
+    private var lastPastedClip: String? = null
+
+    /**
+     * 檢測是否應停用行內底線組字 (setComposingText) 改走外置候選列組字模式 (方案 1)
+     * 解決 Termux、遊戲、或特殊自訂輸入框 (TYPE_NULL) 無 Composing 支援導致的注音重複疊加 bug
+     */
+    fun shouldBypassInlineComposing(): Boolean {
+        if (!PreferencesRepository.isInlineComposingEnabled(this)) {
+            return true
+        }
+        val editorInfo = currentInputEditorInfo ?: return false
+        val inputType = editorInfo.inputType
+
+        if (inputType == android.text.InputType.TYPE_NULL ||
+            (inputType and android.text.InputType.TYPE_MASK_CLASS) == android.text.InputType.TYPE_NULL) {
+            return true
+        }
+        val pkg = editorInfo.packageName?.lowercase() ?: ""
+        if (pkg.contains("com.termux") ||
+            pkg.contains("terminal") ||
+            pkg.contains("connectbot") ||
+            pkg.contains("org.connectbot") ||
+            pkg.contains("jackpal.androidterm")) {
+            return true
+        }
+        return false
+    }
+
+    private fun checkAndShowClipboardSuggestion() {
+        if (isCurrentInputPassword()) return
+        if (engine.hasComposing() || fullZhuyinBuffer.isNotEmpty() || composingSentence.isNotEmpty()) return
+        if (isHomophoneSelectionMode || isSymbolLeadMode || isCandidateGridOpen) return
+
+        val latest = ClipboardHistoryManager.syncFromSystem(this, false)
+            ?: ClipboardHistoryManager.getHistory().firstOrNull()
+
+        if (!latest.isNullOrBlank() && latest != lastPastedClip) {
+            val preview = latest.trim().replace("\r", " ").replace("\n", " ")
+            val shortPreview = if (preview.length > 12) preview.take(12) + "…" else preview
+            val chipTitle = "📋 貼上：「$shortPreview」"
+            val entry = DictEntry(chipTitle, latest, 999_999_999)
+            updateCandidateBar(listOf(entry))
+        }
+
+    }
 
     fun isCurrentInputPassword(): Boolean {
         val editorInfo = currentInputEditorInfo ?: return false
@@ -316,7 +361,13 @@ class ZhuyinInputMethodService : InputMethodService() {
         try {
             val clipManager = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
             val listener = android.content.ClipboardManager.OnPrimaryClipChangedListener {
+                lastPastedClip = null
                 ClipboardHistoryManager.syncFromSystemAsync(this, isCurrentInputPassword())
+                if (isInputViewShown && !isCurrentInputPassword()) {
+                    mainHandler.post {
+                        checkAndShowClipboardSuggestion()
+                    }
+                }
             }
             clipListener = listener
             clipManager?.addPrimaryClipChangedListener(listener)
@@ -624,6 +675,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
         if (!isCurrentInputPassword()) {
             ClipboardHistoryManager.syncFromSystemAsync(this, false)
+            checkAndShowClipboardSuggestion()
         }
     }
 
@@ -1955,13 +2007,17 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun updateComposingPreviewFull() {
         if (fullZhuyinBuffer.isEmpty()) {
-            currentInputConnection?.setComposingText("", 1)
-            currentInputConnection?.finishComposingText()
+            if (!shouldBypassInlineComposing()) {
+                currentInputConnection?.setComposingText("", 1)
+                currentInputConnection?.finishComposingText()
+            }
             return
         }
-        val preview = fullZhuyinBuffer.toString()
-        val finalPreview = if (isSimplified) ChineseConverter.toSimplified(preview) else preview
-        currentInputConnection?.setComposingText(finalPreview, 1)
+        if (!shouldBypassInlineComposing()) {
+            val preview = fullZhuyinBuffer.toString()
+            val finalPreview = if (isSimplified) ChineseConverter.toSimplified(preview) else preview
+            currentInputConnection?.setComposingText(finalPreview, 1)
+        }
     }
 
     private fun setupSymbolPanel(root: View) {
@@ -2196,7 +2252,9 @@ class ZhuyinInputMethodService : InputMethodService() {
                 else -> {
                     engine.clear()
                     lastCommittedWord = null
-                    currentInputConnection?.setComposingText("", 1)
+                    if (!shouldBypassInlineComposing()) {
+                        currentInputConnection?.setComposingText("", 1)
+                    }
                     refreshUI(emptyList())
                 }
             }
@@ -2274,7 +2332,9 @@ class ZhuyinInputMethodService : InputMethodService() {
             engine.clear()
             fullZhuyinBuffer.clear()
             lastCommittedWord = null
-            currentInputConnection?.setComposingText("", 1)
+            if (!shouldBypassInlineComposing()) {
+                currentInputConnection?.setComposingText("", 1)
+            }
             refreshUI(emptyList())
             updateKeyboardModeUI()
         }
@@ -3193,8 +3253,16 @@ class ZhuyinInputMethodService : InputMethodService() {
             android.util.Log.w("BopomofoIME", "safeCommitText 失敗：InputConnection 為 null")
             return false
         }
-        val result = ic.commitText(text, 1)
-        ic.finishComposingText()
+        ic.beginBatchEdit()
+        val result = try {
+            ic.finishComposingText()
+            ic.commitText(text, 1)
+        } catch (e: Exception) {
+            android.util.Log.e("BopomofoIME", "safeCommitText 異常", e)
+            false
+        } finally {
+            ic.endBatchEdit()
+        }
         return result
     }
 
@@ -3247,14 +3315,19 @@ class ZhuyinInputMethodService : InputMethodService() {
             return
         }
         if (!engine.hasComposing()) {
-            currentInputConnection?.setComposingText("", 1)
-            currentInputConnection?.finishComposingText()
+            if (!shouldBypassInlineComposing()) {
+                currentInputConnection?.setComposingText("", 1)
+                currentInputConnection?.finishComposingText()
+            }
             customComposingWord = null
             replacedCharsMap.clear()
             isHomophoneSelectionMode = false
             homophoneCharIndex = -1
             lastComposingStart = -1
             lastComposingEnd = -1
+            return
+        }
+        if (shouldBypassInlineComposing()) {
             return
         }
         val custom = customComposingWord
@@ -3897,6 +3970,23 @@ class ZhuyinInputMethodService : InputMethodService() {
                         updateCandidateBar(currentCandidateList)
                     }
                 }
+            } else if (entry.word.startsWith("📋 貼上")) {
+                tv.setTextColor(themeColors.accent)
+                tv.setTypeface(null, Typeface.BOLD)
+                tv.setBackgroundResource(R.drawable.bg_key_action)
+                tv.setOnClickListener {
+                    triggerHapticFeedback(HapticType.COMMIT)
+                    val textToCommit = entry.zhuyin
+                    safeCommitText(textToCommit)
+                    lastPastedClip = textToCommit
+                    clearCandidateBar()
+                }
+                tv.setOnLongClickListener {
+                    triggerHapticFeedback(HapticType.DELETE)
+                    lastPastedClip = entry.zhuyin
+                    clearCandidateBar()
+                    true
+                }
             } else if (isZhuyinHeader) {
                 tv.setTextColor(themeColors.accent)
                 tv.setTypeface(null, Typeface.BOLD)
@@ -4346,7 +4436,9 @@ class ZhuyinInputMethodService : InputMethodService() {
 
             // 更新輸入框底線組字預覽（保持底線未確認狀態，讓使用者可繼續修改其他字）
             val finalPreview = if (isSimplified) ChineseConverter.toSimplified(newWord) else newWord
-            currentInputConnection?.setComposingText(finalPreview, 1)
+            if (!shouldBypassInlineComposing()) {
+                currentInputConnection?.setComposingText(finalPreview, 1)
+            }
 
             val nextIndex = homophoneCharIndex + 1
             if (isHardwareKeyboardConnected && nextIndex < newWord.length) {
@@ -4393,6 +4485,13 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun selectCandidate(entry: DictEntry) {
         if (entry.word.startsWith("【")) return
+        if (entry.word.startsWith("📋 貼上")) {
+            val textToCommit = entry.zhuyin
+            safeCommitText(textToCommit)
+            lastPastedClip = textToCommit
+            clearCandidateBar()
+            return
+        }
         // 九鍵「部分上屏」候選：只涵蓋前幾個按鍵，先上屏此詞，其餘按鍵繼續組字
         if (entry.consumedKeys > 0 &&
             currentMode == KeyboardMode.ZHUYIN &&
@@ -4619,8 +4718,10 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun updateComposingDisplay() {
         if (composingSentence.isEmpty() && fullZhuyinBuffer.isEmpty()) {
-            currentInputConnection?.setComposingText("", 1)
-            currentInputConnection?.finishComposingText()
+            if (!shouldBypassInlineComposing()) {
+                currentInputConnection?.setComposingText("", 1)
+                currentInputConnection?.finishComposingText()
+            }
             clearCandidateBar()
             return
         }
@@ -4634,7 +4735,9 @@ class ZhuyinInputMethodService : InputMethodService() {
         sb.append(composingSentence.substring(cursor))
 
         val displayText = if (isSimplified) ChineseConverter.toSimplified(sb.toString()) else sb.toString()
-        currentInputConnection?.setComposingText(displayText, 1)
+        if (!shouldBypassInlineComposing()) {
+            currentInputConnection?.setComposingText(displayText, 1)
+        }
 
         // 候選列更新
         if (isSentenceSelecting && cursor < composingSentence.length) {
