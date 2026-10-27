@@ -268,9 +268,9 @@ object PreferencesRepository {
         } catch (_: Exception) {}
     }
 
-    // 行內組字底線開關 (true: 預設在支援的輸入框顯示底線組字，false: 相容模式，僅在輸入法候選列顯示組字，確認時才上屏)
-    const val KEY_INLINE_COMPOSING = "pref_inline_composing"
-    const val DEFAULT_INLINE_COMPOSING = true
+    // 行內組字底線開關 (true: 在輸入框顯示底線組字，false: Gboard標準模式，僅在輸入法候選列顯示組字，確認時才上屏)
+    const val KEY_INLINE_COMPOSING = "pref_inline_composing_v3"
+    const val DEFAULT_INLINE_COMPOSING = false
 
     fun isInlineComposingEnabled(context: Context): Boolean {
         return try {

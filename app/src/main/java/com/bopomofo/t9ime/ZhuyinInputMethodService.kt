@@ -3137,7 +3137,9 @@ class ZhuyinInputMethodService : InputMethodService() {
         if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty()) {
             fullZhuyinBuffer.deleteCharAt(fullZhuyinBuffer.length - 1)
             if (fullZhuyinBuffer.isEmpty()) {
-                currentInputConnection?.finishComposingText()
+                if (!shouldBypassInlineComposing()) {
+                    currentInputConnection?.finishComposingText()
+                }
                 clearCandidateBar()
             } else {
                 updateComposingPreviewFull()
