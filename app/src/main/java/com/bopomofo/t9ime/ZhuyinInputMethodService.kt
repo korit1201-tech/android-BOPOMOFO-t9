@@ -266,7 +266,6 @@ class ZhuyinInputMethodService : InputMethodService() {
     private var btnTone5: Button? = null
     private var editingCurrentToneFilter: Char? = null
     private var clipListener: android.content.ClipboardManager.OnPrimaryClipChangedListener? = null
-    private var lastPastedClip: String? = null
 
     /**
      * 檢測是否應停用行內底線組字 (setComposingText) 改走外置候選列組字模式 (方案 1)
@@ -294,23 +293,6 @@ class ZhuyinInputMethodService : InputMethodService() {
         return false
     }
 
-    private fun checkAndShowClipboardSuggestion() {
-        if (isCurrentInputPassword()) return
-        if (engine.hasComposing() || fullZhuyinBuffer.isNotEmpty() || composingSentence.isNotEmpty()) return
-        if (isHomophoneSelectionMode || isSymbolLeadMode || isCandidateGridOpen) return
-
-        val latest = ClipboardHistoryManager.syncFromSystem(this, false)
-            ?: ClipboardHistoryManager.getHistory().firstOrNull()
-
-        if (!latest.isNullOrBlank() && latest != lastPastedClip) {
-            val preview = latest.trim().replace("\r", " ").replace("\n", " ")
-            val shortPreview = if (preview.length > 12) preview.take(12) + "…" else preview
-            val chipTitle = "📋 貼上：「$shortPreview」"
-            val entry = DictEntry(chipTitle, latest, 999_999_999)
-            updateCandidateBar(listOf(entry))
-        }
-
-    }
 
     fun isCurrentInputPassword(): Boolean {
         val editorInfo = currentInputEditorInfo ?: return false
@@ -361,13 +343,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         try {
             val clipManager = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
             val listener = android.content.ClipboardManager.OnPrimaryClipChangedListener {
-                lastPastedClip = null
                 ClipboardHistoryManager.syncFromSystemAsync(this, isCurrentInputPassword())
-                if (isInputViewShown && !isCurrentInputPassword()) {
-                    mainHandler.post {
-                        checkAndShowClipboardSuggestion()
-                    }
-                }
             }
             clipListener = listener
             clipManager?.addPrimaryClipChangedListener(listener)
@@ -625,9 +601,13 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     override fun onStartInput(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
-        // 進入新輸入框時，主動清除前次可能殘留的組字與游標狀態，確保目標 App 輸入框乾淨接收貼上事件
         if (!restarting) {
-            currentInputConnection?.finishComposingText()
+            val hasActiveComposing = (::engine.isInitialized && engine.hasComposing()) ||
+                    fullZhuyinBuffer.isNotEmpty() ||
+                    composingSentence.isNotEmpty()
+            if (hasActiveComposing) {
+                currentInputConnection?.finishComposingText()
+            }
             if (::engine.isInitialized) {
                 engine.clear()
             }
@@ -647,9 +627,11 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
-        // 每次彈出鍵盤時，若當前無正在組字，確保終止 Composing 狀態
-        if (!engine.hasComposing() && fullZhuyinBuffer.isEmpty()) {
+        // 每次彈出鍵盤時，若有未結算組字才重設，絕不干擾目標 App 的游標與長按選單
+        if (engine.hasComposing() || fullZhuyinBuffer.isNotEmpty()) {
             currentInputConnection?.finishComposingText()
+            engine.clear()
+            fullZhuyinBuffer.clear()
         }
         // 快取震動設定，避免按鍵高頻輸入時讀取 SharedPreferences
         cachedVibrationEnabled = PreferencesRepository.isVibrationEnabled(this)
@@ -675,7 +657,6 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
         if (!isCurrentInputPassword()) {
             ClipboardHistoryManager.syncFromSystemAsync(this, false)
-            checkAndShowClipboardSuggestion()
         }
     }
 
@@ -3253,16 +3234,8 @@ class ZhuyinInputMethodService : InputMethodService() {
             android.util.Log.w("BopomofoIME", "safeCommitText 失敗：InputConnection 為 null")
             return false
         }
-        ic.beginBatchEdit()
-        val result = try {
-            ic.finishComposingText()
-            ic.commitText(text, 1)
-        } catch (e: Exception) {
-            android.util.Log.e("BopomofoIME", "safeCommitText 異常", e)
-            false
-        } finally {
-            ic.endBatchEdit()
-        }
+        val result = ic.commitText(text, 1)
+        ic.finishComposingText()
         return result
     }
 
@@ -3970,23 +3943,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                         updateCandidateBar(currentCandidateList)
                     }
                 }
-            } else if (entry.word.startsWith("📋 貼上")) {
-                tv.setTextColor(themeColors.accent)
-                tv.setTypeface(null, Typeface.BOLD)
-                tv.setBackgroundResource(R.drawable.bg_key_action)
-                tv.setOnClickListener {
-                    triggerHapticFeedback(HapticType.COMMIT)
-                    val textToCommit = entry.zhuyin
-                    safeCommitText(textToCommit)
-                    lastPastedClip = textToCommit
-                    clearCandidateBar()
-                }
-                tv.setOnLongClickListener {
-                    triggerHapticFeedback(HapticType.DELETE)
-                    lastPastedClip = entry.zhuyin
-                    clearCandidateBar()
-                    true
-                }
+
             } else if (isZhuyinHeader) {
                 tv.setTextColor(themeColors.accent)
                 tv.setTypeface(null, Typeface.BOLD)
@@ -4485,13 +4442,6 @@ class ZhuyinInputMethodService : InputMethodService() {
 
     private fun selectCandidate(entry: DictEntry) {
         if (entry.word.startsWith("【")) return
-        if (entry.word.startsWith("📋 貼上")) {
-            val textToCommit = entry.zhuyin
-            safeCommitText(textToCommit)
-            lastPastedClip = textToCommit
-            clearCandidateBar()
-            return
-        }
         // 九鍵「部分上屏」候選：只涵蓋前幾個按鍵，先上屏此詞，其餘按鍵繼續組字
         if (entry.consumedKeys > 0 &&
             currentMode == KeyboardMode.ZHUYIN &&
