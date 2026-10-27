@@ -267,4 +267,22 @@ object PreferencesRepository {
             getPrefs(context)?.edit()?.putBoolean(KEY_SHOW_BOTTOM_PUNCTUATION, show)?.apply()
         } catch (_: Exception) {}
     }
+
+    // 行內組字底線開關 (true: 預設在支援的輸入框顯示底線組字，false: 相容模式，僅在輸入法候選列顯示組字，確認時才上屏)
+    const val KEY_INLINE_COMPOSING = "pref_inline_composing"
+    const val DEFAULT_INLINE_COMPOSING = true
+
+    fun isInlineComposingEnabled(context: Context): Boolean {
+        return try {
+            getPrefs(context)?.getBoolean(KEY_INLINE_COMPOSING, DEFAULT_INLINE_COMPOSING) ?: DEFAULT_INLINE_COMPOSING
+        } catch (_: Exception) {
+            DEFAULT_INLINE_COMPOSING
+        }
+    }
+
+    fun setInlineComposingEnabled(context: Context, enabled: Boolean) {
+        try {
+            getPrefs(context)?.edit()?.putBoolean(KEY_INLINE_COMPOSING, enabled)?.apply()
+        } catch (_: Exception) {}
+    }
 }

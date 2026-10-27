@@ -224,6 +224,7 @@ class SymbolPanelController(
 
             for (clip in clips) {
                 val btn = Button(context).apply {
+                    isFocusable = false
                     layoutParams = LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT
@@ -484,17 +485,24 @@ class SymbolPanelController(
         val btnPaste = Button(context).apply {
             text = "貼上"
             textSize = 14f
+            isFocusable = false
             setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
             setBackgroundResource(R.drawable.bg_key_action)
             val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { setMargins(2, 2, 2, 2) }
             layoutParams = p
             setOnClickListener {
                 callback.onTriggerHaptic()
-                val clipManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-                val clipData = clipManager?.primaryClip
-                val clipText = if (clipData != null && clipData.itemCount > 0) {
-                    clipData.getItemAt(0)?.coerceToText(context)?.toString()
-                } else null
+                var clipText = ClipboardHistoryManager.syncFromSystem(context, false)
+                if (clipText.isNullOrEmpty()) {
+                    clipText = ClipboardHistoryManager.getHistory().firstOrNull()
+                }
+                if (clipText.isNullOrEmpty()) {
+                    val clipManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                    val clipData = clipManager?.primaryClip
+                    if (clipData != null && clipData.itemCount > 0) {
+                        clipText = clipData.getItemAt(0)?.coerceToText(context)?.toString()
+                    }
+                }
 
                 if (!clipText.isNullOrEmpty()) {
                     callback.onSafeCommitText(clipText)
