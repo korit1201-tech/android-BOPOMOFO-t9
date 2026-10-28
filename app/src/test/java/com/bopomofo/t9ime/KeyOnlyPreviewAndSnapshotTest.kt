@@ -151,4 +151,22 @@ class KeyOnlyPreviewAndSnapshotTest {
         assertEquals("", engine.getKeyOnlyPreview())
         assertTrue(engine.getCandidates().isEmpty())
     }
+
+    @Test
+    fun testCapsulePreviewStrictlyEqualsKeyOnlyPreviewAndNeverUsesPredictions() {
+        // 核心鐵律：無論候選列預測出多長的詞，九鍵輸入狀態與頂部膠囊注音符號數永遠等於按鍵數，絕不可把預測當輸入
+        engine.pressKey(8) // ㄏ ㄒ ㄠ ㄡ 鍵，候選第一名可能是「會議」等長詞
+        val candidates = engine.getCandidates()
+        assertTrue("候選詞必須有預測內容", candidates.isNotEmpty())
+        val topCandidate = candidates.first()
+
+        val pureKeyPreview = engine.getKeyOnlyPreview()
+        assertEquals("按 1 鍵時預覽必須恰為 1 個符號", 1, pureKeyPreview.length)
+        assertEquals("ㄏ", pureKeyPreview)
+
+        // 驗證絕不可被 topCandidate.zhuyin 污染
+        if (topCandidate.zhuyin.contains(" ")) {
+            assertFalse("輸入狀態絕不可包含多音節預測詞的注音", pureKeyPreview.contains(" "))
+        }
+    }
 }
