@@ -3286,8 +3286,19 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
             // 全鍵盤模式 (軟鍵盤大千注音)
             currentMode == KeyboardMode.ZHUYIN_FULL -> fullZhuyinBuffer.toString()
-            // 九鍵模式 (T9 注音) 與其他模式：依 v2.8.7 規範徹底隱藏上方浮動膠囊，介面回歸純粹簡潔
-            else -> ""
+            // 九鍵模式 (T9 注音)：嚴格呈現純真實按鍵 (getKeyOnlyPreview)，符號數恆等於按鍵數，絕不把候選列的預測詞注音當作輸入狀態
+            currentMode == KeyboardMode.ZHUYIN -> {
+                if (customComposingWord != null) {
+                    customComposingWord!!
+                } else if (engine.hasComposing()) {
+                    engine.getKeyOnlyPreview()
+                } else {
+                    ""
+                }
+            }
+            else -> {
+                if (fullZhuyinBuffer.isNotEmpty()) fullZhuyinBuffer.toString() else ""
+            }
         }
         if (previewText.isNotEmpty()) {
             val currentTheme = ThemeManager.getCurrentTheme(this)
