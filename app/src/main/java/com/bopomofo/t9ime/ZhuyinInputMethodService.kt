@@ -3286,13 +3286,12 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
             // 全鍵盤模式 (軟鍵盤大千注音)
             currentMode == KeyboardMode.ZHUYIN_FULL -> fullZhuyinBuffer.toString()
-            // 九鍵模式 (T9 注音)
+            // 九鍵模式 (T9 注音)：嚴格遵守「只顯示真實按鍵」，符號數永遠等於實際按鍵數，絕不將預測詞當作輸入
             currentMode == KeyboardMode.ZHUYIN -> {
                 if (customComposingWord != null) {
                     customComposingWord!!
                 } else if (engine.hasComposing()) {
-                    val fullZhuyin = engine.getFullComposingZhuyin()
-                    if (fullZhuyin.isNotEmpty()) fullZhuyin else engine.getKeyOnlyPreview()
+                    engine.getKeyOnlyPreview()
                 } else {
                     ""
                 }
