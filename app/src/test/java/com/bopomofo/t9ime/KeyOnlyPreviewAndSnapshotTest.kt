@@ -169,4 +169,36 @@ class KeyOnlyPreviewAndSnapshotTest {
             assertFalse("輸入狀態絕不可包含多音節預測詞的注音", pureKeyPreview.contains(" "))
         }
     }
+
+    @Test
+    fun testKeys7And8KeyOnlyPreviewPurity() {
+        // 驗證按鍵 7 (ㄇ ㄋ ㄜ)：預覽必須精確等於按鍵注音 ㄇ，絕不可包含多音節預測詞「你」(ㄋㄧ) 的注音！
+        engine.clear()
+        engine.pressKey(7)
+        val preview7 = engine.getKeyOnlyPreview()
+        assertEquals("按單鍵 7 時，純真實按鍵預覽必須為 ㄇ", "ㄇ", preview7)
+        assertEquals("按單鍵 7 時，預覽長度必須恰為 1", 1, preview7.length)
+        assertFalse("按單鍵 7 時，預覽絕不可包含多音節預測詞注音 ㄋㄧ", preview7.contains("ㄋㄧ"))
+
+        // 驗證按鍵 8 (ㄏ ㄒ ㄠ ㄡ)：預覽必須精確等於按鍵注音 ㄏ，絕不可包含多音節預測詞「回」(ㄏㄨㄟ) 的注音！
+        engine.clear()
+        engine.pressKey(8)
+        val preview8 = engine.getKeyOnlyPreview()
+        assertEquals("按單鍵 8 時，純真實按鍵預覽必須為 ㄏ", "ㄏ", preview8)
+        assertEquals("按單鍵 8 時，預覽長度必須恰為 1", 1, preview8.length)
+        assertFalse("按單鍵 8 時，預覽絕不可包含多音節預測詞注音 ㄏㄨㄟ", preview8.contains("ㄏㄨㄟ"))
+
+        // 驗證多鍵序列：按鍵數恆等於符號數
+        engine.clear()
+        engine.pressKey(7)
+        engine.pressKey(1)
+        val preview71 = engine.getKeyOnlyPreview()
+        assertEquals("按 2 鍵 (7, 1) 的預覽符號數必須恰為 2", 2, symbolCount(preview71))
+
+        engine.clear()
+        engine.pressKey(8)
+        engine.pressKey(8)
+        val preview88 = engine.getKeyOnlyPreview()
+        assertEquals("按 2 鍵 (8, 8) 的預覽符號數必須恰為 2", 2, symbolCount(preview88))
+    }
 }
