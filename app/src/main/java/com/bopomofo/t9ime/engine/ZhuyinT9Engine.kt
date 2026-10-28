@@ -134,6 +134,15 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     private val mainHandler: Handler? = try { Looper.getMainLooper()?.let { Handler(it) } } catch (_: Exception) { null }
 
     companion object {
+        /** 目前存活的引擎（設定頁清除詞對時要連同記憶體中的一起清）。 */
+        private val liveEngines: MutableSet<ZhuyinT9Engine> = java.util.Collections.newSetFromMap(java.util.WeakHashMap())
+
+        /** 清除所有「打字時學到的詞對」：刪除 user_bigram.json 並清掉記憶體中的學習結果；內建手寫詞對保留。 */
+        fun clearLearnedBigrams(context: Context) {
+            try { java.io.File(context.applicationContext.filesDir, "user_bigram.json").delete() } catch (_: Exception) {}
+            synchronized(liveEngines) { liveEngines.toList() }.forEach { it.resetLearnedBigrams() }
+        }
+
         private const val COMMON_POOL_SIZE = 4000
         private const val ASSOC_MIN_NAT = 0.6
         private const val ASSOC_FREQ_WEIGHT = 0.1
@@ -171,6 +180,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     }
 
     init {
+        synchronized(liveEngines) { liveEngines.add(this) }
         initDefaultBigrams()
         loadUserDictionaryEntries(trie, charZhuyinMap, fullZhuyinWordMap)
         userDict.onDictionaryChangedListener = {
@@ -182,6 +192,14 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         if (context != null) {
             startAsyncDictionaryLoading()
         }
+    }
+
+    private fun resetLearnedBigrams() {
+        synchronized(bigramMap) {
+            bigramMap.clear()
+            initDefaultBigrams()
+        }
+        lastLearnedPair = null
     }
 
     private fun initDefaultBigrams() {
@@ -284,11 +302,38 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         nextMap[next] = (nextMap[next] ?: 0) + weight
     }
 
+    // 最近一次「使用者選用」的學習紀錄，供上屏後立刻退格時撤銷（誤點不該留下加權）
+    private var lastLearnedWord: String? = null
+    private var lastLearnedPair: Pair<String, String>? = null
+    private var lastLearnedAt = 0L
+
+    /** 若剛學的詞／詞對在 [maxAgeMs] 內，撤銷這次學習；回傳是否有撤銷。 */
+    fun revokeRecentLearning(maxAgeMs: Long = 6_000L): Boolean {
+        if (lastLearnedWord == null && lastLearnedPair == null) return false
+        val fresh = android.os.SystemClock.uptimeMillis() - lastLearnedAt <= maxAgeMs
+        val word = lastLearnedWord
+        val pair = lastLearnedPair
+        lastLearnedWord = null
+        lastLearnedPair = null
+        if (!fresh) return false
+        if (word != null) userDict.revokeUsage(word)
+        if (pair != null) synchronized(bigramMap) {
+            val m = bigramMap[pair.first]
+            val left = (m?.get(pair.second) ?: 0) - 500
+            if (left > 0) m!![pair.second] = left else m?.remove(pair.second)
+        }
+        mainHandler?.removeCallbacks(bigramSaveRunnable)
+        mainHandler?.postDelayed(bigramSaveRunnable, 2500L)
+        return true
+    }
+
     fun learnBigram(prevWord: String, nextWord: String) {
         if (prevWord.isBlank() || nextWord.isBlank()) return
         synchronized(bigramMap) {
             addBigramPair(prevWord, nextWord, 500)
         }
+        lastLearnedPair = prevWord to nextWord
+        lastLearnedAt = android.os.SystemClock.uptimeMillis()
         mainHandler?.removeCallbacks(bigramSaveRunnable)
         mainHandler?.postDelayed(bigramSaveRunnable, 2500L)
     }
@@ -1499,6 +1544,8 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             word.map { getZhuyinForChar(it) }.filter { it.isNotEmpty() }.joinToString(" ")
         }
         userDict.recordUsage(word, zy)
+        lastLearnedWord = word
+        lastLearnedAt = android.os.SystemClock.uptimeMillis()
         if (zy.isNotEmpty()) {
             val usageCount = userDict.getUsageCount(word)
             val weight = 50_000_000 + minOf(usageCount * 1_000_000, 50_000_000)
@@ -1563,17 +1610,13 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     ): List<String> {
         var words = if (syllables.size == sentence.length) findBestSentenceFromSyllables(syllables, pinned) else emptyList()
         if (words.joinToString("") != sentence) words = sentence.map { it.toString() }
-        var prev = previousWord
+        // 斷詞結果是引擎自己的猜測，不是使用者選的：不學詞、不學詞對，只學使用者親手替換過的字
         var pos = 0
         for (w in words) {
-            val span = pos until pos + w.length
-            val learnable = if (w.length == 1) pinned.containsKey(pos) else w.length in 2..4
-            if (learnable && syllables.size == sentence.length) {
-                val reading = resolveReading(w, syllables.subList(span.first, span.last + 1))
+            if (w.length == 1 && pinned.containsKey(pos) && syllables.size == sentence.length) {
+                val reading = resolveReading(w, syllables.subList(pos, pos + 1))
                 if (reading != null) learnWord(w, reading)
             }
-            if (prev != null && prev != w && prev.length in 1..8 && w.length in 1..8) learnBigram(prev, w)
-            prev = w
             pos += w.length
         }
         return words

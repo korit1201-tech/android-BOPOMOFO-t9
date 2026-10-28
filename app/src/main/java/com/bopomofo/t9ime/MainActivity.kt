@@ -104,6 +104,19 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
 
+        // 清除學到的詞對（打字時記下的「前一個詞→下一個詞」關聯，不影響個人詞庫與內建詞對）
+        findViewById<Button>(R.id.btn_clear_bigram)?.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("確認清除學到的詞對")
+                .setMessage("這會清除輸入法依您打字習慣學到的前後詞關聯（例如「我」後面常接什麼）。個人詞庫與內建的詞對資料不受影響，確定要清除嗎？")
+                .setPositiveButton("確定清除") { _, _ ->
+                    com.bopomofo.t9ime.engine.ZhuyinT9Engine.clearLearnedBigrams(this)
+                    Toast.makeText(this, "已清除學到的詞對", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        }
+
         setupVibrationSettings()
         setupTolerantInputSettings()
         setupThemeSettings()
