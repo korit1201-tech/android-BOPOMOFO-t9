@@ -3286,12 +3286,8 @@ class ZhuyinInputMethodService : InputMethodService() {
             }
             // 全鍵盤模式 (軟鍵盤大千注音)
             currentMode == KeyboardMode.ZHUYIN_FULL -> fullZhuyinBuffer.toString()
-            // 九鍵模式 (T9 注音)：依 v2.8.7 規範徹底隱藏上方浮動膠囊，預測詞專注留於候選列，輸入狀態由輸入框內純真實按鍵承載
+            // 九鍵模式 (T9 注音) 與其他模式：依 v2.8.7 規範徹底隱藏上方浮動膠囊，介面回歸純粹簡潔
             else -> ""
-            // 其他模式容錯
-            else -> {
-                if (fullZhuyinBuffer.isNotEmpty()) fullZhuyinBuffer.toString() else ""
-            }
         }
         if (previewText.isNotEmpty()) {
             val currentTheme = ThemeManager.getCurrentTheme(this)
