@@ -9,6 +9,7 @@ import android.inputmethodservice.InputMethodService
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
@@ -122,6 +123,8 @@ class ZhuyinInputMethodService : InputMethodService() {
     private var containerCandidateGrid: LinearLayout? = null
     private var tvCandidateGridTitle: TextView? = null
     private var isCandidateGridOpen = false
+    /** 展開候選前的主鍵盤高度（px，Int.MIN_VALUE 表示沒有展開中）；收合時還原。 */
+    private var gridSavedMainHeightPx = Int.MIN_VALUE
     private var currentCandidateList: List<DictEntry> = emptyList()
     private var currentOneHandedMode = OneHandedMode.FULL
 
@@ -3488,7 +3491,32 @@ class ZhuyinInputMethodService : InputMethodService() {
 
         layoutCandidateGrid?.visibility = View.VISIBLE
         btnCandidateExpand?.text = "▲"
+        enlargeCandidateGridArea()
         populateCandidateGrid()
+    }
+
+    /** 展開候選時收起底欄（123／逗號／中文空白／句號／全鍵），把它的高度再加上約 35% 都給候選面板；僅手機直向。 */
+    private fun enlargeCandidateGridArea() {
+        if (isPhoneLandscapeMode() || !::layoutMainFrame.isInitialized || !::layoutBottomBar.isInitialized) return
+        if (gridSavedMainHeightPx != Int.MIN_VALUE) return
+        val lp = layoutMainFrame.layoutParams ?: return
+        val mainH = lp.height.takeIf { it > 0 } ?: layoutMainFrame.height
+        if (mainH <= 0) return
+        val bottomH = layoutBottomBar.height.takeIf { it > 0 } ?: layoutBottomBar.layoutParams.height.coerceAtLeast(0)
+        gridSavedMainHeightPx = lp.height
+        layoutBottomBar.visibility = View.GONE
+        lp.height = mainH + bottomH + (mainH * 0.35f).toInt()
+        layoutMainFrame.requestLayout()
+    }
+
+    private fun restoreCandidateGridArea() {
+        if (gridSavedMainHeightPx == Int.MIN_VALUE) return
+        if (::layoutMainFrame.isInitialized) {
+            layoutMainFrame.layoutParams?.height = gridSavedMainHeightPx
+            layoutMainFrame.requestLayout()
+        }
+        if (::layoutBottomBar.isInitialized && !isHardwareKeyboardConnected) layoutBottomBar.visibility = View.VISIBLE
+        gridSavedMainHeightPx = Int.MIN_VALUE
     }
 
     private fun closeCandidateGrid() {
@@ -3496,6 +3524,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         isCandidateGridOpen = false
         layoutCandidateGrid?.visibility = View.GONE
         btnCandidateExpand?.text = "▼"
+        restoreCandidateGridArea()
         if (isHardwareKeyboardConnected) {
             layoutMainFrame.visibility = View.GONE
         } else {
@@ -3869,7 +3898,13 @@ class ZhuyinInputMethodService : InputMethodService() {
         return pages
     }
 
+    private var candidateRenderGen = 0
+    private var candidateTouchGen = 0
+    private var candidateRenderUptime = 0L
+
     private fun updateCandidateBar(candidates: List<DictEntry>) {
+        candidateRenderGen++
+        candidateRenderUptime = SystemClock.uptimeMillis()
         if (!engine.hasComposing() && fullZhuyinBuffer.isEmpty() && composingSentence.isEmpty()) {
             layoutZhuyinPreview?.visibility = View.GONE
             tvZhuyinFullPreview?.text = ""
@@ -4060,6 +4095,21 @@ class ZhuyinInputMethodService : InputMethodService() {
                         selectCandidate(entry)
                     }
                 }
+            }
+
+            // 除錯記錄：候選字落指與放開，並標出按下到放開之間候選列是否被重畫（重畫會讓放開時點到別的字）
+            val shownWord = displayWord
+            val shownIndex = i
+            tv.setOnTouchListener { v, ev ->
+                when (ev.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        candidateTouchGen = candidateRenderGen
+                        Log.d("BopomofoIME_Touch", "cand down idx=$shownIndex word=$shownWord at=%.0f,%.0fpx size=%dx%dpx sinceRender=%dms".format(ev.x, ev.y, v.width, v.height, SystemClock.uptimeMillis() - candidateRenderUptime))
+                    }
+                    MotionEvent.ACTION_UP -> Log.d("BopomofoIME_Touch", "cand up idx=$shownIndex word=$shownWord held=${ev.eventTime - ev.downTime}ms rerendered=${candidateRenderGen != candidateTouchGen}")
+                    MotionEvent.ACTION_CANCEL -> Log.d("BopomofoIME_Touch", "cand cancel idx=$shownIndex word=$shownWord rerendered=${candidateRenderGen != candidateTouchGen}")
+                }
+                false
             }
 
             tv.setOnLongClickListener {

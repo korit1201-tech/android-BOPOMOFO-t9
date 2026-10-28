@@ -20,6 +20,7 @@ import java.io.InputStreamReader
  * - getHomophonesFor() 同音字查詢，供候選詞長按替換功能使用
  */
 class ZhuyinT9Engine(rawContext: Context? = null) {
+
     private val context = rawContext?.applicationContext ?: rawContext
 
     /** close() 之後為 true：背景詞庫載入會中止並丟棄結果，避免輸入法服務重啟時新舊引擎的詞庫同時佔用記憶體而 OOM */
@@ -38,6 +39,9 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     private val userDict = UserDictionaryManager.getInstance(context)
     @Volatile
     private var nextWordMap = mutableMapOf<String, MutableList<DictEntry>>()
+
+    /** 聯想詞候選池：詞庫中詞頻最高的 1～3 字詞（載入時建立），聯想時用雙連詞模型替它們對上一個詞打分。 */
+    @Volatile private var commonWordPool: List<DictEntry> = emptyList()
     @Volatile
     private var charZhuyinMap = mutableMapOf<Char, MutableList<String>>()
     @Volatile
@@ -130,6 +134,9 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     private val mainHandler: Handler? = try { Looper.getMainLooper()?.let { Handler(it) } } catch (_: Exception) { null }
 
     companion object {
+        private const val COMMON_POOL_SIZE = 4000
+        private const val ASSOC_MIN_NAT = 0.6
+        private const val ASSOC_FREQ_WEIGHT = 0.1
         val TONE_SYMBOLS = listOf(' ', 'ˇ', 'ˋ', 'ˊ', '˙')
 
         /** APK 內建的詞對核心包；使用者下載的完整包放在 filesDir（備份規則已排除）。 */
@@ -458,6 +465,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         targetInitialToCharMap: MutableMap<Char, MutableList<DictEntry>>,
         customStream: java.io.InputStream? = null
     ) {
+        val poolHeap = java.util.PriorityQueue<DictEntry>(COMMON_POOL_SIZE + 1, compareBy { it.weight })
         val nextWordTrack = mutableMapOf<String, HashSet<String>>()
         val initialToCharTrack = mutableMapOf<Char, HashSet<String>>()
         val localSyllableWeights = HashMap<String, Long>()
@@ -489,6 +497,10 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
                         val entry = DictEntry(word, zhuyin, weight)
                         targetTrie.insert(entry)
                         accumulatedWeight += weight
+                        if (word.length in 1..3 && (poolHeap.size < COMMON_POOL_SIZE || weight > poolHeap.peek().weight)) {
+                            poolHeap.add(entry)
+                            if (poolHeap.size > COMMON_POOL_SIZE) poolHeap.poll()
+                        }
 
                         // 構建精準全注音/去聲調注音詞條索引 (支援單字與多字詞)
                         val cleanZhuyinNoSpace = zhuyin.filter { it !in "ˇˋˊ˙ " }
@@ -584,6 +596,9 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             for ((_, list) in targetInitialToCharMap) {
                 list.sortByDescending { it.weight }
             }
+
+            commonWordPool = poolHeap.distinctBy { it.word }.sortedByDescending { it.weight }
+            poolHeap.clear()
 
             // 顯式清空載入過程中的大型暫存去重集合，避免與新舊字典疊加形成記憶體峰值
             nextWordTrack.clear()
@@ -2045,51 +2060,32 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             }
         }
 
-        // 1. 完全匹配剛上屏詞彙
-        val exactList = nextWordMap[word]
-        if (!exactList.isNullOrEmpty()) {
-            resultList.addAll(rankList(exactList))
-        }
-
-        // 2. 常用對話聯想規則匹配
-        val defaultMatches = defaultAssociations[word]
+        // 1. 手寫的常用對話接續（品質最高，數量少）
+        val defaultMatches = defaultAssociations[word] ?: defaultAssociations[word.takeLast(2)]
         if (!defaultMatches.isNullOrEmpty()) {
             for (w in defaultMatches) {
-                if (resultList.none { it.word == w }) {
-                    resultList.add(DictEntry(w, "", 10_000))
-                }
+                if (resultList.none { it.word == w }) resultList.add(DictEntry(w, "", 10_000))
             }
         }
 
-        // 3. 結尾 2 字匹配（如選了長詞，取末尾詞接續）
-        if (word.length >= 2) {
-            val suffix2 = word.takeLast(2)
-            val list2 = nextWordMap[suffix2]
-            if (!list2.isNullOrEmpty()) {
-                for (e in rankList(list2)) {
-                    if (resultList.none { it.word == e.word }) resultList.add(e)
-                }
-            }
-            val def2 = defaultAssociations[suffix2]
-            if (!def2.isNullOrEmpty()) {
-                for (w in def2) {
-                    if (resultList.none { it.word == w }) resultList.add(DictEntry(w, "", 8_000))
-                }
-            }
+        // 2. 常用詞池依雙連詞模型對「剛上屏的詞」打分：真正常接在它後面的詞排前面
+        val scored = ArrayList<Pair<DictEntry, Double>>()
+        for (e in commonWordPool) {
+            if (e.word == word) continue
+            val nat = getBigramBonus(word, e.word)
+            if (nat >= ASSOC_MIN_NAT) scored.add(e to nat + ASSOC_FREQ_WEIGHT * Math.log(maxOf(e.weight, 1).toDouble()))
+        }
+        scored.sortByDescending { it.second }
+        for ((e, _) in scored) {
+            if (resultList.size >= 15) break
+            if (resultList.none { it.word == e.word }) resultList.add(DictEntry(e.word, "", e.weight))
         }
 
-        // 4. 結尾單字匹配
-        val suffix1 = word.takeLast(1)
-        val list1 = nextWordMap[suffix1]
-        if (!list1.isNullOrEmpty()) {
-            for (e in rankList(list1)) {
+        // 3. 詞庫裡「以剛上屏詞開頭」的詞的後半段（工作 → 室、人員），當作補完候選放在後面
+        val exactList = nextWordMap[word]
+        if (!exactList.isNullOrEmpty()) {
+            for (e in rankList(exactList)) {
                 if (resultList.none { it.word == e.word }) resultList.add(e)
-            }
-        }
-        val def1 = defaultAssociations[suffix1]
-        if (!def1.isNullOrEmpty()) {
-            for (w in def1) {
-                if (resultList.none { it.word == w }) resultList.add(DictEntry(w, "", 5_000))
             }
         }
 
