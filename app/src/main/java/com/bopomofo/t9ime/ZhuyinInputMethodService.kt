@@ -3194,6 +3194,8 @@ class ZhuyinInputMethodService : InputMethodService() {
                     sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
                 }
             }
+            // 剛上屏就退格刪掉 = 誤點或改主意，撤銷那一次的學習（詞頻與詞對）
+            engine.revokeRecentLearning()
             // 退格後清除接續預測（因為前一個詞可能已被修改）
             lastCommittedWord = null
             clearCandidateBar()

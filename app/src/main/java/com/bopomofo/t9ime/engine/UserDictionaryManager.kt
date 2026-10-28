@@ -123,6 +123,17 @@ class UserDictionaryManager private constructor(private val context: Context?) {
         saveHandler?.postDelayed(saveRunnable, 2500L)
     }
 
+    /** 撤銷一次選用紀錄（使用者上屏後立刻退格刪除，代表那次並非真心選用）；次數歸零就整筆移除。 */
+    fun revokeUsage(word: String) {
+        synchronized(memoryDict) {
+            val entry = memoryDict[word] ?: return
+            entry.count -= 1
+            if (entry.count <= 0) memoryDict.remove(word)
+        }
+        saveHandler?.removeCallbacks(saveRunnable)
+        saveHandler?.postDelayed(saveRunnable, 2500L)
+    }
+
     /**
      * 自動淘汰：保留高頻詞與近期活躍詞，淘汰低頻/一次性孤兒詞
      */

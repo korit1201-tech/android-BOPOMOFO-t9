@@ -427,6 +427,15 @@
                 android:text="清空學習紀錄"
                 android:textColor="#D32F2F"
                 android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/btn_clear_bigram"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="清除學到的詞對（前後詞關聯）"
+                android:textColor="#D32F2F"
+                android:textSize="13sp" />
         </LinearLayout>
 
         <!-- 區塊三：即時效果測試輸入框 -->

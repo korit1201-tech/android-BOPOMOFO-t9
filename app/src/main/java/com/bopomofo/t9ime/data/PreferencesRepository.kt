@@ -26,7 +26,7 @@ object PreferencesRepository {
     const val KEY_FLOATING_DOCKED = "pref_floating_docked"
 
     // 預設值
-    const val DEFAULT_VIBRATION_ENABLED = true
+    const val DEFAULT_VIBRATION_ENABLED = false
     const val DEFAULT_VIBRATION_STRENGTH = 5
     const val DEFAULT_VIBRATION_MS = 5
     const val DEFAULT_KEYBOARD_HEIGHT_DP = 240
