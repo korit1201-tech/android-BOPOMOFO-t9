@@ -874,7 +874,7 @@
             <!-- 頂部控制列：標題、確認按鈕與取消按鈕 -->
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="40dp"
+                android:layout_height="52dp"
                 android:background="@color/kb_action_key_bg"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
@@ -888,36 +888,36 @@
                     android:layout_weight="1"
                     android:text="💡 自建自有詞（點選字元改字）"
                     android:textColor="@color/kb_text_primary"
-                    android:textSize="13sp"
+                    android:textSize="16sp"
                     android:textStyle="bold" />
 
                 <Button
                     android:id="@+id/btn_word_builder_confirm"
                     style="?android:attr/borderlessButtonStyle"
                     android:layout_width="wrap_content"
-                    android:layout_height="34dp"
+                    android:layout_height="44dp"
                     android:background="@drawable/bg_key_action"
                     android:paddingStart="10dp"
                     android:paddingEnd="10dp"
                     android:text="✔ 建立自有詞"
                     android:textColor="@color/kb_accent"
-                    android:textSize="12sp"
+                    android:textSize="15sp"
                     android:textStyle="bold" />
 
                 <Button
                     android:id="@+id/btn_word_builder_cancel"
                     style="?android:attr/borderlessButtonStyle"
-                    android:layout_width="38dp"
+                    android:layout_width="48dp"
                     android:layout_height="match_parent"
                     android:text="✕"
                     android:textColor="@color/kb_text_secondary"
-                    android:textSize="16sp" />
+                    android:textSize="20sp" />
             </LinearLayout>
 
             <!-- 詞條字元卡片列（使用者點選哪一個字，就切換改哪一個字） -->
             <HorizontalScrollView
                 android:layout_width="match_parent"
-                android:layout_height="52dp"
+                android:layout_height="76dp"
                 android:background="@color/kb_candidate_bg"
                 android:scrollbars="none">
 
@@ -934,7 +934,7 @@
             <!-- 聲調切換/篩選欄 (Tone Filter Bar) -->
             <HorizontalScrollView
                 android:layout_width="match_parent"
-                android:layout_height="36dp"
+                android:layout_height="50dp"
                 android:background="@color/kb_action_key_bg"
                 android:scrollbars="none">
 
@@ -951,11 +951,11 @@
                         android:id="@+id/btn_tone_all"
                         style="?android:attr/borderlessButtonStyle"
                         android:layout_width="wrap_content"
-                        android:layout_height="28dp"
-                        android:minWidth="56dp"
+                        android:layout_height="38dp"
+                        android:minWidth="72dp"
                         android:text="全部聲調"
                         android:textColor="@color/kb_accent"
-                        android:textSize="12sp"
+                        android:textSize="15sp"
                         android:textStyle="bold"
                         android:background="@drawable/bg_candidate_more" />
 
@@ -963,60 +963,60 @@
                         android:id="@+id/btn_tone_1"
                         style="?android:attr/borderlessButtonStyle"
                         android:layout_width="wrap_content"
-                        android:layout_height="28dp"
-                        android:minWidth="44dp"
+                        android:layout_height="38dp"
+                        android:minWidth="58dp"
                         android:layout_marginStart="4dp"
                         android:text="一聲 ¯"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="12sp"
+                        android:textSize="15sp"
                         android:background="@drawable/bg_candidate_more" />
 
                     <Button
                         android:id="@+id/btn_tone_2"
                         style="?android:attr/borderlessButtonStyle"
                         android:layout_width="wrap_content"
-                        android:layout_height="28dp"
-                        android:minWidth="44dp"
+                        android:layout_height="38dp"
+                        android:minWidth="58dp"
                         android:layout_marginStart="4dp"
                         android:text="二聲 ˊ"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="12sp"
+                        android:textSize="15sp"
                         android:background="@drawable/bg_candidate_more" />
 
                     <Button
                         android:id="@+id/btn_tone_3"
                         style="?android:attr/borderlessButtonStyle"
                         android:layout_width="wrap_content"
-                        android:layout_height="28dp"
-                        android:minWidth="44dp"
+                        android:layout_height="38dp"
+                        android:minWidth="58dp"
                         android:layout_marginStart="4dp"
                         android:text="三聲 ˇ"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="12sp"
+                        android:textSize="15sp"
                         android:background="@drawable/bg_candidate_more" />
 
                     <Button
                         android:id="@+id/btn_tone_4"
                         style="?android:attr/borderlessButtonStyle"
                         android:layout_width="wrap_content"
-                        android:layout_height="28dp"
-                        android:minWidth="44dp"
+                        android:layout_height="38dp"
+                        android:minWidth="58dp"
                         android:layout_marginStart="4dp"
                         android:text="四聲 ˋ"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="12sp"
+                        android:textSize="15sp"
                         android:background="@drawable/bg_candidate_more" />
 
                     <Button
                         android:id="@+id/btn_tone_5"
                         style="?android:attr/borderlessButtonStyle"
                         android:layout_width="wrap_content"
-                        android:layout_height="28dp"
-                        android:minWidth="44dp"
+                        android:layout_height="38dp"
+                        android:minWidth="58dp"
                         android:layout_marginStart="4dp"
                         android:text="輕聲 ˙"
                         android:textColor="@color/kb_text_primary"
-                        android:textSize="12sp"
+                        android:textSize="15sp"
                         android:background="@drawable/bg_candidate_more" />
                 </LinearLayout>
             </HorizontalScrollView>
@@ -1031,7 +1031,7 @@
                 android:paddingBottom="2dp"
                 android:text="請點選下方同音字替換："
                 android:textColor="@color/kb_text_secondary"
-                android:textSize="12sp" />
+                android:textSize="15sp" />
 
             <!-- 同音字備選滾動列 -->
             <ScrollView
