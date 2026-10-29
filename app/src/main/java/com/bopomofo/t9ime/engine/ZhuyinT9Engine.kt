@@ -257,6 +257,14 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     private fun loadBigramFromFile() {
         try {
             val file = getBigramFile() ?: return
+            // v2.12.0 之前，長句上屏會把引擎自己斷出的每組相鄰詞都記成「使用者詞對」，這種資料會讓候選排序怪異，
+            // 而且重灌時會被 Android 自動備份還原回來。沒有標記檔的詞對檔一律視為舊機制產生，清掉一次。
+            val marker = java.io.File(file.parentFile, "learning_schema_2")
+            if (!marker.exists()) {
+                file.delete()
+                try { marker.writeText("2") } catch (_: Exception) {}
+                return
+            }
             if (!file.exists()) return
             val content = file.readText(Charsets.UTF_8)
             val json = org.json.JSONObject(content)
@@ -1230,10 +1238,21 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         //    單一詞的路徑只會在「精確比對沒找到、但忽略聲調鍵後找得到」時才會出現（例如只在最後一個音節打了聲調），
         //    聲調本來就是軟性偏好（找不到符合聲調的詞時退回全部），這種情況也應該顯示。
         val sentences = ArrayList<Pair<DictEntry, Double>>()
+        var firstPath = true
         for (path in t9ForwardPaths(keys, includeTolerant)[keyLen]) {
             val segments = t9PathSegments(path)
             if (segments.isEmpty()) continue
             val word = segments.joinToString("") { it.first.word }
+            // DP 最佳路徑本身就是詞庫裡的一個詞（例如「綠燈」）：一般候選是依詞頻排序，
+            // 低頻的雙字詞會被「兩個高頻單字拼起來」（風等）壓過，所以改以 DP 成本把它移到前面。
+            if (firstPath && word in present && segments.size == 1) {
+                val at = out.indexOfFirst { it.word == word }
+                if (at > 0) {
+                    val moved = out.removeAt(at); costs.removeAt(at)
+                    out.add(0, moved); costs.add(0, path.cost)
+                }
+            }
+            firstPath = false
             if (word in present) continue
             val zhuyin = segments.joinToString(" ") { it.first.zhuyin }
             val avgLog = segments.map { Math.log(maxOf(it.first.weight, 1).toDouble()) }.average()

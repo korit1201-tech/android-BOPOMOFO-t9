@@ -4195,6 +4195,14 @@ class ZhuyinInputMethodService : InputMethodService() {
         editingCurrentToneFilter = null
         isCustomWordBuilderOpen = true
         layoutCustomWordBuilder?.visibility = View.VISIBLE
+        // 編輯面板內容多：暫時把鍵盤區拉高（直向至少 340dp），關閉面板時由 applyAdaptiveKeyboardHeight 還原
+        if (::layoutMainFrame.isInitialized) {
+            val wantPx = ((if (isPhoneLandscapeMode()) 230 else 340) * resources.displayMetrics.density).toInt()
+            if (layoutMainFrame.layoutParams.height < wantPx) {
+                layoutMainFrame.layoutParams.height = wantPx
+                layoutMainFrame.requestLayout()
+            }
+        }
 
         updateToneButtonsUI()
         renderWordBuilderChars()
@@ -4235,6 +4243,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     private fun closeCustomWordBuilder() {
         isCustomWordBuilderOpen = false
         layoutCustomWordBuilder?.visibility = View.GONE
+        applyAdaptiveKeyboardHeight()
         editingCustomWordEntry = null
         editingCustomWordChars.clear()
         editingCustomWordSyllables.clear()
@@ -4255,7 +4264,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             val charBox = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
-                setPadding((14 * density).toInt(), (4 * density).toInt(), (14 * density).toInt(), (4 * density).toInt())
+                setPadding((18 * density).toInt(), (6 * density).toInt(), (18 * density).toInt(), (6 * density).toInt())
                 val lp = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
@@ -4284,7 +4293,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
             val tvChar = TextView(this).apply {
                 text = if (isSimplified) ChineseConverter.toSimplified(charStr) else charStr
-                textSize = 18f
+                textSize = 28f
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(if (isSelected) ContextCompat.getColor(context, R.color.kb_accent) else ContextCompat.getColor(context, R.color.kb_text_primary))
                 gravity = Gravity.CENTER
@@ -4292,7 +4301,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
             val tvSyl = TextView(this).apply {
                 text = if (syl.isNotEmpty()) syl else "第${i + 1}字"
-                textSize = 10f
+                textSize = 13f
                 setTextColor(ContextCompat.getColor(context, R.color.kb_text_secondary))
                 gravity = Gravity.CENTER
             }
@@ -4328,7 +4337,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         val homophones = engine.getCharsForSyllable(cleanSyllable, editingCurrentToneFilter)
         val density = resources.displayMetrics.density
 
-        val columns = 4
+        val columns = 3
         var rowLayout: LinearLayout? = null
 
         for ((idx, entry) in homophones.withIndex()) {
@@ -4349,10 +4358,10 @@ class ZhuyinInputMethodService : InputMethodService() {
                 val displayWord = if (isSimplified) ChineseConverter.toSimplified(entry.word) else entry.word
                 val zy = if (entry.zhuyin.isNotEmpty()) " ${entry.zhuyin}" else ""
                 text = "$displayWord$zy"
-                textSize = 14f
+                textSize = 19f
                 setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
                 setBackgroundResource(R.drawable.bg_candidate_more)
-                setPadding(0, (6 * density).toInt(), 0, (6 * density).toInt())
+                setPadding(0, (12 * density).toInt(), 0, (12 * density).toInt())
 
                 val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                     marginStart = (2 * density).toInt()
