@@ -96,12 +96,6 @@ class ZhuyinInputMethodService : InputMethodService() {
         REPEAT_DELETE   // 連續長按刪除
     }
 
-    enum class OneHandedMode(val id: String, val title: String) {
-        FULL("full", "全寬"),
-        LEFT("left", "單手·左"),
-        RIGHT("right", "單手·右")
-    }
-
     private var currentMode = KeyboardMode.ZHUYIN
     private var lastChineseMode = KeyboardMode.ZHUYIN
     private var isSimplified = false
@@ -126,7 +120,6 @@ class ZhuyinInputMethodService : InputMethodService() {
     /** 展開候選前的主鍵盤高度（px，Int.MIN_VALUE 表示沒有展開中）；收合時還原。 */
     private var gridSavedMainHeightPx = Int.MIN_VALUE
     private var currentCandidateList: List<DictEntry> = emptyList()
-    private var currentOneHandedMode = OneHandedMode.FULL
 
     private lateinit var candidateContainer: LinearLayout
     private lateinit var layoutSymbols: LinearLayout
@@ -653,7 +646,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 ThemeManager.applyTheme(root, currentTheme)
             }
             applyAdaptiveKeyboardHeight()
-            applyOneHandedMode()
+            applyFloatingLayout()
             checkAndApplyFullKeyboardLayout()
             updateKeyboardModeUI()
             updateHardwareKeyboardState(hasPhysical)
@@ -682,7 +675,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             if (::layoutQwerty.isInitialized) {
                 setupQwertyLayout(root)
             }
-            applyOneHandedMode()
+            applyFloatingLayout()
             updateKeyboardModeUI()
             updateHardwareKeyboardState(hasPhysical)
             if (isHardwareKeyboardConnected && currentCandidateList.isNotEmpty()) {
@@ -1021,10 +1014,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                     // 允許全螢幕任意移動
                     val targetWidthPx = (floatingWidthDp * density).toInt()
                     val remainingPx = (screenWidthPx - targetWidthPx).coerceAtLeast(0)
-                    val baseLeft = when (currentOneHandedMode) {
-                        OneHandedMode.LEFT -> 0f
-                        OneHandedMode.FULL, OneHandedMode.RIGHT -> remainingPx.toFloat()
-                    }
+                    val baseLeft = remainingPx.toFloat()
                     val minTransX = -baseLeft
                     val maxTransX = (screenWidthPx - targetWidthPx - baseLeft).toFloat()
 
@@ -1088,10 +1078,8 @@ class ZhuyinInputMethodService : InputMethodService() {
                         floatingWidthDp = newWidthDp
                         val targetWidthPx = (floatingWidthDp * density).toInt()
                         val remainingPx = (screenWidthPx - targetWidthPx).coerceAtLeast(0)
-                        val (leftPad, rightPad) = when (currentOneHandedMode) {
-                            OneHandedMode.LEFT -> Pair(0, remainingPx)
-                            OneHandedMode.FULL, OneHandedMode.RIGHT -> Pair(remainingPx, 0)
-                        }
+                        val leftPad = remainingPx
+                        val rightPad = 0
                         root.setPadding(leftPad, 2, rightPad, 2)
                     }
 
@@ -1138,10 +1126,8 @@ class ZhuyinInputMethodService : InputMethodService() {
                         floatingWidthDp = newWidthDp
                         val targetWidthPx = (floatingWidthDp * density).toInt()
                         val remainingPx = (screenWidthPx - targetWidthPx).coerceAtLeast(0)
-                        val (leftPad, rightPad) = when (currentOneHandedMode) {
-                            OneHandedMode.LEFT -> Pair(0, remainingPx)
-                            OneHandedMode.FULL, OneHandedMode.RIGHT -> Pair(remainingPx, 0)
-                        }
+                        val leftPad = remainingPx
+                        val rightPad = 0
                         root.setPadding(leftPad, 2, rightPad, 2)
                     }
 
@@ -1167,13 +1153,13 @@ class ZhuyinInputMethodService : InputMethodService() {
         btnFloatingDock.setOnClickListener {
             triggerHapticFeedback(HapticType.MODE_SWITCH)
             PreferencesRepository.setFloatingDocked(this, true)
-            applyOneHandedMode()
+            applyFloatingLayout()
         }
 
         layoutFloatingDockedHandle.setOnClickListener {
             triggerHapticFeedback(HapticType.MODE_SWITCH)
             PreferencesRepository.setFloatingDocked(this, false)
-            applyOneHandedMode()
+            applyFloatingLayout()
         }
 
         // 候選字展開格柵 (Grid Expansion)
@@ -1231,7 +1217,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             setupBottomActions(root)
             val setupElapsed = android.os.SystemClock.elapsedRealtime() - tSetupStart
 
-            applyOneHandedMode()
+            applyFloatingLayout()
 
             val tThemeStart = android.os.SystemClock.elapsedRealtime()
             ThemeManager.applyTheme(root, ThemeManager.getCurrentTheme(this))
@@ -2020,11 +2006,6 @@ class ZhuyinInputMethodService : InputMethodService() {
             override fun onPerformContextMenuAction(actionId: Int) {
                 currentInputConnection?.performContextMenuAction(actionId)
             }
-            override fun onToggleOneHandedMode(): String {
-                toggleOneHandedMode()
-                return currentOneHandedMode.title
-            }
-            override fun getCurrentOneHandedTitle(): String = currentOneHandedMode.title
             override fun onTriggerHaptic(type: HapticType) = triggerHapticFeedback(type)
             override fun onShowPanel() {
                 layout12Key.visibility = View.GONE
@@ -2869,7 +2850,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
         updateSymbolsDisplay()
         updateBottomBarOrder()
-        applyOneHandedMode()
+        applyFloatingLayout()
     }
 
     private fun updateBottomBarOrder() {
@@ -3610,10 +3591,8 @@ class ZhuyinInputMethodService : InputMethodService() {
         }
     }
 
-    fun applyOneHandedMode() {
+    fun applyFloatingLayout() {
         val root = rootView ?: return
-        val modeId = PreferencesRepository.getOneHandedMode(this)
-        currentOneHandedMode = OneHandedMode.values().find { it.id == modeId } ?: OneHandedMode.FULL
 
         val density = resources.displayMetrics.density
         val isLandscape = isPhoneLandscapeMode()
@@ -3660,10 +3639,8 @@ class ZhuyinInputMethodService : InputMethodService() {
             val targetWidthPx = (floatingWidthDp * density).toInt()
             val remainingPx = (screenWidthPx - targetWidthPx).coerceAtLeast(0)
 
-            val (leftPad, rightPad) = when (currentOneHandedMode) {
-                OneHandedMode.LEFT -> Pair(0, remainingPx)
-                OneHandedMode.FULL, OneHandedMode.RIGHT -> Pair(remainingPx, 0)
-            }
+            val leftPad = remainingPx
+            val rightPad = 0
 
             root.setPadding(leftPad, 2, rightPad, 2)
             // 將多餘空間設為完全透明，僅小鍵盤本體帶有底色與圓角
@@ -3673,10 +3650,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             val rawOffsetX = PreferencesRepository.getFloatingOffsetXDp(this) * density
             val rawOffsetY = PreferencesRepository.getFloatingOffsetYDp(this) * density
 
-            val baseLeft = when (currentOneHandedMode) {
-                OneHandedMode.LEFT -> 0f
-                OneHandedMode.FULL, OneHandedMode.RIGHT -> remainingPx.toFloat()
-            }
+            val baseLeft = remainingPx.toFloat()
             val minTransX = -baseLeft
             val maxTransX = (screenWidthPx - targetWidthPx - baseLeft).toFloat()
 
@@ -3789,30 +3763,7 @@ class ZhuyinInputMethodService : InputMethodService() {
             layoutBottomBar.setBackgroundColor(Color.TRANSPARENT)
         }
 
-        val sidePaddingPx = (75 * density).toInt()
-
-        when (currentOneHandedMode) {
-            OneHandedMode.FULL -> {
-                root.setPadding(4, 4, 4, 4)
-            }
-            OneHandedMode.LEFT -> {
-                root.setPadding(4, 4, sidePaddingPx, 4)
-            }
-            OneHandedMode.RIGHT -> {
-                root.setPadding(sidePaddingPx, 4, 4, 4)
-            }
-        }
-    }
-
-    fun toggleOneHandedMode() {
-        triggerHapticFeedback(HapticType.MODE_SWITCH)
-        currentOneHandedMode = when (currentOneHandedMode) {
-            OneHandedMode.FULL -> OneHandedMode.RIGHT
-            OneHandedMode.RIGHT -> OneHandedMode.LEFT
-            OneHandedMode.LEFT -> OneHandedMode.FULL
-        }
-        PreferencesRepository.setOneHandedMode(this, currentOneHandedMode.id)
-        applyOneHandedMode()
+        root.setPadding(4, 4, 4, 4)
     }
 
     /**
