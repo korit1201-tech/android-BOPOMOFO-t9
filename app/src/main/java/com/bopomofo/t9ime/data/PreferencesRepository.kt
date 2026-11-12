@@ -16,7 +16,6 @@ object PreferencesRepository {
     const val KEY_VIBRATION_MS = "pref_vibration_ms"
     const val KEY_KEYBOARD_HEIGHT_DP = "pref_keyboard_height_dp"
     const val KEY_KEYBOARD_HEIGHT_LANDSCAPE_DP = "pref_keyboard_height_landscape_dp"
-    const val KEY_ONE_HANDED_MODE = "pref_one_handed_mode"
     const val KEY_THEME = "pref_theme"
     const val KEY_TOLERANT_INPUT_ENABLED = "pref_tolerant_input_enabled"
     const val KEY_FLOATING_OFFSET_X_DP = "pref_floating_offset_x_dp"
@@ -31,7 +30,6 @@ object PreferencesRepository {
     const val DEFAULT_VIBRATION_MS = 5
     const val DEFAULT_KEYBOARD_HEIGHT_DP = 240
     const val DEFAULT_KEYBOARD_HEIGHT_LANDSCAPE_DP = 115
-    const val DEFAULT_ONE_HANDED_MODE = "full"
     const val DEFAULT_THEME = "system"
     const val DEFAULT_TOLERANT_INPUT_ENABLED = true
     const val DEFAULT_FLOATING_OFFSET_X_DP = 0
@@ -115,20 +113,6 @@ object PreferencesRepository {
     fun setKeyboardHeightLandscapeDp(context: Context, dp: Int) {
         try {
             getPrefs(context)?.edit()?.putInt(KEY_KEYBOARD_HEIGHT_LANDSCAPE_DP, dp)?.apply()
-        } catch (_: Exception) {}
-    }
-
-    fun getOneHandedMode(context: Context): String {
-        return try {
-            getPrefs(context)?.getString(KEY_ONE_HANDED_MODE, DEFAULT_ONE_HANDED_MODE) ?: DEFAULT_ONE_HANDED_MODE
-        } catch (_: Exception) {
-            DEFAULT_ONE_HANDED_MODE
-        }
-    }
-
-    fun setOneHandedMode(context: Context, mode: String) {
-        try {
-            getPrefs(context)?.edit()?.putString(KEY_ONE_HANDED_MODE, mode)?.apply()
         } catch (_: Exception) {}
     }
 

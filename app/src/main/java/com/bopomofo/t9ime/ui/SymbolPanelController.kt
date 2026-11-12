@@ -35,8 +35,6 @@ class SymbolPanelController(
         fun onPerformEnter()
         fun onSendDpadKey(keyCode: Int)
         fun onPerformContextMenuAction(actionId: Int)
-        fun onToggleOneHandedMode(): String
-        fun getCurrentOneHandedTitle(): String
         fun onTriggerHaptic(type: HapticType = HapticType.KEY_PRESS)
         fun onShowPanel()
         fun onHidePanel()
@@ -511,22 +509,25 @@ class SymbolPanelController(
                 }
             }
         }
-        val btnOneHanded = Button(context).apply {
-            text = callback.getCurrentOneHandedTitle()
+        fun pageButton(label: String, keyCode: Int) = Button(context).apply {
+            text = label
             textSize = 12f
-            setTextColor(ContextCompat.getColor(context, R.color.kb_accent))
+            setTextColor(ContextCompat.getColor(context, R.color.kb_text_primary))
             setBackgroundResource(R.drawable.bg_key_action)
-            val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { setMargins(2, 2, 2, 2) }
-            layoutParams = p
-            setOnClickListener {
-                val newTitle = callback.onToggleOneHandedMode()
-                text = newTitle
-            }
+            setPadding(0, 0, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply { setMargins(2, 2, 2, 2) }
+            setOnClickListener { callback.onTriggerHaptic(); callback.onSendDpadKey(keyCode) }
+        }
+        val rowPage = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            addView(pageButton("PgUp", KeyEvent.KEYCODE_PAGE_UP))
+            addView(pageButton("PgDn", KeyEvent.KEYCODE_PAGE_DOWN))
         }
         rightActions.addView(btnEnd)
         rightActions.addView(btnCut)
         rightActions.addView(btnPaste)
-        rightActions.addView(btnOneHanded)
+        rightActions.addView(rowPage)
 
         root.addView(leftActions)
         root.addView(centerDpad)
