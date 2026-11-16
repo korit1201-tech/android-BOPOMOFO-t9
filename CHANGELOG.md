@@ -2,6 +2,14 @@
 
 本專案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，並採用 [語意化版本 (Semantic Versioning)](https://semver.org/lang/zh-TW/)。
 
+## [v2.13.1] - 2026-11-16
+
+### 🐛 修正候選字展開面板不從頭開始 (Build 144)
+
+#### 🐛 錯誤修正
+
+- **候選字展開面板每次都從最上面開始**：原本面板會記住上次捲動的位置，重新展開時常停在中間；現在每次展開都回到第一個候選字。
+
 ## [v2.13.0] - 2026-11-12
 
 ### 🧭 移除單手模式，符號面板改放 PgUp／PgDn (Build 143)
