@@ -114,6 +114,7 @@ class ZhuyinInputMethodService : InputMethodService() {
     private var btnCandidateExpand: Button? = null
     private var layoutCandidateGrid: LinearLayout? = null
     private var btnCandidateGridClose: Button? = null
+    private var scrollCandidateGrid: ScrollView? = null
     private var containerCandidateGrid: LinearLayout? = null
     private var tvCandidateGridTitle: TextView? = null
     private var isCandidateGridOpen = false
@@ -1166,6 +1167,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         btnCandidateExpand = root.findViewById(R.id.btn_candidate_expand)
         layoutCandidateGrid = root.findViewById(R.id.layout_candidate_grid)
         btnCandidateGridClose = root.findViewById(R.id.btn_candidate_grid_close)
+        scrollCandidateGrid = root.findViewById(R.id.scroll_candidate_grid)
         containerCandidateGrid = root.findViewById(R.id.container_candidate_grid)
         tvCandidateGridTitle = root.findViewById(R.id.tv_candidate_grid_title)
 
@@ -3476,6 +3478,9 @@ class ZhuyinInputMethodService : InputMethodService() {
         btnCandidateExpand?.text = "▲"
         enlargeCandidateGridArea()
         populateCandidateGrid()
+        // 內容重建不會重設捲動位置，不歸零的話會停在上次翻到的地方
+        scrollCandidateGrid?.scrollTo(0, 0)
+        scrollCandidateGrid?.post { scrollCandidateGrid?.scrollTo(0, 0) }
     }
 
     /** 展開候選時收起底欄（123／逗號／中文空白／句號／全鍵），把它的高度再加上約 35% 都給候選面板；僅手機直向。 */
