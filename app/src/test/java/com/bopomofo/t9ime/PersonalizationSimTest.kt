@@ -67,7 +67,7 @@ class PersonalizationSimTest {
         um.clock = { now }
         e.learnWord("狠", "ㄏㄣˇ")
         val fresh = um.boostNat("狠", "ㄏㄣˇ")
-        now += (UserDictionaryManager.HALF_LIFE_DAYS * 86_400_000L).toLong()
+        now += (UserDictionaryManager.HALF_LIFE_POS_DAYS * 86_400_000L).toLong()
         val aged = um.boostNat("狠", "ㄏㄣˇ")
         assertEquals(ln(2.0), fresh, 1e-6)
         assertEquals(ln(1.5), aged, 1e-6)

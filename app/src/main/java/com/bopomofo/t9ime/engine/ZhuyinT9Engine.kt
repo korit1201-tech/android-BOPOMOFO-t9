@@ -154,6 +154,9 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         /** 詞庫沒有的個人詞（自建詞等）的基礎權重，約等於「好、要」這類常用字詞。 */
         const val USER_NEW_WORD_WEIGHT = 50_000
 
+        /** 刪掉後多久內以同讀音重打並選了別的詞，才算「前一個選錯了」（毫秒） */
+        private const val RETYPE_WINDOW_MS = 30_000L
+
         /** 這一格聲調是否要送出聲調鍵(11)：一聲沒有符號，不送。 */
         private fun toneSendsKey(index: Int) = index in 1 until TONE_SYMBOLS.size && TONE_SYMBOLS[index] != FIRST_TONE
 
@@ -170,6 +173,14 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         internal const val T9_SLIP_PENALTY = 5.0
         /** 使用者學到的詞對上限與檢查頻率（每學幾次檢查一次） */
         internal const val BIGRAM_LEARN_CAP = 50_000
+        /** 上屏後多久內刪掉，會回滾那次學習（毫秒） */
+        const val REVOKE_WINDOW_MS = 5 * 60_000L
+        /** 單一詞對的學習權重上限（ln(1+1000/80)≈2.6 nat）：重複輸入同一組詞也不會無限加深 */
+        internal const val BIGRAM_WEIGHT_CAP = 1000
+        /** 學到的詞對半衰期（天） */
+        internal const val BIGRAM_HALF_LIFE_DAYS = 60.0
+        /** 兩次上屏間隔超過這個時間，就不當成同一句話的上下文（毫秒） */
+        const val CONTEXT_MAX_GAP_MS = 45_000L
         private const val BIGRAM_TRIM_CHECK_EVERY = 200
         /** 糾錯整句要比最佳原讀法低這麼多成本，才排到第一（標準檔） */
         private const val T9_SLIP_FIRST_MARGIN = 2.0
@@ -222,6 +233,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             initDefaultBigrams()
         }
         lastLearnedPair = null
+        learnGroups.clear()
     }
 
     private fun initDefaultBigrams() {
@@ -291,6 +303,13 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             val content = file.readText(Charsets.UTF_8)
             val json = org.json.JSONObject(content)
             val keys = json.keys()
+            // 時間衰退：依距上次衰退的天數把學到的詞對權重打折（內建的預設詞對不低於預設值）
+            val decayMarker = java.io.File(file.parentFile, "user_bigram.decay_at")
+            val nowMs = System.currentTimeMillis()
+            val lastDecay = try { decayMarker.readText().trim().toLong() } catch (_: Exception) { nowMs }
+            val days = (nowMs - lastDecay) / 86_400_000.0
+            val factor = if (days >= 1.0) Math.pow(0.5, days / BIGRAM_HALF_LIFE_DAYS) else 1.0
+            if (days >= 1.0 || !decayMarker.exists()) { try { decayMarker.writeText(nowMs.toString()) } catch (_: Exception) {} }
             synchronized(bigramMap) {
                 while (keys.hasNext()) {
                     val prev = keys.next()
@@ -299,7 +318,8 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
                     val map = bigramMap.getOrPut(prev) { HashMap() }
                     while (nextKeys.hasNext()) {
                         val next = nextKeys.next()
-                        map[next] = nextObj.getInt(next)
+                        val v = minOf((nextObj.getInt(next) * factor).toInt(), BIGRAM_WEIGHT_CAP)
+                        if (v >= 1) map[next] = maxOf(map[next] ?: 0, v)
                     }
                 }
             }
@@ -329,29 +349,78 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
 
     private fun addBigramPair(prev: String, next: String, weight: Int) {
         val nextMap = bigramMap.getOrPut(prev) { HashMap() }
-        nextMap[next] = (nextMap[next] ?: 0) + weight
+        nextMap[next] = minOf((nextMap[next] ?: 0) + weight, BIGRAM_WEIGHT_CAP)
     }
 
-    // 最近一次「使用者選用」的學習紀錄，供上屏後立刻退格時撤銷（誤點不該留下加權）
-    private var lastLearnedWord: String? = null
-    private var lastLearnedPair: Pair<String, String>? = null
-    private var lastLearnedPairAmount = 500
-    private var lastLearnedAt = 0L
+    // ───────── 學習事件堆疊：上屏後被刪掉就精準撤銷（取代舊的「6 秒單一格」） ─────────
+    //
+    // 每次上屏（markCommit）開一個群組，這次上屏產生的所有學習（正向、負向、詞對）都記在群組裡；
+    // 使用者刪掉剛上屏的字，就把整個群組回滾。群組超過 [REVOKE_WINDOW_MS] 就不再回滾（已經是確定的文字）。
+    private sealed class LearnItem {
+        class Pos(val word: String, val zhuyin: String, val amount: Double) : LearnItem()
+        class Neg(val word: String, val zhuyin: String, val amount: Double) : LearnItem()
+        class Pair(val prev: String, val next: String, val amount: Int) : LearnItem()
+    }
 
-    /** 若剛學的詞／詞對在 [maxAgeMs] 內，撤銷這次學習；回傳是否有撤銷。 */
-    fun revokeRecentLearning(maxAgeMs: Long = 6_000L): Boolean {
-        if (lastLearnedWord == null && lastLearnedPair == null) return false
-        val fresh = android.os.SystemClock.uptimeMillis() - lastLearnedAt <= maxAgeMs
-        val word = lastLearnedWord
-        val pair = lastLearnedPair
+    private class LearnGroup(val textLen: Int, val at: Long, val items: MutableList<LearnItem> = ArrayList())
+
+    private val learnGroups = ArrayDeque<LearnGroup>()
+    private var lastLearnedWord: String? = null
+    private var lastLearnedPair: kotlin.Pair<String, String>? = null
+
+    /** 剛被撤銷的那次上屏的字數，呼叫端據此忽略「刪掉同一個詞的其餘字」的退格 */
+    @Volatile
+    var lastRevokedTextLength = 0
+        private set
+
+    /** 剛被刪掉的詞：隨後以同一讀音重打並選了別的詞，代表前一個選錯了（負向訊號） */
+    private var pendingRetype: Triple<String, String, Long>? = null
+
+    private fun nowUptime(): Long = android.os.SystemClock.uptimeMillis()
+
+    /** 真機除錯日誌：每次學習／不學／撤銷都記一行，方便查「為什麼這個詞被排到後面」（單元測試環境靜默略過） */
+    private fun learnLog(msg: String) {
+        try { android.util.Log.d("BopomofoIME_Learn", msg) } catch (_: Throwable) {}
+    }
+
+    /** 開一個新的上屏群組。[textLen] 是這次上屏的字數。 */
+    fun markCommit(textLen: Int) {
+        learnGroups.addLast(LearnGroup(textLen, nowUptime()))
+        while (learnGroups.size > 8) learnGroups.removeFirst()
+    }
+
+    /** 直接輸入標點、符號、換行等：之後的退格刪的是它們，不是前面的詞，不能再回滾學習。 */
+    fun learnBarrier() {
+        learnGroups.clear()
+        pendingRetype = null
+    }
+
+    private fun currentGroup(): LearnGroup {
+        return learnGroups.lastOrNull() ?: LearnGroup(0, nowUptime()).also { learnGroups.addLast(it) }
+    }
+
+    /** 若剛上屏的群組還在 [maxAgeMs] 內，撤銷它造成的所有學習；回傳是否有撤銷到一個群組。 */
+    fun revokeRecentLearning(maxAgeMs: Long = REVOKE_WINDOW_MS): Boolean {
+        val g = learnGroups.removeLastOrNull() ?: return false
+        if (nowUptime() - g.at > maxAgeMs) {
+            learnGroups.clear()
+            return false
+        }
         lastLearnedWord = null
         lastLearnedPair = null
-        if (!fresh) return false
-        if (word != null) userDict.revokeUsage(word)
-        if (pair != null) synchronized(bigramMap) {
-            val m = bigramMap[pair.first]
-            val left = (m?.get(pair.second) ?: 0) - lastLearnedPairAmount
-            if (left > 0) m!![pair.second] = left else m?.remove(pair.second)
+        lastRevokedTextLength = g.textLen
+        learnLog("REVOKE 上屏後刪除，回滾 ${g.items.size} 項（字數 ${g.textLen}）")
+        for (item in g.items.asReversed()) when (item) {
+            is LearnItem.Pos -> userDict.revoke(item.word, item.zhuyin, item.amount, 0.0, 1)
+            is LearnItem.Neg -> userDict.revoke(item.word, item.zhuyin, 0.0, item.amount, 0)
+            is LearnItem.Pair -> synchronized(bigramMap) {
+                val m = bigramMap[item.prev]
+                val left = (m?.get(item.next) ?: 0) - item.amount
+                if (left > 0) m!![item.next] = left else m?.remove(item.next)
+            }
+        }
+        g.items.filterIsInstance<LearnItem.Pos>().firstOrNull()?.let {
+            if (it.zhuyin.isNotBlank()) pendingRetype = Triple(it.word, it.zhuyin, nowUptime())
         }
         mainHandler?.removeCallbacks(bigramSaveRunnable)
         mainHandler?.postDelayed(bigramSaveRunnable, 2500L)
@@ -364,8 +433,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             addBigramPair(prevWord, nextWord, amount)
         }
         lastLearnedPair = prevWord to nextWord
-        lastLearnedPairAmount = amount
-        lastLearnedAt = android.os.SystemClock.uptimeMillis()
+        currentGroup().items.add(LearnItem.Pair(prevWord, nextWord, amount))
         if (++learnsSinceTrim >= BIGRAM_TRIM_CHECK_EVERY) {
             learnsSinceTrim = 0
             trimLearnedBigrams()
@@ -497,6 +565,8 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         targetCharZhuyinMap: MutableMap<Char, MutableList<String>>,
         targetFullZhuyinWordMap: MutableMap<String, MutableList<DictEntry>>? = null
     ) {
+        // 舊版學習資料依「詞庫有沒有這個詞」整體降級（只在升級後第一次載入時做一次）
+        userDict.migrateLegacy { w, zy -> dictionaryHas(targetFullZhuyinWordMap, w, zy) }
         val userEntries = userDict.getAllEntries()
         for (u in userEntries) {
             if (u.zhuyin.isEmpty()) continue
@@ -1705,23 +1775,9 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         return charZhuyinMap[ch]?.firstOrNull() ?: ""
     }
 
-    /**
-     * 學習「使用者明確選用」的詞（呼叫端負責判斷：點第一名／空白／Enter 這類接受預設不算，見 [acceptWord]）。
-     * 1. 寫入個人詞庫（次數 +1）；之後排序以倍率加分（UserDictionaryManager.applyBoost），不改詞庫權重。
-     * 2. 只有「詞庫本來沒有」的詞（自建詞等）才以一般權重補進 trie / 索引。
-     * 3. 讀音不明（呼叫端沒給、單字又有多種讀音）不學：避免多音字用錯讀音污染，或把預測詞誤學。
-     */
-    fun learnWord(word: String, zhuyin: String = "") {
-        if (word.isBlank() || word.startsWith("【")) return
-        val zy = if (zhuyin.isNotEmpty()) zhuyin else {
-            val ch = word.singleOrNull() ?: return
-            charZhuyinMap[ch]?.singleOrNull() ?: return
-        }
-        userDict.recordUsage(word, zy)
-        lastLearnedWord = word
-        lastLearnedAt = android.os.SystemClock.uptimeMillis()
-
-        val cleanZy = zy.filter { it !in "ˇˋˊ˙ " }
+    /** 詞庫沒有這個（詞, 讀音）時，補進 trie 與各索引（自建詞等）；詞庫本來就有的不動。 */
+    private fun ensureWordIndexed(word: String, zy: String) {
+        val cleanZy = zy.filter { it !in "ˇˋˊ˙ˉ " }
         val inDict = fullZhuyinWordMap[cleanZy]?.any { it.word == word } == true
         if (inDict) return
         val entry = DictEntry(word, zy, USER_NEW_WORD_WEIGHT)
@@ -1742,13 +1798,75 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         }
     }
 
+    /** 詞庫是否本來就有這個（詞, 讀音）；舊資料遷移用 */
+    private fun dictionaryHas(map: Map<String, MutableList<DictEntry>>?, word: String, zy: String): Boolean {
+        if (map == null) return true
+        val clean = zy.filter { it !in "ˇˋˊ˙ˉ " }
+        return map[clean]?.any { it.word == word } == true
+    }
+
+    /**
+     * 學習「使用者明確選用」的詞（呼叫端負責判斷：點第一名／空白／Enter 這類接受預設不算，見 [acceptWord]）。
+     * 1. 寫入個人詞庫（正向分數 +1）；之後排序以倍率加分（UserDictionaryManager.applyBoost），不改詞庫權重。
+     * 2. 只有「詞庫本來沒有」的詞（自建詞等）才以一般權重補進 trie / 索引。
+     * 3. 讀音不明（呼叫端沒給、單字又有多種讀音）不學：避免多音字用錯讀音污染，或把預測詞誤學。
+     * 4. 剛刪掉的詞若與這次同讀音但不同詞，視為前一個選錯了，給它負向訊號。
+     */
+    fun learnWord(word: String, zhuyin: String = "") {
+        if (word.isBlank() || word.startsWith("【")) return
+        val zy = if (zhuyin.isNotEmpty()) zhuyin else {
+            val ch = word.singleOrNull() ?: return
+            charZhuyinMap[ch]?.singleOrNull() ?: return
+        }
+        pendingRetype?.let { (oldWord, oldZy, at) ->
+            pendingRetype = null
+            // 連聲調都相同才算「同一讀音」：改了聲調重打是想打別的字，不是前一個選錯
+            val sameReading = { z: String -> z.filter { it != ' ' } }
+            if (nowUptime() - at <= RETYPE_WINDOW_MS && oldWord != word && sameReading(oldZy) == sameReading(zy)) {
+                userDict.recordNegative(oldWord, oldZy, 1.0)
+                currentGroup().items.add(LearnItem.Neg(oldWord, oldZy, 1.0))
+            }
+        }
+        val added = userDict.recordUsage(word, zy, 1.0)
+        if (added > 0.0) currentGroup().items.add(LearnItem.Pos(word, zy, added))
+        learnLog("PICK $word $zy +$added → u=${"%.2f".format(userDict.boostNat(word, zy))}")
+        lastLearnedWord = word
+        ensureWordIndexed(word, zy)
+    }
+
+    /**
+     * 使用者在候選中偏離預設選了 [word]：學它，並對「被跳過的、與它同長度的前幾名」加負向訊號
+     * （第一個 1.0，其餘 0.3，最多 4 個）。長度不同的候選是預測詞，不算被跳過。
+     */
+    fun learnPick(word: String, zhuyin: String, skipped: List<DictEntry>) {
+        learnWord(word, zhuyin)
+        var n = 0
+        for (c in skipped) {
+            if (n >= 4) break
+            if (c.word == word || c.word.length != word.length || c.zhuyin.isBlank()) continue
+            val amt = if (n == 0) 1.0 else 0.3
+            userDict.recordNegative(c.word, c.zhuyin, amt)
+            currentGroup().items.add(LearnItem.Neg(c.word, c.zhuyin, amt))
+            learnLog("SKIP ${c.word} ${c.zhuyin} −$amt → u=${"%.2f".format(userDict.boostNat(c.word, c.zhuyin))}")
+            n++
+        }
+    }
+
     /**
      * 使用者「接受預設」（點第一名、空白、Enter）：這不是偏好表態，只是同意引擎自己的排序，
-     * 所以不新建條目、不加次數（否則詞庫排序的誤差會被自我強化）；已學過的詞只更新最後使用時間，避免衰退成來回跳。
+     * 所以不新建條目、不加次數（否則詞庫排序的誤差會被自我強化）；已學過的詞只小幅維持，負向減半。
      */
-    fun acceptWord(word: String) {
+    fun acceptWord(word: String, zhuyin: String? = null) {
         if (word.isBlank() || word.startsWith("【")) return
-        userDict.touch(word)
+        userDict.acceptUsage(word, zhuyin)
+        learnLog("ACCEPT $word（接受預設，不加次數）")
+    }
+
+    /** 使用者自建詞：一次到位（正向 4，不隨時間消失）。 */
+    fun learnCustomWord(word: String, zhuyin: String) {
+        if (word.isBlank() || zhuyin.isBlank()) return
+        userDict.markCustom(word, zhuyin)
+        ensureWordIndexed(word, zhuyin)
     }
 
     private fun toneOf(s: String): Char? = s.find { it in "ˇˋˊ˙" }

@@ -90,6 +90,20 @@ class MainActivity : AppCompatActivity() {
             showUserDictDialog()
         }
 
+        // 重設學習：清掉學到的加分與負向，自建詞保留
+        findViewById<Button>(R.id.btn_reset_learning)?.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("確認重設學習")
+                .setMessage("這會清除輸入法學到的選字偏好（含被跳過的詞的降權），候選排序回到內建的樣子；您自建的詞會保留。確定要重設嗎？")
+                .setPositiveButton("確定重設") { _, _ ->
+                    val n = userDictManager.resetLearningKeepCustom()
+                    updateDictStats()
+                    Toast.makeText(this, "已重設學習（清除 $n 筆，自建詞保留）", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        }
+
         // 清空學習紀錄
         findViewById<Button>(R.id.btn_clear_dict)?.setOnClickListener {
             AlertDialog.Builder(this)
@@ -411,7 +425,7 @@ class MainActivity : AppCompatActivity() {
 
         val displayItems = entries.map { entry ->
             val zhuyinPart = if (entry.zhuyin.isNotEmpty()) " (${entry.zhuyin})" else ""
-            "${entry.word}$zhuyinPart  —  次數: ${entry.count}"
+            "${entry.word}$zhuyinPart  —  ${userDictManager.describe(entry)}"
         }.toTypedArray()
 
         AlertDialog.Builder(this)
