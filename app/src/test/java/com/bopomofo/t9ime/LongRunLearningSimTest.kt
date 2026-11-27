@@ -63,17 +63,17 @@ class LongRunLearningSimTest {
                         val cands = e.searchFullZhuyin(zy, prev)
                         val rank = cands.indexOfFirst { it.word == target }
                         e.markCommit(target.length)
-                        if (rank == 0) e.acceptWord(target, zy)
+                        if (rank == 0) e.acceptWord(target, zy, cands.drop(1).filter { it.word.length == target.length }.take(4))
                         else if (rank > 0) {
                             if (rnd.nextDouble() < 0.03 && cands.size > 2) {
                                 val wrong = cands[(rnd.nextInt(minOf(5, cands.size)))]
                                 if (wrong.word != target) {
-                                    e.learnPick(wrong.word, wrong.zhuyin, cands.takeWhile { it.word != wrong.word })
+                                    e.learnPick(wrong.word, wrong.zhuyin, cands.takeWhile { it.word != wrong.word }, wrong.weight)
                                     e.revokeRecentLearning()           // 發現點錯，刪掉
                                     e.markCommit(target.length)
                                 }
                             }
-                            e.learnPick(target, zy, cands.subList(0, rank))
+                            e.learnPick(target, zy, cands.subList(0, rank), cands[rank].weight)
                         }
                     }
                     prev = target
@@ -94,8 +94,8 @@ class LongRunLearningSimTest {
     fun minorityHomophoneNeverOvertakesTheMajority() {
         val hen = com.bopomofo.t9ime.engine.DictEntry("很", "ㄏㄣˇ", 27890)
         repeat(10) {                       // 每 10 次輸入：9 次接受「很」、1 次改選「狠」
-            repeat(9) { e.markCommit(1); e.acceptWord("很", "ㄏㄣˇ") }
-            e.markCommit(1); e.learnPick("狠", "ㄏㄣˇ", listOf(hen))
+            repeat(9) { e.markCommit(1); e.acceptWord("很", "ㄏㄣˇ", listOf(com.bopomofo.t9ime.engine.DictEntry("狠", "ㄏㄣˇ", 1005))) }
+            e.markCommit(1); e.learnPick("狠", "ㄏㄣˇ", listOf(hen), 1005)
         }
         assertTrue("9:1 混用，多數派必須維持第一", e.searchFullZhuyin("ㄏㄣˇ").first().word == "很")
     }

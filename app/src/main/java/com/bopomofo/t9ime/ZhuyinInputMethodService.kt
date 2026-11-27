@@ -4536,8 +4536,14 @@ class ZhuyinInputMethodService : InputMethodService() {
             entry.word
         }
         val skipped = skippedCandidates(entry)
-        commitProcessedWordWithUserDict(wordToCommit, entry.zhuyin, explicitPick = skipped != null, skipped = skipped ?: emptyList())
+        commitProcessedWordWithUserDict(
+            wordToCommit, entry.zhuyin, explicitPick = skipped != null, skipped = skipped ?: emptyList(), weight = entry.weight
+        )
     }
+
+    /** 接受預設時，排在後面的同長度候選（前 4 個），供引擎把它們累積的正向分數打折 */
+    private fun acceptCompetitors(word: String): List<DictEntry> =
+        engine.getCandidates().filter { it.word != word && it.word.length == word.length }.take(4)
 
     /**
      * 選的是第一名＝接受預設，回傳 null；選了第一名以外的候選才是「偏離預設的明確選擇」，
@@ -4563,7 +4569,8 @@ class ZhuyinInputMethodService : InputMethodService() {
         engine.markCommit(word.length)
         if (isPersonalizedLearningAllowed()) {
             val skipped = skippedCandidates(entry)
-            if (skipped != null) engine.learnPick(word, entry.zhuyin, skipped) else engine.acceptWord(word, entry.zhuyin.ifBlank { null })
+            if (skipped != null) engine.learnPick(word, entry.zhuyin, skipped, entry.weight)
+            else engine.acceptWord(word, entry.zhuyin.ifBlank { null }, acceptCompetitors(word))
             val prev = freshContextWord()
             if (prev != null && prev != word && prev.length in 1..8 && word.length in 1..8) {
                 engine.learnBigram(prev, word, if (skipped != null) 500 else 250)
@@ -4650,14 +4657,16 @@ class ZhuyinInputMethodService : InputMethodService() {
      *   false＝接受預設（點第一名、空白、Enter）：不新建、不加次數，只讓已學過的詞維持新鮮，詞對只學較弱的量。
      */
     private fun commitProcessedWordWithUserDict(
-        word: String, zhuyin: String = "", learn: Boolean = true, explicitPick: Boolean = true, skipped: List<DictEntry> = emptyList()
+        word: String, zhuyin: String = "", learn: Boolean = true, explicitPick: Boolean = true,
+        skipped: List<DictEntry> = emptyList(), weight: Int = 0
     ) {
         if (word.startsWith("【")) return
         var effectiveLastWord = word
         engine.markCommit(word.length)
         if (learn && isPersonalizedLearningAllowed()) {
             if (word.length <= 4) {
-                if (explicitPick) engine.learnPick(word, zhuyin, skipped) else engine.acceptWord(word, zhuyin.ifBlank { null })
+                if (explicitPick) engine.learnPick(word, zhuyin, skipped, weight)
+                else engine.acceptWord(word, zhuyin.ifBlank { null }, acceptCompetitors(word))
                 val prev = freshContextWord()
                 if (prev != null && prev != word && prev.length in 1..8 && word.length in 1..8) {
                     engine.learnBigram(prev, word, if (explicitPick) 500 else 250)

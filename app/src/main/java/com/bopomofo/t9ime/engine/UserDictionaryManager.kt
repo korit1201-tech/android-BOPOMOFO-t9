@@ -63,8 +63,12 @@ class UserDictionaryManager private constructor(private val context: Context?) {
         const val MAX_LEARNED_ENTRIES = 3000
         /** 自建詞上限（只會手動刪除） */
         const val MAX_CUSTOM_ENTRIES = 5000
-        /** 個人加分上限（自然對數，e^2.5 約 12 倍）；一次選擇約 +0.69（2 倍） */
-        const val MAX_BOOST_NAT = 2.5
+        /**
+         * 個人加分上限（自然對數，e^6.5 約 665 倍）。上限要夠大：詞庫裡有些現代常用詞的權重被嚴重低估
+         * （例如「手機」只有 10，而同鍵的「手記」是 4200），使用者反覆明確選它時必須有辦法追上。
+         * 實際加多少由「縮小與被跳過者的差距」決定（見 ZhuyinT9Engine.learnPick），不是每次固定加一格。
+         */
+        const val MAX_BOOST_NAT = 6.5
         /** 負向最多讓候選降到 e^-1 約 0.37 倍，功能詞不會被永久打壓 */
         const val MIN_BOOST_NAT = -1.0
         const val NEG_WEIGHT = 0.7
@@ -200,6 +204,28 @@ class UserDictionaryManager private constructor(private val context: Context?) {
         return amount
     }
 
+    /** 要讓這個（詞, 讀音）的個人加分達到 [uTarget]，還需要補多少正向分數（已考慮目前的負向）。 */
+    fun amountToReach(word: String, zhuyin: String?, uTarget: Double): Double {
+        synchronized(memoryDict) {
+            val e = lookupLocked(word, zhuyin)
+            val p = if (e == null) 0.0 else posNow(e)
+            val n = if (e == null) 0.0 else negNow(e)
+            val needP = Math.exp(uTarget + NEG_WEIGHT * Math.log1p(n)) - 1.0
+            return maxOf(0.0, needP - p)
+        }
+    }
+
+    /** 使用者接受了排在它前面的詞：把這個對手累積的正向分數打折（自建詞不動），避免少數派靠累積搶走多數派。 */
+    fun shrinkPositive(word: String, zhuyin: String?, factor: Double) {
+        synchronized(memoryDict) {
+            val e = lookupLocked(word, zhuyin) ?: return
+            if (e.custom || e.pos <= 0.0) return
+            settleLocked(e)
+            e.pos *= factor
+        }
+        scheduleSave()
+    }
+
     /** 負向訊號：使用者跳過了它，或選了它之後又刪掉改選別的。詞庫裡沒有紀錄時建立「只有負向」的條目（不會出現在詞彙清單）。 */
     fun recordNegative(word: String, zhuyin: String = "", amount: Double = 1.0) {
         if (word.isBlank() || word.startsWith("【") || amount <= 0.0) return
@@ -223,7 +249,8 @@ class UserDictionaryManager private constructor(private val context: Context?) {
             // 負向一律減半（只有負向、沒被選過的條目也要減，否則 9:1 混用時少數派的負向會一路累積而翻盤）
             e.neg *= 0.5
             if (e.pos > 0.0 || e.custom) {
-                e.pos = minOf(e.pos + ACCEPT_POS_DELTA, 30.0)
+                // 上限只擋「小幅累加」，不能把學習補差距得到的大分數硬壓下來（曾因此讓第一名接受後掉回第 14 名）
+                e.pos = minOf(e.pos + ACCEPT_POS_DELTA, maxOf(e.pos, 30.0))
                 e.lastUsed = nowMs()
             }
         }

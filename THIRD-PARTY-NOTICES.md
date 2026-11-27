@@ -128,6 +128,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+- **詞庫權重補強（v2.14.1）**：`dict_tw.txt` 中約 3,700 個詞的權重，是用上述 AI 合成文章統計詞頻後，將被舊語料低估的現代常用詞調高（只調高、不調低）；`bigram_core.bin` 也已依新權重重新產生。
+
 ---
 
 ## 6. Noto Sans CJK TC (內嵌字型子集)

@@ -1812,7 +1812,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
      * 3. 讀音不明（呼叫端沒給、單字又有多種讀音）不學：避免多音字用錯讀音污染，或把預測詞誤學。
      * 4. 剛刪掉的詞若與這次同讀音但不同詞，視為前一個選錯了，給它負向訊號。
      */
-    fun learnWord(word: String, zhuyin: String = "") {
+    fun learnWord(word: String, zhuyin: String = "", amount: Double = 1.0) {
         if (word.isBlank() || word.startsWith("【")) return
         val zy = if (zhuyin.isNotEmpty()) zhuyin else {
             val ch = word.singleOrNull() ?: return
@@ -1827,7 +1827,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
                 currentGroup().items.add(LearnItem.Neg(oldWord, oldZy, 1.0))
             }
         }
-        val added = userDict.recordUsage(word, zy, 1.0)
+        val added = userDict.recordUsage(word, zy, amount)
         if (added > 0.0) currentGroup().items.add(LearnItem.Pos(word, zy, added))
         learnLog("PICK $word $zy +$added → u=${"%.2f".format(userDict.boostNat(word, zy))}")
         lastLearnedWord = word
@@ -1838,8 +1838,8 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
      * 使用者在候選中偏離預設選了 [word]：學它，並對「被跳過的、與它同長度的前幾名」加負向訊號
      * （第一個 1.0，其餘 0.3，最多 4 個）。長度不同的候選是預測詞，不算被跳過。
      */
-    fun learnPick(word: String, zhuyin: String, skipped: List<DictEntry>) {
-        learnWord(word, zhuyin)
+    fun learnPick(word: String, zhuyin: String, skipped: List<DictEntry>, weight: Int = 0) {
+        learnWord(word, zhuyin, pickAmount(word, zhuyin, skipped, weight))
         var n = 0
         for (c in skipped) {
             if (n >= 4) break
@@ -1853,12 +1853,32 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     }
 
     /**
+     * 這次明確選擇要加多少正向分數：依「它和被跳過的同長度對手」的差距，一次補上約一半（至少 +0.69 nat，最多 +3.5）。
+     * 差很多的詞（詞庫權重被低估的現代常用詞）幾次就追上；差不多的詞一次就翻。
+     * 差距用詞庫權重＋目前個人加分的對數估算（不含上下文等其他倍率，所以保守取一半＋0.4 的餘裕，不夠就下一次再補）。
+     */
+    private fun pickAmount(word: String, zhuyin: String, skipped: List<DictEntry>, weight: Int): Double {
+        if (weight <= 0) return 1.0
+        val rivals = skipped.filter { it.word != word && it.word.length == word.length }
+        if (rivals.isEmpty()) return 1.0
+        val lc = rivals.maxOf { Math.log(maxOf(1, it.weight).toDouble()) + userDict.boostNat(it.word, it.zhuyin) }
+        val ux = userDict.boostNat(word, zhuyin)
+        val gap = lc - (Math.log(weight.toDouble()) + ux)
+        if (gap <= 0.0) return 1.0
+        val du = (0.5 * gap + 0.4).coerceIn(0.69, 3.5)
+        val target = minOf(UserDictionaryManager.MAX_BOOST_NAT, ux + du)
+        return maxOf(1.0, userDict.amountToReach(word, zhuyin, target))
+    }
+
+    /**
      * 使用者「接受預設」（點第一名、空白、Enter）：這不是偏好表態，只是同意引擎自己的排序，
      * 所以不新建條目、不加次數（否則詞庫排序的誤差會被自我強化）；已學過的詞只小幅維持，負向減半。
      */
-    fun acceptWord(word: String, zhuyin: String? = null) {
+    fun acceptWord(word: String, zhuyin: String? = null, competitors: List<DictEntry> = emptyList()) {
         if (word.isBlank() || word.startsWith("【")) return
         userDict.acceptUsage(word, zhuyin)
+        // 接受了第一名＝排在後面、但學過的對手這次沒被選：把它們累積的正向分數打六折
+        for (c in competitors) if (c.word != word) userDict.shrinkPositive(c.word, c.zhuyin, 0.6)
         learnLog("ACCEPT $word（接受預設，不加次數）")
     }
 

@@ -53,12 +53,16 @@ class PersonalizationSimTest {
         assertTrue(um.applyBoost(1000, "狠", "ㄏㄣˇ") <= max + 1)
     }
 
-    /** 重現「越用越差」：次要同音字被選很多次，常用字（差 27 倍）仍必須在第一名。 */
+    /** 重現「越用越差」：次要同音字偶爾被改選、多數時候接受常用字，常用字（差 27 倍）仍必須在第一名。 */
     @Test
     fun manyPicksOfRareHomophoneDoNotBuryTheCommonWord() {
-        repeat(200) { e.learnWord("狠", "ㄏㄣˇ") }
+        val hen = com.bopomofo.t9ime.engine.DictEntry("很", "ㄏㄣˇ", 27890)
+        repeat(30) {
+            repeat(9) { e.markCommit(1); e.acceptWord("很", "ㄏㄣˇ", listOf(com.bopomofo.t9ime.engine.DictEntry("狠", "ㄏㄣˇ", 1005))) }
+            e.markCommit(1); e.learnPick("狠", "ㄏㄣˇ", listOf(hen), 1005)
+        }
         val top = e.searchFullZhuyin("ㄏㄣˇ").firstOrNull()?.word
-        assertEquals("很", top)
+        assertEquals("9:1 混用，多數派必須維持第一", "很", top)
     }
 
     @Test

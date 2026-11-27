@@ -5,10 +5,10 @@
 [![Latest Release](https://img.shields.io/github/v/release/korit1201-tech/android-BOPOMOFO-t9?color=blue&label=Latest%20Release)](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%208.0%2B-green.svg)](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases)
 [![License](https://img.shields.io/badge/License-MIT-orange.svg)](LICENSE)
-[![Download APK](https://img.shields.io/badge/Download-APK%20(v2.14.0)-2563eb.svg)](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases)
+[![Download APK](https://img.shields.io/badge/Download-APK%20(v2.14.1)-2563eb.svg)](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases)
 
 **專為繁體中文設計的極速、直覺、純本地離線九鍵/全鍵注音輸入法**  
-[📦 GitHub Releases 下載 APK (最新 v2.14.0 Build 146，個人化學習改版、十二鍵補一聲、九鍵鄰鍵糾錯)](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases) ｜ [📜 更新日誌](CHANGELOG.md)
+[📦 GitHub Releases 下載 APK (最新 v2.14.1 Build 147，學習補差距、詞庫補強現代常用詞（手機等）)](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases) ｜ [📜 更新日誌](CHANGELOG.md)
 
 </div>
 
@@ -102,7 +102,7 @@
 - **只學真正的偏好（v2.14.0 學習改版）**：
   - 選第一名以外的候選才算偏好；點第一名、空白、Enter 只是接受預設，不新建、不加次數，避免詞庫排序的誤差被自我強化。
   - 被你跳過的同長度前幾名會輕微降權（最多約 0.37 倍，功能詞不會被永久打壓）；接受預設時負向減半。
-  - 加分是「詞庫權重 × 個人倍率」，倍率上限約 12 倍、一次選擇約 2 倍，正向半衰期 60 天，所以能翻轉接近的候選，但蓋不過詞庫與上下文給出的大差距——對的詞不會再越用越排到後面。
+  - 加分是「詞庫權重 × 個人倍率」，每次明確選擇會依它與被跳過者的差距補上約一半（差很多的詞，例如詞庫權重被低估的現代常用詞，連選幾次就追上；差不多的詞一次就翻），正向半衰期 60 天；接受預設時會壓低學過的對手，避免少數派靠累積搶走多數派——對的詞不會再越用越排到後面。
   - 以「詞＋讀音」為單位記錄，多音字各讀音互不影響；讀音不明的不學。
   - 上屏後 5 分鐘內刪掉該詞，會精準回滾那次學習；刪掉後以同讀音改選別的詞，被刪的詞記負向。
   - 長期使用模擬：沒練習過的句子第一名準確率 85.6%→88.5%、練習過的 85.6%→95.4%，每一輪都不退步。
