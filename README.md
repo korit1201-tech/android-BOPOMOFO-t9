@@ -5,10 +5,10 @@
 [![Latest Release](https://img.shields.io/github/v/release/korit1201-tech/android-BOPOMOFO-t9?color=blue&label=Latest%20Release)](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%208.0%2B-green.svg)](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases)
 [![License](https://img.shields.io/badge/License-MIT-orange.svg)](LICENSE)
-[![Download APK](https://img.shields.io/badge/Download-APK%20(v2.14.1)-2563eb.svg)](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases)
+[![Download APK](https://img.shields.io/badge/Download-APK%20(v2.15.0)-2563eb.svg)](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases)
 
 **專為繁體中文設計的極速、直覺、純本地離線九鍵/全鍵注音輸入法**  
-[📦 GitHub Releases 下載 APK (最新 v2.14.1 Build 147，學習補差距、詞庫補強現代常用詞（手機等）)](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases) ｜ [📜 更新日誌](CHANGELOG.md)
+[📦 GitHub Releases 下載 APK (最新 v2.15.0 Build 148，詞庫改用真實網頁語料（twngrams）重新估計權重並補上新詞)](https://github.com/korit1201-tech/android-BOPOMOFO-t9/releases) ｜ [📜 更新日誌](CHANGELOG.md)
 
 </div>
 

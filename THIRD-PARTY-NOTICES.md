@@ -128,7 +128,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-- **詞庫權重補強（v2.14.1）**：`dict_tw.txt` 中約 3,700 個詞的權重，是用上述 AI 合成文章統計詞頻後，將被舊語料低估的現代常用詞調高（只調高、不調低）；`bigram_core.bin` 也已依新權重重新產生。
+- **詞庫權重補強**：`dict_tw.txt` 的部分權重以第 7 節的 twngrams 為主、上述 AI 合成文章為輔重新估計（只調高、不調低）；`bigram_core.bin` 也已依新權重重新產生。
 
 ---
 
@@ -137,3 +137,11 @@ SOFTWARE.
 - **用途**：`app/src/main/res/font/bopomofo_font.ttf` 是 Noto Sans CJK TC 的子集，供注音符號與鍵盤字面顯示。
 - **版權**：© 2014-2021 Adobe (http://www.adobe.com/)，Noto 為 Google 專案商標。
 - **授權條款**：SIL Open Font License, Version 1.1，全文見 [`licenses/OFL-1.1-NotoSansCJK.txt`](licenses/OFL-1.1-NotoSansCJK.txt)。
+
+---
+
+## 7. twngrams (台灣網頁語料的詞與詞組出現網站數)
+- **專案來源**：[taiwan-corpora/twngrams (Hugging Face)](https://huggingface.co/datasets/taiwan-corpora/twngrams)，版本 0.1.0，DOI [10.57967/hf/9810](https://doi.org/10.57967/hf/9810)
+- **作者**：Den Patin（2026）。底層語料為 HPLT 3.0 的 `cmn_Hant` 部分，經篩選為台灣網站與 zh-TW 頁面；資料集只含詞與詞組的「出現網站數」統計，不含任何原文、網址或網站名稱。
+- **用途**：用來重新估計 `dict_tw.txt` 的詞頻權重、補上詞庫缺少的常用詞，並抽樣產生測試用評測集 `app/src/test/resources/tw_eval.tsv`（內容是 twngrams 的 2-gram 詞組與本專案詞庫的讀音，不含原始文件）。
+- **授權條款**：CC0 1.0（公眾領域貢獻）。作者表示引用「感謝但非必要」，本專案仍在此標明來源。
