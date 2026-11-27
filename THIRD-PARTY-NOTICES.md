@@ -67,17 +67,17 @@ SOFTWARE.
 ---
 
 ## 3. PIME 輸入法平台 (PIME Windows IME Architecture)
-- **專案來源**：[PIME (easyprog/pime)](https://github.com/easyprog/pime)
-- **作者與致謝**：PIME 開發團隊 (easyprog et al.)
+- **專案來源**：[PIME (EasyIME/PIME)](https://github.com/EasyIME/PIME)
+- **作者與致謝**：PIME 開發團隊 (EasyIME et al.)
 - **技術致敬**：PIME 整合新酷音等優異架構，其跨音節動態規劃（Viterbi）斷詞、游標回退選字編輯、實體鍵盤改字與 1~9 分頁互動邏輯啟發了本專案外接實體鍵盤核心之實現。
-- **授權條款**：GPL-2.0+ / MIT
+- **授權條款**：請以上游專案的 LICENSE 為準。本專案只參考其架構與互動邏輯，未複製其程式碼。
 
 ---
 
 ## 4. libchewing-data (新酷音繁體中文核心詞庫)
 - **專案來源**：[新酷音 (chewing/libchewing-data)](https://github.com/chewing/libchewing-data)
 - **版權說明**：新酷音團隊與全體社群貢獻者維護之真實頻率繁體中文高頻詞庫與注音資料。
-- **授權條款**：LGPL-2.1+ / MIT
+- **授權條款**：上游倉庫根目錄未附明確的授權檔，本專案**尚未核實**其資料授權；請以上游專案及新酷音團隊的公告為準。若您是權利人並認為不妥，請開 issue 聯絡，將立即處理。
 
 
 
@@ -125,3 +125,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+---
+
+## 6. Noto Sans CJK TC (內嵌字型子集)
+- **專案來源**：[Noto CJK (notofonts/noto-cjk)](https://github.com/notofonts/noto-cjk)
+- **用途**：`app/src/main/res/font/bopomofo_font.ttf` 是 Noto Sans CJK TC 的子集，供注音符號與鍵盤字面顯示。
+- **版權**：© 2014-2021 Adobe (http://www.adobe.com/)，Noto 為 Google 專案商標。
+- **授權條款**：SIL Open Font License, Version 1.1，全文見 [`licenses/OFL-1.1-NotoSansCJK.txt`](licenses/OFL-1.1-NotoSansCJK.txt)。

@@ -30,16 +30,16 @@
 
 | 經典 9 鍵九宮格（長句預測） | 獨家四向十字羅盤（滑動直出） |
 | :---: | :---: |
-| <img src="docs/images/01_t9_chinese.jpg" width="280" alt="9鍵九宮格輸入" /> | <img src="docs/images/02_compass_gesture.jpg" width="280" alt="十字羅盤滑動手勢" /> |
+| <img src="screenshots/01_t9_chinese.jpg" width="280" alt="9鍵九宮格輸入" /> | <img src="screenshots/02_compass_gesture.jpg" width="280" alt="十字羅盤滑動手勢" /> |
 | **41 鍵標準大千注音全鍵盤** | **英文 QWERTY 鍵盤（專屬縮寫鍵）** |
-| <img src="docs/images/03_full_keyboard.jpg" width="280" alt="41鍵大千注音全鍵盤" /> | <img src="docs/images/04_english_keyboard.jpg" width="280" alt="英文鍵盤" /> |
+| <img src="screenshots/03_full_keyboard.jpg" width="280" alt="41鍵大千注音全鍵盤" /> | <img src="screenshots/04_english_keyboard.jpg" width="280" alt="英文鍵盤" /> |
 | **數字九宮格（雙向無縫切換）** | **展開式多列大格柵挑字盤** |
-| <img src="docs/images/05_number_sym.jpg" width="280" alt="數字九宮格與符號" /> | <img src="docs/images/06_grid_candidates.jpg" width="280" alt="展開式大格柵候選字" /> |
+| <img src="screenshots/05_number_sym.jpg" width="280" alt="數字九宮格與符號" /> | <img src="screenshots/06_grid_candidates.jpg" width="280" alt="展開式大格柵候選字" /> |
 
 <div align="center">
 
 ### ⚙️ 個性化設定與自訂詞庫管理
-<img src="docs/images/07_settings_main.jpg" width="320" alt="設定首頁與詞庫管理" />
+<img src="screenshots/07_settings_main.jpg" width="320" alt="設定首頁與詞庫管理" />
 
 *支援 8 款高質感主題配色、震動強度微調（ms）、個人化詞庫匯入/匯出*
 
@@ -200,7 +200,7 @@
 本專案本體程式碼基於 [MIT License](LICENSE) 開源。
 
 本輸入法使用了以下優秀開源專案之語料、架構與授權：
-1. **[chewing/libchewing-data](https://github.com/chewing/libchewing-data)** - 新酷音官方維護之真實頻率繁體中文語料庫（LGPL 2.1 / MIT）。
+1. **[chewing/libchewing-data](https://github.com/chewing/libchewing-data)** - 新酷音官方維護之真實頻率繁體中文語料庫（授權請以上游專案為準，詳見 THIRD-PARTY-NOTICES.md 第 4 節）。
 2. **[easyprog/pime](https://github.com/easyprog/pime)** - PIME 輸入法平台，致敬其跨音節動態規劃（Viterbi）斷詞、游標回退選字編輯與實體外接鍵盤互動設計理念（GPL 2.0 / MIT）。
 3. **[polobread/KeyKey](https://github.com/polobread/KeyKey)** - 引用 `chichi77Collection`（琦琦輸入法作者 Chui-Ping Cheng 整理之 29 類專業與動漫分類詞庫，基於 MIT 授權）。
 4. **[openvanilla/McBopomofo](https://github.com/openvanilla/McBopomofo)** - 小麥注音官方字音與詞頻字典（MIT 授權，Copyright 2011-2026 Mengjuei Hsieh et al.）。

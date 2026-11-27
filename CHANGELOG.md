@@ -198,7 +198,7 @@
 - **🛡️ 剪貼簿歷史不再進入雲端備份與換機傳輸**：新增 `backup_rules.xml` 與 `data_extraction_rules.xml`；預留的完整資料包 `filesDir/bigram_full.bin` 也排除在備份之外。
 - **🧪 測試與評測**：新增 `BigramModelTest`、`BigramBenchmarkTest`（600 句獨立驗證集，可掃參數），共 61 個單元測試全數通過。
   - 速度（電腦上量，每次查詢）：全鍵盤約 0.3~0.4 ms；九鍵約 3.8 ms（原 2.9~3.3 ms）。手機上的實際耗時與記憶體尚待實測。
-  - 資料來源與授權見 `THIRD-PARTY-NOTICES.md` 第 5 節；方法、參數與接手說明見 `docs/BIGRAM_LM_PLAN.md` 與 `docs/DEV_TESTING_GUIDE.md` 第 10 節。
+  - 資料來源與授權見 `THIRD-PARTY-NOTICES.md` 第 5 節。
 
 ## [v2.9.5] - 2026-10-23
 
@@ -741,15 +741,13 @@
 
 #### 🛠️ 工程與文件
 
-- 新增 `tools/t9sim/`（九鍵引擎 Python 模擬器）、`tools/phone/`（adb 真機自動化測試）。
-- 新增 `docs/DEV_TESTING_GUIDE.md`（給下一位開發者／agent 的完整教學）與 `docs/ROADMAP_TODO.md`（對照新酷音／PIME 的改善規劃與工作分派）。
 - 程式變更：`DictEntry.consumedKeys`（預設 -1，其他模式不受影響）、`TrieDictionary.searchPrefixBest / collectExtensions`、`TrieNode.topEntries`、
   `ZhuyinT9Engine`（`t9ForwardPaths` / `t9SuffixCosts` / `t9PartialCandidates` / `t9MergeSentenceCandidates` / `consumePrefixKeys`）、
   `SyllableManager.getSyllableSplitCombinations`、`ZhuyinInputMethodService.commitPartialWord`。
 
 #### ⚠️ 已知限制
 
-- 九鍵一鍵對應多個注音且連打無音節邊界，**純詞頻模型無法保證整句第一名一定正確**（需要上下文語言模型，見 `docs/ROADMAP_TODO.md`）。
+- 九鍵一鍵對應多個注音且連打無音節邊界，**純詞頻模型無法保證整句第一名一定正確**（需要上下文語言模型）。
 - 整句候選很長時，部分上屏候選可能需橫向捲動候選列或按 ▼ 才看得到。
 - 既有單元測試仍複製舊排序邏輯在測試內、測不到真引擎；本版未新增單元測試（引擎依賴 Android Context）。
 
