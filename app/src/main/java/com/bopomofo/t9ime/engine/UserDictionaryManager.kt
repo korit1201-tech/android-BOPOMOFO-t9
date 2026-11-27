@@ -31,6 +31,12 @@ class UserDictionaryManager private constructor(private val context: Context?) {
 
     companion object {
         const val MAX_USER_ENTRIES = 500 // 個人詞庫上限，杜絕無限制膨脹
+        /** 舊資料降級時，每筆 count 的上限（等於最多約 3 倍的排序加分） */
+        const val LEGACY_COUNT_CAP = 2
+        /** 個人加分上限（自然對數，e^2.5 約 12 倍）；一次糾正約 +0.69（2 倍） */
+        const val MAX_BOOST_NAT = 2.5
+        /** 次數的半衰期（天）：久沒選的詞自然讓位，個人詞庫不會越用越固化 */
+        const val HALF_LIFE_DAYS = 60.0
 
         @Volatile
         private var instance: UserDictionaryManager? = null
@@ -44,6 +50,31 @@ class UserDictionaryManager private constructor(private val context: Context?) {
 
     init {
         loadFromFile()
+        migrateLegacyCountsIfNeeded()
+    }
+
+    /**
+     * 舊版（v2.13.x 以前）把「點第一名、空白、Enter」也算成選用，count 被灌高，且加權比詞庫大兩個級別。
+     * 新版加分有上限、會衰退，舊的高 count 必須一次性降級，否則整份舊資料會繼續蓋過詞庫排序。
+     * 以標記檔控制只跑一次；降級前先備份舊檔。保留所有詞條（自建詞也不會消失），只是 count 最多留 [LEGACY_COUNT_CAP]。
+     */
+    private fun migrateLegacyCountsIfNeeded() {
+        try {
+            val dir = context?.filesDir ?: return
+            val marker = File(dir, "bopomofo_user_dict.schema3")
+            if (marker.exists()) return
+            val file = dictFile
+            if (file != null && file.exists()) {
+                file.copyTo(File(dir, "bopomofo_user_dict.json.bak_v2"), overwrite = true)
+            }
+            synchronized(memoryDict) {
+                for (e in memoryDict.values) if (e.count > LEGACY_COUNT_CAP) e.count = LEGACY_COUNT_CAP
+            }
+            saveToFile()
+            marker.writeText("3")
+        } catch (e: Exception) {
+            android.util.Log.e("BopomofoIME", "個人詞庫舊資料降級失敗", e)
+        }
     }
 
     private fun loadFromFile() {
@@ -110,7 +141,7 @@ class UserDictionaryManager private constructor(private val context: Context?) {
                 UserWordEntry(word, zhuyin, 0)
             }
             entry.count += 1
-            entry.lastUsed = System.currentTimeMillis()
+            entry.lastUsed = nowMs()
 
             // 超過上限時執行自動清理（淘汰單次且最久未使用的條目）
             if (memoryDict.size > MAX_USER_ENTRIES) {
@@ -153,40 +184,42 @@ class UserDictionaryManager private constructor(private val context: Context?) {
     }
 
     /**
-     * 計算候選詞個人化增幅權重
-     * 使用者選定/確認過的字詞賦予絕對優選增幅 (≥ 1,000,000)，超越字典既定權重穩居首選
-     * 支援時間衰減模型 (Recency Boost)：近期剛選過之詞享有即時優先置頂權重
-     * 支援讀音一致性校驗 (Reading-Aware Guard)：若指定了期望注音且記錄讀音不符，則拒絕灌入加權
+     * 個人化加分（自然對數，≥ 0）：ln(1 + 次數×時間衰退)，上限 [MAX_BOOST_NAT]。
+     * 次數只來自「使用者偏離預設的明確選擇」（見 LearningPolicy），所以一次糾正 ≈ +0.69（候選權重 ×2），
+     * 5 次 ≈ +1.79（×6），封頂 ×12：學習能翻轉接近的候選，但永遠蓋不過詞庫與上下文給出的大差距。
+     * 讀音一致性保護：指定了期望注音而記錄讀音不符（去聲調後比對）時不給加分，多音字不會跨讀音互相污染。
      */
-    fun getBoost(word: String, expectedZhuyin: String? = null): Int {
-        val entry = synchronized(memoryDict) { memoryDict[word] } ?: return 0
-
-        // 讀音一致性保護：若有提供期望讀音，且使用者記錄中存有明確讀音，去聲調後比對不符則不予加成
+    fun boostNat(word: String, expectedZhuyin: String? = null): Double {
+        val entry = synchronized(memoryDict) { memoryDict[word] } ?: return 0.0
         if (expectedZhuyin != null && entry.zhuyin.isNotBlank()) {
             val entryClean = entry.zhuyin.filter { it !in "ˇˋˊ˙ " }
             val expectedClean = expectedZhuyin.filter { it !in "ˇˋˊ˙ " }
-            if (entryClean.isNotEmpty() && expectedClean.isNotEmpty() && entryClean != expectedClean) {
-                return 0
-            }
+            if (entryClean.isNotEmpty() && expectedClean.isNotEmpty() && entryClean != expectedClean) return 0.0
         }
-
-        val baseBoost = if (word.length == 1) {
-            1_000_000 + minOf(entry.count * 100_000, 10_000_000)
-        } else {
-            2_000_000 + minOf(entry.count * 200_000, 20_000_000)
-        }
-
-        val now = System.currentTimeMillis()
-        val diffMs = maxOf(0L, now - entry.lastUsed)
-        val recencyBonus = when {
-            diffMs < 10 * 60 * 1000L -> 3_000_000      // 10 分鐘內剛選過
-            diffMs < 24 * 3600 * 1000L -> 1_500_000    // 24 小時內
-            diffMs < 7 * 24 * 3600 * 1000L -> 500_000 // 7 天內
-            else -> 0
-        }
-
-        return baseBoost + recencyBonus
+        val days = maxOf(0L, nowMs() - entry.lastUsed) / 86_400_000.0
+        val p = entry.count * Math.pow(0.5, days / HALF_LIFE_DAYS)
+        return minOf(MAX_BOOST_NAT, Math.log1p(p))
     }
+
+    /** 把個人加分乘進詞庫權重（乘法：加分是倍率，不是固定常數）。 */
+    fun applyBoost(weight: Int, word: String, expectedZhuyin: String? = null): Int {
+        val u = boostNat(word, expectedZhuyin)
+        if (u <= 0.0) return weight
+        val scaled = weight.toDouble() * Math.exp(u)
+        return if (scaled >= Int.MAX_VALUE.toDouble()) Int.MAX_VALUE else scaled.toInt()
+    }
+
+    /** 使用者「接受預設」：已學過的詞只更新最後使用時間，不加次數（不新建、不強化）。 */
+    fun touch(word: String) {
+        val hit = synchronized(memoryDict) { memoryDict[word]?.also { it.lastUsed = nowMs() } }
+        if (hit == null) return
+        saveHandler?.removeCallbacks(saveRunnable)
+        saveHandler?.postDelayed(saveRunnable, 2500L)
+    }
+
+    /** 可注入的時鐘，單元測試用它模擬經過多天。 */
+    internal var clock: (() -> Long)? = null
+    private fun nowMs(): Long = clock?.invoke() ?: System.currentTimeMillis()
 
     fun getUsageCount(word: String): Int {
         return synchronized(memoryDict) { memoryDict[word]?.count ?: 0 }

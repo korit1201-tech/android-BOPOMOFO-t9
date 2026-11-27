@@ -127,11 +127,12 @@ class KeyOnlyPreviewAndSnapshotTest {
         engine.cycleTone() // ˋ
         engine.cycleTone() // ˊ
         engine.cycleTone() // ˙
+        engine.cycleTone() // ˉ（一聲，不送聲調鍵，尾端 11 被移除）
         val before = engine.captureInputState()
-        engine.cycleTone() // 繞回無聲調，keys 的尾端 11 被移除
+        engine.cycleTone() // 繞回無聲調
         engine.restoreInputState(before)
         // 舊做法 backspace() 此時會誤刪最後一個真實按鍵 7
-        assertEquals(listOf(8, 7, 11), engine.getCurrentKeys())
+        assertEquals(listOf(8, 7), engine.getCurrentKeys())
     }
 
     @Test

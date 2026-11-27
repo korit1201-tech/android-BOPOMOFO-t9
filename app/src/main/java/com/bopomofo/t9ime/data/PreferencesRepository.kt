@@ -32,6 +32,11 @@ object PreferencesRepository {
     const val DEFAULT_KEYBOARD_HEIGHT_LANDSCAPE_DP = 115
     const val DEFAULT_THEME = "system"
     const val DEFAULT_TOLERANT_INPUT_ENABLED = true
+    const val KEY_SLIP_CORRECTION_LEVEL = "pref_slip_correction_level"
+    /** 按偏鄰鍵糾錯：0 關、1 保守（糾錯候選排在原首選後）、2 標準（贏過原讀法一個差距才排第一） */
+    const val DEFAULT_SLIP_CORRECTION_LEVEL = 0
+    const val KEY_LOCK_CANDIDATE_ORDER = "pref_lock_candidate_order"
+    const val DEFAULT_LOCK_CANDIDATE_ORDER = false
     const val DEFAULT_FLOATING_OFFSET_X_DP = 0
     const val DEFAULT_FLOATING_OFFSET_Y_DP = 0
     const val DEFAULT_FLOATING_WIDTH_DP = 330
@@ -136,6 +141,34 @@ object PreferencesRepository {
         } catch (_: Exception) {
             DEFAULT_TOLERANT_INPUT_ENABLED
         }
+    }
+
+    fun getSlipCorrectionLevel(context: Context): Int {
+        return try {
+            (getPrefs(context)?.getInt(KEY_SLIP_CORRECTION_LEVEL, DEFAULT_SLIP_CORRECTION_LEVEL) ?: DEFAULT_SLIP_CORRECTION_LEVEL).coerceIn(0, 2)
+        } catch (_: Exception) {
+            DEFAULT_SLIP_CORRECTION_LEVEL
+        }
+    }
+
+    fun setSlipCorrectionLevel(context: Context, level: Int) {
+        try {
+            getPrefs(context)?.edit()?.putInt(KEY_SLIP_CORRECTION_LEVEL, level.coerceIn(0, 2))?.apply()
+        } catch (_: Exception) {}
+    }
+
+    fun isCandidateOrderLocked(context: Context): Boolean {
+        return try {
+            getPrefs(context)?.getBoolean(KEY_LOCK_CANDIDATE_ORDER, DEFAULT_LOCK_CANDIDATE_ORDER) ?: DEFAULT_LOCK_CANDIDATE_ORDER
+        } catch (_: Exception) {
+            DEFAULT_LOCK_CANDIDATE_ORDER
+        }
+    }
+
+    fun setCandidateOrderLocked(context: Context, locked: Boolean) {
+        try {
+            getPrefs(context)?.edit()?.putBoolean(KEY_LOCK_CANDIDATE_ORDER, locked)?.apply()
+        } catch (_: Exception) {}
     }
 
     fun setTolerantInputEnabled(context: Context, enabled: Boolean) {

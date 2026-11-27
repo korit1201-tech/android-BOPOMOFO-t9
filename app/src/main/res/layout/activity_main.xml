@@ -202,6 +202,96 @@
                     android:layout_height="wrap_content" />
             </LinearLayout>
 
+            <!-- 按偏鄰鍵糾錯（九鍵） -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="按偏鄰鍵糾錯（九鍵）"
+                    android:textColor="@color/kb_text_primary"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="停手 0.3 秒後，把某一鍵當成上下左右相鄰的鍵再找一次，糾錯候選前面會標「~」。聲調鍵與最後一個鍵不糾；打字途中候選不變。保守：糾錯候選排在第二位以後；標準：最多糾兩處，明顯更合理時才排第一。"
+                    android:textColor="@color/kb_text_secondary"
+                    android:textSize="11sp" />
+
+                <RadioGroup
+                    android:id="@+id/radio_slip_correction"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:orientation="horizontal">
+
+                    <RadioButton
+                        android:id="@+id/radio_slip_off"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="關閉"
+                        android:textColor="@color/kb_text_primary" />
+
+                    <RadioButton
+                        android:id="@+id/radio_slip_conservative"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp"
+                        android:text="保守"
+                        android:textColor="@color/kb_text_primary" />
+
+                    <RadioButton
+                        android:id="@+id/radio_slip_standard"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp"
+                        android:text="標準"
+                        android:textColor="@color/kb_text_primary" />
+                </RadioGroup>
+            </LinearLayout>
+
+            <!-- 鎖定詞序 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="鎖定詞序"
+                        android:textColor="@color/kb_text_primary"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="開啟後不再從新的選字學習，候選順序不會再隨使用改變（已學到的照舊生效，自建詞不受影響）。"
+                        android:textColor="@color/kb_text_secondary"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switch_lock_order"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
             <!-- 行內組字底線開關 (相容模式) -->
             <LinearLayout
                 android:layout_width="match_parent"

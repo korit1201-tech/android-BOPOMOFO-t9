@@ -45,6 +45,7 @@ import com.bopomofo.t9ime.engine.ClipboardHistoryManager
 import com.bopomofo.t9ime.data.PreferencesRepository
 import com.bopomofo.t9ime.engine.DictEntry
 import com.bopomofo.t9ime.engine.EmojiKaomojiManager
+import com.bopomofo.t9ime.engine.KeyNeighbors
 import com.bopomofo.t9ime.engine.SnippetManager
 import com.bopomofo.t9ime.engine.ZhuyinT9Engine
 import com.bopomofo.t9ime.theme.AppTheme
@@ -58,6 +59,8 @@ import com.bopomofo.t9ime.ui.SwipeKeyButton
 class ZhuyinInputMethodService : InputMethodService() {
 
     companion object {
+        /** 停手多久（ms）後才補按偏糾錯候選 */
+        private const val SLIP_CORRECTION_IDLE_MS = 300L
         private const val MAX_CANDIDATES_DISPLAY = 20
         private const val CANDIDATE_BAR_PADDING_PX = 32
         private const val CANDIDATE_BAR_PADDING_VERTICAL_PX = 16
@@ -1280,8 +1283,12 @@ class ZhuyinInputMethodService : InputMethodService() {
                             val (_, candidates) = engine.cycleTone()
                             refreshUI(candidates)
                         } else {
-                            engine.pressKey(keyNum)
+                            val hint = KeyNeighbors.hintFromTouch(
+                                keyNum, btn.lastDownX, btn.lastDownY, btn.width.toFloat(), btn.height.toFloat()
+                            )
+                            engine.pressKey(keyNum, hint)
                             refreshUI(engine.getCandidates())
+                            scheduleSlipCorrection()
                         }
                         // 記下此次按下前後的狀態，若隨後滑動則精準還原（不靠 backspace 推算）
                         swipeRollbackSnapshots[keyNum] = stateBefore to engine.captureInputState()
@@ -2243,14 +2250,14 @@ class ZhuyinInputMethodService : InputMethodService() {
         if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty()) {
             val topEntry = engine.searchFullZhuyin(fullZhuyinBuffer.toString()).firstOrNull()
             val word = topEntry?.word ?: fullZhuyinBuffer.toString()
-            commitProcessedWordWithUserDict(word, topEntry?.zhuyin ?: "")
+            commitProcessedWordWithUserDict(word, topEntry?.zhuyin ?: "", learn = topEntry != null, explicitPick = false)
             return
         }
         if (engine.hasComposing()) {
             val topEntry = engine.getCandidates().firstOrNull()
             val topWord = customComposingWord ?: topEntry?.word ?: engine.getTopComposingWord()
             val topZhuyin = if (customComposingWord == null) (topEntry?.zhuyin ?: "") else ""
-            commitProcessedWordWithUserDict(topWord, topZhuyin)
+            commitProcessedWordWithUserDict(topWord, topZhuyin, explicitPick = false)
         } else {
             val ic = currentInputConnection
             val info = currentInputEditorInfo
@@ -2431,12 +2438,12 @@ class ZhuyinInputMethodService : InputMethodService() {
             if (currentMode == KeyboardMode.ZHUYIN_FULL && fullZhuyinBuffer.isNotEmpty()) {
                 val topEntry = engine.searchFullZhuyin(fullZhuyinBuffer.toString()).firstOrNull()
                 val topWord = topEntry?.word ?: fullZhuyinBuffer.toString()
-                commitProcessedWordWithUserDict(topWord, topEntry?.zhuyin ?: "")
+                commitProcessedWordWithUserDict(topWord, topEntry?.zhuyin ?: "", learn = topEntry != null, explicitPick = false)
             } else if (engine.hasComposing()) {
                 val topEntry = engine.getCandidates().firstOrNull()
                 val topWord = customComposingWord ?: topEntry?.word ?: engine.getTopComposingWord()
                 val topZhuyin = if (customComposingWord == null) (topEntry?.zhuyin ?: "") else ""
-                commitProcessedWordWithUserDict(topWord, topZhuyin)
+                commitProcessedWordWithUserDict(topWord, topZhuyin, explicitPick = false)
             } else {
                 commitTextDirectly(" ")
                 lastCommittedWord = null
@@ -3050,7 +3057,7 @@ class ZhuyinInputMethodService : InputMethodService() {
         set12KeyText(8, "ㄏ ㄒ ㄠ ㄡ")
         set12KeyText(9, "ㄕ ㄙ ㄤ ㄨ")
         set12KeyText(10, "ㄈ ㄌ ㄝ")
-        set12KeyText(11, "ˇ ˋ ˊ ˙")
+        set12KeyText(11, "ˇ ˋ ˊ ˙ ˉ")
         set12KeyText(12, "ㄖ ㄥ ㄩ")
     }
 
@@ -3148,6 +3155,7 @@ class ZhuyinInputMethodService : InputMethodService() {
                 updateLeftZhuyinCombos()
             } else {
                 refreshUI(candidates)
+                if (currentMode == KeyboardMode.ZHUYIN) scheduleSlipCorrection()
             }
         } else {
             val ic = currentInputConnection
@@ -3950,7 +3958,7 @@ class ZhuyinInputMethodService : InputMethodService() {
 
             val currentTheme = ThemeManager.getCurrentTheme(this)
             val themeColors = ThemeManager.getThemeColors(this, currentTheme)
-            tv.text = displayWord
+            tv.text = if (entry.slipped) "~$displayWord" else displayWord
 
             if (isPageIndicator) {
                 tv.setTextColor(themeColors.accent)
@@ -4506,7 +4514,13 @@ class ZhuyinInputMethodService : InputMethodService() {
         } else {
             entry.word
         }
-        commitProcessedWordWithUserDict(wordToCommit, entry.zhuyin)
+        commitProcessedWordWithUserDict(wordToCommit, entry.zhuyin, explicitPick = isExplicitPick(entry))
+    }
+
+    /** 選的是第一名＝接受預設；選了第一名以外的候選才是「偏離預設的明確選擇」。 */
+    private fun isExplicitPick(entry: DictEntry): Boolean {
+        val top = engine.getCandidates().firstOrNull() ?: return true
+        return top.word != entry.word
     }
 
     /**
@@ -4517,10 +4531,11 @@ class ZhuyinInputMethodService : InputMethodService() {
         val word = entry.word
         lastUserTypingTime = SystemClock.uptimeMillis()
         if (isPersonalizedLearningAllowed()) {
-            engine.learnWord(word, entry.zhuyin)
+            val explicit = isExplicitPick(entry)
+            if (explicit) engine.learnWord(word, entry.zhuyin) else engine.acceptWord(word)
             val prev = lastCommittedWord
             if (prev != null && prev != word && prev.length in 1..8 && word.length in 1..8) {
-                engine.learnBigram(prev, word)
+                engine.learnBigram(prev, word, if (explicit) 500 else 250)
             }
         }
         lastCommittedWord = word
@@ -4538,11 +4553,37 @@ class ZhuyinInputMethodService : InputMethodService() {
         refreshUI(remaining)
     }
 
+    // ───────── 按偏鄰鍵糾錯：停手後才補候選，打字途中候選完全不變 ─────────
+    private var slipCorrectionRunnable: Runnable? = null
+
+    private fun cancelSlipCorrection() {
+        slipCorrectionRunnable?.let { mainHandler.removeCallbacks(it) }
+        slipCorrectionRunnable = null
+    }
+
+    private fun scheduleSlipCorrection() {
+        cancelSlipCorrection()
+        val level = PreferencesRepository.getSlipCorrectionLevel(this)
+        if (level <= 0) return
+        val keysAtSchedule = engine.getCurrentKeys()
+        val task = Runnable {
+            slipCorrectionRunnable = null
+            // 期間又打了鍵、退格或已上屏就作廢
+            if (currentMode != KeyboardMode.ZHUYIN || !engine.hasComposing()) return@Runnable
+            if (engine.getCurrentKeys() != keysAtSchedule) return@Runnable
+            engine.applySlipCorrection(level)?.let { refreshUI(it) }
+        }
+        slipCorrectionRunnable = task
+        mainHandler.postDelayed(task, SLIP_CORRECTION_IDLE_MS)
+    }
+
     /**
      * 檢查是否允許個人化學習（密碼欄位與無痕模式下強制停用學習，守護使用者隱私）
+     * 「鎖定詞序」開著時也不再學習：候選順序不再隨使用改變（已學到的照舊生效，自建詞不受影響）。
      */
     private fun isPersonalizedLearningAllowed(): Boolean {
         if (isCurrentInputPassword()) return false
+        if (PreferencesRepository.isCandidateOrderLocked(this)) return false
         val editorInfo = currentInputEditorInfo ?: return true
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             if ((editorInfo.imeOptions and android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0) {
@@ -4572,15 +4613,19 @@ class ZhuyinInputMethodService : InputMethodService() {
     /**
      * 詞彙確認上屏與個人詞庫記憶（等確定出去才紀錄成優選）
      */
-    private fun commitProcessedWordWithUserDict(word: String, zhuyin: String = "", learn: Boolean = true) {
+    /**
+     * @param explicitPick true＝使用者在候選中偏離預設、明確選了這個詞（才算偏好，加次數）；
+     *   false＝接受預設（點第一名、空白、Enter）：不新建、不加次數，只讓已學過的詞維持新鮮，詞對只學較弱的量。
+     */
+    private fun commitProcessedWordWithUserDict(word: String, zhuyin: String = "", learn: Boolean = true, explicitPick: Boolean = true) {
         if (word.startsWith("【")) return
         var effectiveLastWord = word
         if (learn && isPersonalizedLearningAllowed()) {
             if (word.length <= 4) {
-                engine.learnWord(word, zhuyin)
+                if (explicitPick) engine.learnWord(word, zhuyin) else engine.acceptWord(word)
                 val prev = lastCommittedWord
                 if (prev != null && prev != word && prev.length in 1..8 && word.length in 1..8) {
-                    engine.learnBigram(prev, word)
+                    engine.learnBigram(prev, word, if (explicitPick) 500 else 250)
                 }
             } else {
                 val syls = com.bopomofo.t9ime.engine.SyllableManager.splitFullZhuyin(zhuyin, word.length)

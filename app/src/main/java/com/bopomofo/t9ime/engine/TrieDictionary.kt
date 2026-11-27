@@ -8,7 +8,9 @@ data class DictEntry(
     val zhuyin: String,
     val weight: Int,
     val isTolerant: Boolean = false,
-    val consumedKeys: Int = 0
+    val consumedKeys: Int = 0,
+    /** 這個候選是把某一鍵當成相鄰鍵才找到的（按偏糾錯），供介面標示 */
+    val slipped: Boolean = false
 ) {
     /** 預先計算去除聲調與空白的純注音字串，避免在查詢與 DP 迴圈中重複產生垃圾物件 */
     val cleanZhuyin: String = if (zhuyin.isEmpty()) "" else buildString(zhuyin.length) {
@@ -152,6 +154,41 @@ class TrieDictionary {
             curr = next
         }
         return curr
+    }
+
+    /** 糾錯用：第 [pos] 個鍵（相對於查詢序列）實際上是相鄰的 [intended] 鍵 */
+    class Slip(val pos: Int, val intended: Int)
+
+    class SlipMatch(val node: TrieNode, val slips: List<Slip>)
+
+    /**
+     * 按偏鄰鍵糾錯查詢：沿 trie 走，最多把 [maxSlips] 個鍵換成上下左右相鄰的鍵。
+     * 只回傳「至少糾了一處」的節點（沒糾的由 [searchNode] 負責）。
+     * [protectedFrom] 之後（含）的位置不糾，用來保護句尾剛按下、可能還沒打完的鍵；聲調鍵永遠不糾。
+     * 子節點不存在即剪枝，一處糾錯時葉節點數不超過 長度 × 3。
+     */
+    fun searchNodeWithSlips(sequence: List<Int>, maxSlips: Int, protectedFrom: Int = Int.MAX_VALUE): List<SlipMatch> {
+        if (sequence.isEmpty() || maxSlips <= 0) return emptyList()
+        val out = ArrayList<SlipMatch>()
+        val used = ArrayList<Slip>(maxSlips)
+        fun walk(node: TrieNode, idx: Int) {
+            if (idx == sequence.size) {
+                if (used.isNotEmpty()) out.add(SlipMatch(node, used.toList()))
+                return
+            }
+            val key = sequence[idx]
+            node.getChild(key)?.let { walk(it, idx + 1) }
+            if (used.size < maxSlips && idx < protectedFrom && key != KeyNeighbors.TONE_KEY) {
+                for (n in KeyNeighbors.neighbors(key)) {
+                    val child = node.getChild(n) ?: continue
+                    used.add(Slip(idx, n))
+                    walk(child, idx + 1)
+                    used.removeAt(used.size - 1)
+                }
+            }
+        }
+        walk(root, 0)
+        return out
     }
 
     fun search(sequence: List<Int>, includeTolerant: Boolean = true): List<DictEntry> {

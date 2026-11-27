@@ -38,6 +38,12 @@ class SwipeKeyButton @JvmOverloads constructor(
     }
 
     var onTapListener: (() -> Unit)? = null
+
+    /** 最近一次落指在本鍵內的座標（px），給按偏糾錯推算落指偏向哪個鄰鍵；在 onTapListener 之前更新 */
+    var lastDownX: Float = 0f
+        private set
+    var lastDownY: Float = 0f
+        private set
     var onSwipeListener: ((Direction) -> Unit)? = null
     var onLongClickListenerCustom: (() -> Unit)? = null
     var onDownAction: (() -> Unit)? = null
@@ -252,6 +258,8 @@ class SwipeKeyButton @JvmOverloads constructor(
         activePointerId = pointerId
         startX = x
         startY = y
+        lastDownX = x
+        lastDownY = y
         downTime = SystemClock.uptimeMillis()
         isCompassActive = false
         activeDirection = null

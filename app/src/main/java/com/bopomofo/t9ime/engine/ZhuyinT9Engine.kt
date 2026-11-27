@@ -146,7 +146,16 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         private const val COMMON_POOL_SIZE = 4000
         private const val ASSOC_MIN_NAT = 0.6
         private const val ASSOC_FREQ_WEIGHT = 0.1
-        val TONE_SYMBOLS = listOf(' ', 'ˇ', 'ˋ', 'ˊ', '˙')
+        /** 第 0 格＝未指定聲調；最後一格 [FIRST_TONE] 是「明確指定一聲」（一聲沒有符號，所以不送聲調鍵，改用「尾音節無聲調符號」過濾）。 */
+        const val FIRST_TONE = 'ˉ'
+        val TONE_SYMBOLS = listOf(' ', 'ˇ', 'ˋ', 'ˊ', '˙', FIRST_TONE)
+        private const val TONE_MARKS = "ˇˋˊ˙"
+
+        /** 詞庫沒有的個人詞（自建詞等）的基礎權重，約等於「好、要」這類常用字詞。 */
+        const val USER_NEW_WORD_WEIGHT = 50_000
+
+        /** 這一格聲調是否要送出聲調鍵(11)：一聲沒有符號，不送。 */
+        private fun toneSendsKey(index: Int) = index in 1 until TONE_SYMBOLS.size && TONE_SYMBOLS[index] != FIRST_TONE
 
         /** APK 內建的詞對核心包；使用者下載的完整包放在 filesDir（備份規則已排除）。 */
         const val BIGRAM_CORE_ASSET = "bigram_core.bin"
@@ -157,6 +166,19 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         private const val T9_WORD_PENALTY = 3.5
         /** 容錯（跨鍵位模糊音）詞條的額外成本 */
         private const val T9_TOLERANT_PENALTY = 8.0
+        /** 糾錯：每處把鍵換成鄰鍵的成本（nat）。相對 T9_TOLERANT_PENALTY=8.0、T9_WORD_PENALTY=3.5 */
+        internal const val T9_SLIP_PENALTY = 5.0
+        /** 使用者學到的詞對上限與檢查頻率（每學幾次檢查一次） */
+        internal const val BIGRAM_LEARN_CAP = 50_000
+        private const val BIGRAM_TRIM_CHECK_EVERY = 200
+        /** 糾錯整句要比最佳原讀法低這麼多成本，才排到第一（標準檔） */
+        private const val T9_SLIP_FIRST_MARGIN = 2.0
+        /** 觸控提示最多能把一處糾錯成本打幾折（confidence=1 時） */
+        private const val T9_SLIP_HINT_DISCOUNT = 0.5
+        /** 糾錯只在鍵數足夠時做；太短時鄰鍵替換會產生大量無意義候選 */
+        private const val SLIP_MIN_KEYS = 3
+        /** 糾錯最多顯示的候選數 */
+        private const val SLIP_MAX_CANDIDATES = 3
         /** 尾端未打完的詞，每缺一個按鍵的成本 */
         private const val T9_TAIL_MISS = 2.5
         /** 尾端未完成詞向下蒐集的深度（缺 1~2 鍵） */
@@ -313,6 +335,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     // 最近一次「使用者選用」的學習紀錄，供上屏後立刻退格時撤銷（誤點不該留下加權）
     private var lastLearnedWord: String? = null
     private var lastLearnedPair: Pair<String, String>? = null
+    private var lastLearnedPairAmount = 500
     private var lastLearnedAt = 0L
 
     /** 若剛學的詞／詞對在 [maxAgeMs] 內，撤銷這次學習；回傳是否有撤銷。 */
@@ -327,7 +350,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         if (word != null) userDict.revokeUsage(word)
         if (pair != null) synchronized(bigramMap) {
             val m = bigramMap[pair.first]
-            val left = (m?.get(pair.second) ?: 0) - 500
+            val left = (m?.get(pair.second) ?: 0) - lastLearnedPairAmount
             if (left > 0) m!![pair.second] = left else m?.remove(pair.second)
         }
         mainHandler?.removeCallbacks(bigramSaveRunnable)
@@ -335,15 +358,43 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         return true
     }
 
-    fun learnBigram(prevWord: String, nextWord: String) {
+    fun learnBigram(prevWord: String, nextWord: String, amount: Int = 500) {
         if (prevWord.isBlank() || nextWord.isBlank()) return
         synchronized(bigramMap) {
-            addBigramPair(prevWord, nextWord, 500)
+            addBigramPair(prevWord, nextWord, amount)
         }
         lastLearnedPair = prevWord to nextWord
+        lastLearnedPairAmount = amount
         lastLearnedAt = android.os.SystemClock.uptimeMillis()
+        if (++learnsSinceTrim >= BIGRAM_TRIM_CHECK_EVERY) {
+            learnsSinceTrim = 0
+            trimLearnedBigrams()
+        }
         mainHandler?.removeCallbacks(bigramSaveRunnable)
         mainHandler?.postDelayed(bigramSaveRunnable, 2500L)
+    }
+
+    private var learnsSinceTrim = 0
+
+    /**
+     * 詞對表有上限：長期使用不能無限膨脹（每次存檔整份寫出、載入時整份讀進記憶體）。
+     * 超過 [BIGRAM_LEARN_CAP] 對時，移除權重最低的 10%（多半是只選過一次的詞對）。回傳移除的對數。
+     */
+    internal fun trimLearnedBigrams(cap: Int = BIGRAM_LEARN_CAP): Int = synchronized(bigramMap) {
+        var total = 0
+        for (m in bigramMap.values) total += m.size
+        if (total <= cap) return 0
+        val rows = ArrayList<Triple<String, String, Int>>(total)
+        for ((prev, m) in bigramMap) for ((next, w) in m) rows.add(Triple(prev, next, w))
+        rows.sortBy { it.third }
+        val drop = maxOf(total - cap, total / 10)
+        for (i in 0 until drop) {
+            val (prev, next, _) = rows[i]
+            val m = bigramMap[prev] ?: continue
+            m.remove(next)
+            if (m.isEmpty()) bigramMap.remove(prev)
+        }
+        drop
     }
 
     fun getBigramBoost(prevWord: String?, candidateWord: String): Int {
@@ -448,27 +499,19 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     ) {
         val userEntries = userDict.getAllEntries()
         for (u in userEntries) {
-            if (u.zhuyin.isNotEmpty()) {
-                // 使用者選過的詞給予加權，但多字詞給予高優先權，單字則適度加權 (避免單字在 Trie 中壓死多字詞)
-                val weight = if (u.word.length == 1) {
-                    minOf(120_000 + u.count * 10_000, 200_000)
-                } else {
-                    5_000_000 + minOf(u.count * 6_000_000, 100_000_000)
-                }
-                val entry = DictEntry(u.word, u.zhuyin, weight)
-                targetTrie.insert(entry)
-                if (targetFullZhuyinWordMap != null) {
-                    val clean = u.zhuyin.filter { it !in "ˇˋˊ˙ " }
-                    val list = targetFullZhuyinWordMap.getOrPut(clean) { ArrayList(2) }
-                    list.removeAll { it.word == u.word }
-                    list.add(0, entry)
-                }
-                if (u.word.length == 1) {
-                    val list = targetCharZhuyinMap.getOrPut(u.word[0]) { ArrayList(2) }
-                    if (!list.contains(u.zhuyin)) {
-                        list.add(0, u.zhuyin)
-                    }
-                }
+            if (u.zhuyin.isEmpty()) continue
+            val clean = u.zhuyin.filter { it !in "ˇˋˊ˙ " }
+            // 詞庫本來就有的詞：不動 trie 權重，個人加分在排序時以倍率計算（見 UserDictionaryManager.applyBoost）
+            if (targetFullZhuyinWordMap?.get(clean)?.any { it.word == u.word } == true) continue
+            // 詞庫沒有的（自建詞等）：以一般常用詞的權重插入，之後同樣靠倍率加分
+            val entry = DictEntry(u.word, u.zhuyin, USER_NEW_WORD_WEIGHT)
+            targetTrie.insert(entry)
+            if (targetFullZhuyinWordMap != null) {
+                targetFullZhuyinWordMap.getOrPut(clean) { ArrayList(2) }.add(entry)
+            }
+            if (u.word.length == 1) {
+                val list = targetCharZhuyinMap.getOrPut(u.word[0]) { ArrayList(2) }
+                if (!list.contains(u.zhuyin)) list.add(u.zhuyin)   // 加在最後，不改多音字的預設讀音
             }
         }
     }
@@ -671,8 +714,24 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
 
     // ───────── 按鍵操作 ─────────
 
-    fun pressKey(keyId: Int): List<DictEntry> {
+    /**
+     * 與「不含聲調鍵的按鍵序列」逐鍵對應的落指提示（按偏糾錯用）。長度與實際按鍵不一致時（例如中途被
+     * 其他路徑改過按鍵序列）整串忽略，只是少了「偏向哪個鄰鍵」的加權，不影響正確性。
+     */
+    private val slipHints = ArrayList<KeyNeighbors.SlipHint?>()
+
+    /** 糾錯是否採用落指偏向提示（測試可關掉比較） */
+    internal var slipUseTouchHint = true
+
+    /** 每處糾錯的成本（預設 [T9_SLIP_PENALTY]；測試用來掃參數） */
+    internal var slipPenaltyBase = T9_SLIP_PENALTY
+
+    /** 標準檔糾錯整句排第一所需的成本差距（測試用來掃參數） */
+    internal var slipFirstMargin = T9_SLIP_FIRST_MARGIN
+
+    fun pressKey(keyId: Int, hint: KeyNeighbors.SlipHint? = null): List<DictEntry> {
         currentKeys.add(keyId)
+        if (keyId != KeyNeighbors.TONE_KEY) slipHints.add(hint)
         currentToneIndex = 0
         lockedZhuyinCombo = null
         recalculate()
@@ -687,7 +746,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         if (currentKeys.isNotEmpty() && currentKeys.last() == 11) {
             currentKeys.removeAt(currentKeys.size - 1)
         }
-        if (currentToneIndex > 0) {
+        if (toneSendsKey(currentToneIndex)) {
             currentKeys.add(11)
         }
 
@@ -710,7 +769,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         if (currentKeys.isNotEmpty() && currentKeys.last() == 11) {
             currentKeys.removeAt(currentKeys.size - 1)
         }
-        if (currentToneIndex > 0) {
+        if (toneSendsKey(currentToneIndex)) {
             currentKeys.add(11)
         }
 
@@ -792,6 +851,8 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         val removedKey = currentKeys.removeAt(currentKeys.size - 1)
         if (removedKey == 11) {
             currentToneIndex = 0
+        } else if (slipHints.isNotEmpty()) {
+            slipHints.removeAt(slipHints.size - 1)
         }
         lockedZhuyinCombo = null
 
@@ -816,6 +877,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
 
     fun clear() {
         currentKeys.clear()
+        slipHints.clear()
         currentToneIndex = 0
         lockedZhuyinCombo = null
         confirmedSyllables.clear()
@@ -848,6 +910,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         val rest = currentKeys.subList(idx, currentKeys.size).toList()
         currentKeys.clear()
         currentKeys.addAll(rest)
+        repeat(minOf(consumed, slipHints.size)) { slipHints.removeAt(0) }
         currentToneIndex = 0
         lockedZhuyinCombo = null
         confirmedSyllables.clear()
@@ -872,21 +935,13 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
      * 3. 音節延續保護 (Syllable Continuity)：若候選詞繼承了前一擊的首字音節，給予 1.3x 延續加成。
      */
     private fun getEffectiveWeight(entry: DictEntry, inputKeyCount: Int, isExact: Boolean, prevTopWord: String? = null): Double {
-        val userBoost = userDict.getBoost(entry.word)
+        val userNat = userDict.boostNat(entry.word)
         val bigramNat = getBigramBonus(currentContextWord, entry.word) * bigramScaleT9Weight
         // 舊公式 1 + min(b, 2500)/800，b = 80(e^n - 1)；上限 n = 3.4 對應舊的 b ≈ 2400
         val bigramBonus = if (bigramNat > 0) 1.0 + (Math.exp(minOf(bigramNat, 3.4)) - 1.0) / 10.0 else 1.0
 
-        // 完全匹配且使用者曾選過：給予高優先級，但乘上 Bigram 語境加成讓強上下文可競爭
-        if (isExact && userBoost > 0) {
-            return (1_000_000_000.0 + userBoost) * bigramBonus
-        }
-
-        var rawWeight = minOf(entry.weight, T9_DP_WEIGHT_CAP).toDouble()  // 照抄 t9SegmentCost:892
-        if (userBoost > 0) {
-            val boostCap = if (entry.word.length == 1) 50_000 else 200_000  // 照抄 t9SegmentCost:893，加法
-            rawWeight += minOf(userBoost, boostCap)
-        }
+        // 個人加分是「倍率」（上限約 12 倍），與詞庫權重、上下文一起競爭，不再有「選過就置頂」的分層
+        var rawWeight = minOf(entry.weight, T9_DP_WEIGHT_CAP).toDouble() * Math.exp(userNat)  // 照抄 t9SegmentCost
         if (!isExact && inputKeyCount <= 2 && entry.word.length >= 2) {
             rawWeight *= if (entry.word.length == 2) 0.5 else 0.3  // 少按鍵時多字詞懲罰，單字不受影響
         }
@@ -953,7 +1008,9 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         val toneChar = if (currentToneIndex > 0) TONE_SYMBOLS[currentToneIndex] else null
         val filterTone = { list: List<DictEntry> ->
             if (toneChar != null) {
-                val filtered = list.filter { it.zhuyin.contains(toneChar) }
+                // 一聲沒有符號：尾音節沒有任何聲調符號的才算
+                val filtered = if (toneChar == FIRST_TONE) list.filter { it.zhuyin.trimEnd().lastOrNull()?.let { c -> c !in TONE_MARKS } ?: false }
+                               else list.filter { it.zhuyin.contains(toneChar) }
                 if (filtered.isNotEmpty()) filtered else list
             } else list
         }
@@ -982,8 +1039,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
 
         val rankedList = pool.values
             .sortedWith(
-                compareByDescending<Pair<DictEntry, Double>> { it.second >= 1_000_000_000.0 }
-                    .thenByDescending { !it.first.isTolerant }
+                compareByDescending<Pair<DictEntry, Double>> { !it.first.isTolerant }
                     .thenByDescending { it.second }
             )
             .map { it.first }
@@ -1059,13 +1115,12 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     //   - 部分上屏候選：先確認第一個詞，其餘按鍵繼續組字，由使用者逐詞修正
     // 此區塊只供九鍵 (recalculate) 使用；全鍵盤 / 實體鍵盤的 searchFullZhuyin 仍使用下方原本的 findBestSentence。
 
-    private class T9Path(val cost: Double, val prev: T9Path?, val entry: DictEntry?, val keyLen: Int)
+    private class T9Path(val cost: Double, val prev: T9Path?, val entry: DictEntry?, val keyLen: Int, val slips: Int = 0)
 
     /** 單一詞條的成本：-ln(詞頻 / 總詞頻) + 每詞固定成本 - Bigram 語境轉移折扣。越低越好。 */
     private fun t9SegmentCost(entry: DictEntry, prevWord: String? = null): Double {
-        val boost = userDict.getBoost(entry.word)
         val base = minOf(entry.weight, T9_DP_WEIGHT_CAP)
-        val weight = if (entry.word.length == 1) base + minOf(boost, 50_000) else base + minOf(boost, 200_000)
+        val weight = userDict.applyBoost(base, entry.word)
         val logTotal = if (logTotalWeight > 0) logTotalWeight else 17.91
         val tolerantPenalty = if (entry.isTolerant) T9_TOLERANT_PENALTY else 0.0
 
@@ -1102,8 +1157,17 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     /**
      * 前向 DP (Bigram Viterbi)：hyp[i] = 涵蓋 keys[0, i) 的前 T9_BEAM 條最低成本路徑
      * 當 i == n 時，容許最後一個詞為尚未打完的前綴延伸詞（避免打字中途句尾跳出怪異單鍵韻母字）
+     *
+     * [slipBudget] > 0 時額外允許把鍵換成相鄰鍵（按偏糾錯），全句最多 [slipBudget] 處，每處加 T9_SLIP_PENALTY；
+     * 句尾最後一鍵不糾。[hints] 與 [keys] 逐鍵對應（可為 null），落指偏向某鄰鍵時，換成該鄰鍵的成本打折。
+     * [slipBudget] = 0（預設，打字途中永遠如此）時行為與沒有糾錯功能前完全相同。
      */
-    private fun t9ForwardPaths(keys: List<Int>, includeTolerant: Boolean): Array<List<T9Path>> {
+    private fun t9ForwardPaths(
+        keys: List<Int>,
+        includeTolerant: Boolean,
+        slipBudget: Int = 0,
+        hints: List<KeyNeighbors.SlipHint?>? = null
+    ): Array<List<T9Path>> {
         val n = keys.size
         val hyp = Array<List<T9Path>>(n + 1) { emptyList() }
         hyp[0] = listOf(T9Path(0.0, null, null, 0))
@@ -1113,26 +1177,48 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
                 val prevPaths = hyp[i - len]
                 if (prevPaths.isEmpty()) continue
                 val subKeys = keys.subList(i - len, i)
-                val node = trie.searchNode(subKeys) ?: continue
+                val node = trie.searchNode(subKeys)
 
-                for (entry in node.topEntries()) {
-                    if (entry.isTolerant && !includeTolerant) continue
-                    for (p in prevPaths) {
-                        val prevWord = if (i - len == 0) currentContextWord else p.entry?.word
-                        val segCost = t9SegmentCost(entry, prevWord)
-                        cands.add(T9Path(p.cost + segCost, p, entry, len))
+                if (node != null) {
+                    for (entry in node.topEntries()) {
+                        if (entry.isTolerant && !includeTolerant) continue
+                        for (p in prevPaths) {
+                            val prevWord = if (i - len == 0) currentContextWord else p.entry?.word
+                            val segCost = t9SegmentCost(entry, prevWord)
+                            cands.add(T9Path(p.cost + segCost, p, entry, len, p.slips))
+                        }
+                    }
+
+                    // 若為輸入序列最尾端 (i == n) 且為多詞組合 (i - len > 0)，容許尾端尚未打完的詞參與組句
+                    if (i == n && i - len > 0 && len in 1..3) {
+                        val extensions = trie.collectExtensions(node, T9_TAIL_DEPTH, false, null, T9_TAIL_PER_NODE)
+                        for (ext in extensions.values) {
+                            if (ext.entry.isTolerant && !includeTolerant) continue
+                            for (p in prevPaths) {
+                                val prevWord = p.entry?.word
+                                val segCost = t9SegmentCost(ext.entry, prevWord) + T9_TAIL_MISS * ext.extraKeys
+                                cands.add(T9Path(p.cost + segCost, p, ext.entry, len, p.slips))
+                            }
+                        }
                     }
                 }
 
-                // 若為輸入序列最尾端 (i == n) 且為多詞組合 (i - len > 0)，容許尾端尚未打完的詞參與組句
-                if (i == n && i - len > 0 && len in 1..3) {
-                    val extensions = trie.collectExtensions(node, T9_TAIL_DEPTH, false, null, T9_TAIL_PER_NODE)
-                    for (ext in extensions.values) {
-                        if (ext.entry.isTolerant && !includeTolerant) continue
-                        for (p in prevPaths) {
-                            val prevWord = p.entry?.word
-                            val segCost = t9SegmentCost(ext.entry, prevWord) + T9_TAIL_MISS * ext.extraKeys
-                            cands.add(T9Path(p.cost + segCost, p, ext.entry, len))
+                if (slipBudget > 0) {
+                    val start = i - len
+                    // 句尾最後一鍵（全序列第 n-1 個）受保護：使用者可能還在打
+                    val protectedFrom = if (i == n) len - 1 else len
+                    for (m in trie.searchNodeWithSlips(subKeys, slipBudget, protectedFrom)) {
+                        var penalty = 0.0
+                        for (sl in m.slips) penalty += slipPenalty(sl, hints?.getOrNull(start + sl.pos))
+                        val used = m.slips.size
+                        for (entry in m.node.topEntries()) {
+                            if (entry.isTolerant && !includeTolerant) continue
+                            for (p in prevPaths) {
+                                if (p.slips + used > slipBudget) continue
+                                val prevWord = if (start == 0) currentContextWord else p.entry?.word
+                                val segCost = t9SegmentCost(entry, prevWord) + penalty
+                                cands.add(T9Path(p.cost + segCost, p, entry, len, p.slips + used))
+                            }
                         }
                     }
                 }
@@ -1150,6 +1236,12 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             hyp[i] = kept
         }
         return hyp
+    }
+
+    /** 單一處糾錯的成本；落指偏向的正是這個鄰鍵時打折。 */
+    private fun slipPenalty(slip: TrieDictionary.Slip, hint: KeyNeighbors.SlipHint?): Double {
+        if (hint == null || !slipUseTouchHint || hint.toward != slip.intended) return slipPenaltyBase
+        return slipPenaltyBase * (1.0 - T9_SLIP_HINT_DISCOUNT * hint.confidence)
     }
 
     /**
@@ -1286,6 +1378,61 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     }
 
 
+    // ───────── 九鍵專用：按偏鄰鍵糾錯 ─────────
+    //
+    // 打字途中的候選完全不受影響（t9ForwardPaths 的 slipBudget 恆為 0）；使用者停手後由輸入法服務呼叫
+    // [applySlipCorrection]，才用「某一鍵其實是相鄰的鍵」重新斷詞，把糾錯後的候選補進候選列。
+    // 護欄：聲調鍵與句尾最後一鍵不糾、鍵數不足不糾、糾錯候選預設排在第二（不搶第一）。
+
+    /**
+     * 停手後補上糾錯候選。[level] 0＝關、1＝保守（糾錯候選永遠排在原首選之後）、2＝標準（最多糾 2 處，
+     * 糾錯整句比原讀法的最佳解低 [T9_SLIP_FIRST_MARGIN] 以上才排第一）。
+     * 有新增候選時回傳新的候選列（也會寫回目前候選），沒有就回傳 null。
+     */
+    fun applySlipCorrection(level: Int): List<DictEntry>? {
+        if (level <= 0 || currentKeys.isEmpty()) return null
+        if (confirmedSyllables.isNotEmpty() || lockedZhuyinCombo != null || currentToneIndex > 0) return null
+        val cleanKeys = currentKeys.filter { it != KeyNeighbors.TONE_KEY }
+        val n = cleanKeys.size
+        if (n < SLIP_MIN_KEYS || n > T9_MAX_DP_KEYS) return null
+        val includeTolerant = context?.let { com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(it) } ?: false
+        val budget = if (level >= 2) 2 else 1
+        val hints = if (slipHints.size == n) slipHints.toList() else null
+
+        val original = t9ForwardPaths(cleanKeys, includeTolerant)[n].firstOrNull()?.cost ?: Double.POSITIVE_INFINITY
+        val slipped = t9ForwardPaths(cleanKeys, includeTolerant, budget, hints)[n].filter { it.slips > 0 }
+        if (slipped.isEmpty()) return null
+
+        val out = ArrayList(cachedCandidates)
+        val present = HashSet<String>()
+        for (e in out) present.add(e.word)
+        val fresh = ArrayList<Pair<DictEntry, Double>>()
+        for (path in slipped) {
+            val segments = t9PathSegments(path)
+            if (segments.isEmpty()) continue
+            val word = segments.joinToString("") { it.first.word }
+            if (word in present) continue
+            val zhuyin = segments.joinToString(" ") { it.first.zhuyin }
+            val weight = if (segments.size == 1) segments[0].first.weight else {
+                val avgLog = segments.map { Math.log(maxOf(it.first.weight, 1).toDouble()) }.average()
+                minOf(Math.exp(avgLog).toInt(), 100_000_000)
+            }
+            present.add(word)
+            fresh.add(Pair(DictEntry(word, zhuyin, weight, slipped = true), path.cost))
+            if (fresh.size >= SLIP_MAX_CANDIDATES) break
+        }
+        if (fresh.isEmpty()) return null
+
+        val first = level >= 2 && fresh[0].second <= original - slipFirstMargin
+        var at = if (first || out.isEmpty()) 0 else 1
+        for ((entry, _) in fresh) {
+            out.add(at, entry)
+            at++
+        }
+        cachedCandidates = out
+        return out
+    }
+
     var currentContextWord: String? = null
 
     private fun applyLockFilter(baseList: List<DictEntry>) {
@@ -1354,7 +1501,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
 
             // 2. 將第一字的單字候選 (如 幫、榜、綁、胖) 納入候選列，標註其 consumedKeys，讓使用者可單字上屏
             if (!firstSylWords.isNullOrEmpty()) {
-                for (singleEntry in firstSylWords.sortedByDescending { it.weight + userDict.getBoost(it.word, it.zhuyin) }) {
+                for (singleEntry in firstSylWords.sortedByDescending { userDict.applyBoost(it.weight, it.word, it.zhuyin) }) {
                     if (resultList.none { it.word == singleEntry.word }) {
                         resultList.add(singleEntry.copy(consumedKeys = firstSylKeyCount))
                     }
@@ -1362,13 +1509,13 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             }
 
             if (resultList.isNotEmpty()) {
-                cachedCandidates = resultList.sortedByDescending { it.weight + userDict.getBoost(it.word, it.zhuyin) }
+                cachedCandidates = resultList.sortedByDescending { userDict.applyBoost(it.weight, it.word, it.zhuyin) }
                 return
             }
 
             // 3. 終極保底：直接提取第一音節的所有單字，絕不允許空白
             if (!firstSylWords.isNullOrEmpty()) {
-                cachedCandidates = firstSylWords.sortedByDescending { it.weight + userDict.getBoost(it.word, it.zhuyin) }
+                cachedCandidates = firstSylWords.sortedByDescending { userDict.applyBoost(it.weight, it.word, it.zhuyin) }
                 return
             }
         }
@@ -1393,7 +1540,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         val rawZhuyin = top?.zhuyin?.trim() ?: ""
 
         val toneChar = if (currentToneIndex > 0 && currentToneIndex < TONE_SYMBOLS.size) {
-            TONE_SYMBOLS[currentToneIndex].takeIf { it != ' ' }
+            TONE_SYMBOLS[currentToneIndex].takeIf { it != ' ' && it != FIRST_TONE }
         } else null
 
         // 輔助函式：去除音節中的所有聲調符號
@@ -1492,6 +1639,8 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             sb.append(piece ?: (KeyMapping.getChars(key).firstOrNull()?.toString() ?: ""))
             i += consumed
         }
+        // 一聲沒有送聲調鍵，預覽自己補上「ˉ」讓使用者看得到已選了一聲
+        if (toneChar == FIRST_TONE) sb.append(FIRST_TONE)
         return sb.toString()
     }
 
@@ -1508,7 +1657,8 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         internal val prevTop: String?,
         internal val lastRecalcKeyCount: Int,
         internal val candidates: List<DictEntry>,
-        internal val combos: List<String>
+        internal val combos: List<String>,
+        internal val hints: List<KeyNeighbors.SlipHint?> = emptyList()
     )
 
     fun captureInputState(): InputSnapshot = InputSnapshot(
@@ -1520,7 +1670,8 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         prevTop = previousTopWord,
         lastRecalcKeyCount = lastRecalcKeyCount,
         candidates = cachedCandidates,
-        combos = cachedZhuyinCombos
+        combos = cachedZhuyinCombos,
+        hints = slipHints.toList()
     )
 
     /** 目前輸入狀態是否與快照完全一致（用來確認在快照之後沒有其他手指又輸入了別的鍵） */
@@ -1530,6 +1681,8 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     fun restoreInputState(s: InputSnapshot): List<DictEntry> {
         currentKeys.clear()
         currentKeys.addAll(s.keys)
+        slipHints.clear()
+        slipHints.addAll(s.hints)
         currentToneIndex = s.toneIndex
         lockedZhuyinCombo = s.locked
         confirmedSyllables.clear()
@@ -1553,39 +1706,49 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
     }
 
     /**
-     * 動態學習新詞彙或自訂同音字組合：
-     * 1. 寫入使用者記憶體字典與磁碟檔案
-     * 2. 即時以最高權重 (50,000,000) 注入 Trie 字典，確保該按鍵序列下一次輸入時 100% 穩居首位
+     * 學習「使用者明確選用」的詞（呼叫端負責判斷：點第一名／空白／Enter 這類接受預設不算，見 [acceptWord]）。
+     * 1. 寫入個人詞庫（次數 +1）；之後排序以倍率加分（UserDictionaryManager.applyBoost），不改詞庫權重。
+     * 2. 只有「詞庫本來沒有」的詞（自建詞等）才以一般權重補進 trie / 索引。
+     * 3. 讀音不明（呼叫端沒給、單字又有多種讀音）不學：避免多音字用錯讀音污染，或把預測詞誤學。
      */
     fun learnWord(word: String, zhuyin: String = "") {
         if (word.isBlank() || word.startsWith("【")) return
         val zy = if (zhuyin.isNotEmpty()) zhuyin else {
-            word.map { getZhuyinForChar(it) }.filter { it.isNotEmpty() }.joinToString(" ")
+            val ch = word.singleOrNull() ?: return
+            charZhuyinMap[ch]?.singleOrNull() ?: return
         }
         userDict.recordUsage(word, zy)
         lastLearnedWord = word
         lastLearnedAt = android.os.SystemClock.uptimeMillis()
-        if (zy.isNotEmpty()) {
-            val usageCount = userDict.getUsageCount(word)
-            val weight = 50_000_000 + minOf(usageCount * 1_000_000, 50_000_000)
-            trie.insert(DictEntry(word, zy, weight))
-            if (word.length == 1) {
-                val list = charZhuyinMap.getOrPut(word[0]) { ArrayList(2) }
-                if (!list.contains(zy)) {
-                    list.add(0, zy)
-                }
-            }
-            val cleanZy = zy.filter { it !in "ˇˋˊ˙" }
-            val syllables = if (zy.contains(" ")) zy.split(" ") else SyllableManager.splitIntoSyllables(cleanZy, word.length)
-            if (syllables != null && syllables.size == word.length) {
-                val initials = syllables.mapNotNull { it.firstOrNull() }.joinToString("")
-                if (initials.isNotEmpty()) {
-                    val list = initialMap.getOrPut(initials) { ArrayList(4) }
-                    list.removeAll { it.word == word }
-                    list.add(0, DictEntry(word, zy, weight))
-                }
+
+        val cleanZy = zy.filter { it !in "ˇˋˊ˙ " }
+        val inDict = fullZhuyinWordMap[cleanZy]?.any { it.word == word } == true
+        if (inDict) return
+        val entry = DictEntry(word, zy, USER_NEW_WORD_WEIGHT)
+        trie.insert(entry)
+        fullZhuyinWordMap.getOrPut(cleanZy) { ArrayList(2) }.add(entry)
+        if (word.length == 1) {
+            val list = charZhuyinMap.getOrPut(word[0]) { ArrayList(2) }
+            if (!list.contains(zy)) list.add(zy)   // 加在最後，不改多音字的預設讀音
+        }
+        val syllables = if (zy.contains(" ")) zy.split(" ") else SyllableManager.splitIntoSyllables(zy.filter { it !in "ˇˋˊ˙" }, word.length)
+        if (syllables != null && syllables.size == word.length) {
+            val initials = syllables.mapNotNull { it.firstOrNull() }.joinToString("")
+            if (initials.isNotEmpty()) {
+                val list = initialMap.getOrPut(initials) { ArrayList(4) }
+                list.removeAll { it.word == word }
+                list.add(entry)
             }
         }
+    }
+
+    /**
+     * 使用者「接受預設」（點第一名、空白、Enter）：這不是偏好表態，只是同意引擎自己的排序，
+     * 所以不新建條目、不加次數（否則詞庫排序的誤差會被自我強化）；已學過的詞只更新最後使用時間，避免衰退成來回跳。
+     */
+    fun acceptWord(word: String) {
+        if (word.isBlank() || word.startsWith("【")) return
+        userDict.touch(word)
     }
 
     private fun toneOf(s: String): Char? = s.find { it in "ˇˋˊ˙" }
@@ -1662,30 +1825,12 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         if (isSingleSyllable && !soundMatches.isNullOrEmpty()) {
             val singleEntries = mutableListOf<DictEntry>()
 
-            // 1. 個人詞庫中的該音節單字（最高優先）
-            val userEntries = userDict.getAllEntries()
             val userCharSet = hashSetOf<String>()
-            for (u in userEntries) {
-                if (u.word.length == 1) {
-                    val uClean = u.zhuyin.filter { it !in "ˇˋˊ˙" }
-                    if (uClean == cleanInput) {
-                        userCharSet.add(u.word)
-                        val baseWeight = 50_000_000 + u.count * 1_000_000
-                        val toneBonus = if (toneChar != null) {
-                            if (u.zhuyin.contains(toneChar)) 20_000_000 else 0
-                        } else {
-                            if (!u.zhuyin.any { it in "ˇˋˊ˙" }) fullNoToneFirstBonus else 0
-                        }
-                        singleEntries.add(DictEntry(u.word, u.zhuyin, baseWeight + toneBonus))
-                    }
-                }
-            }
 
             // 2. 字典反向索引中的所有單字同音字（依前一個詞的語境放大詞頻，讓「很」勝過同音的冷僻字）
             for (e in soundMatches) {
                 if (userCharSet.contains(e.word)) continue
-                val boost = userDict.getBoost(e.word, e.zhuyin)
-                val baseWeight = bigramScaled(e.weight + boost, effectiveContext, e.word)
+                val baseWeight = bigramScaled(userDict.applyBoost(e.weight, e.word, e.zhuyin), effectiveContext, e.word)
                 val toneBonus = if (toneChar != null) {
                     if (e.zhuyin.contains(toneChar)) 20_000_000 else 0
                 } else {
@@ -1702,17 +1847,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
                 }
             }
 
-            // 3. 單字之後，再補入該音節開頭的常用詞彙（個人詞庫多字詞與 Trie 詞庫）
-            val userMultiEntries = userEntries.filter {
-                it.word.length > 1 && it.cleanZhuyin.startsWith(cleanInput)
-            }.sortedByDescending { it.count }
-            for (u in userMultiEntries) {
-                if (seenWords.add(u.word)) {
-                    results.add(DictEntry(u.word, u.zhuyin, 30_000_000 + u.count * 1_000_000))
-                    if (results.size >= 200) break
-                }
-            }
-
+            // 3. 單字之後，再補入該音節開頭的常用詞彙（Trie 詞庫；個人詞以倍率加分，不再另開置頂區塊）
             val isTolerantEnabled = context?.let { com.bopomofo.t9ime.data.PreferencesRepository.isTolerantInputEnabled(it) } ?: false
             val keys = cleanInput.mapNotNull { KeyMapping.getKeyId(it) }
             if (keys.isNotEmpty()) {
@@ -1741,23 +1876,12 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         }
 
         // B. 非合法單音節或字典中無獨立單字音節（如簡拼 ㄐㄊ、混合簡打 ㄐㄧㄣㄊ、長詞全拼等）：
-        // 1. 個人詞庫 (UserDict) 最高優先權
-        val userEntries = userDict.getAllEntries()
-        for (u in userEntries) {
-            val uClean = u.zhuyin.filter { it !in "ˇˋˊ˙ " }
-            if (uClean.startsWith(cleanInput) || u.word.startsWith(cleanInput)) {
-                if (seenWords.add(u.word)) {
-                    results.add(DictEntry(u.word, u.zhuyin, 50_000_000 + u.count * 1_000_000))
-                }
-            }
-        }
-
         // 1.2 全拼精確詞庫匹配 (Exact Full Zhuyin Match, 如 ㄓㄉㄠ -> 知道, ㄊㄧㄢㄑㄧ -> 天氣, ㄐㄧㄣㄊㄧㄢ -> 今天)
         val exactZhuyinWords = fullZhuyinWordMap[cleanInput]
         if (!exactZhuyinWords.isNullOrEmpty()) {
             val sortedExact = exactZhuyinWords.sortedByDescending {
                 val toneScore = if (toneChar != null && it.zhuyin.contains(toneChar)) 20_000_000L else 0L
-                toneScore + bigramScaled(it.weight + userDict.getBoost(it.word, it.zhuyin), effectiveContext, it.word).toLong()
+                toneScore + bigramScaled(userDict.applyBoost(it.weight, it.word, it.zhuyin), effectiveContext, it.word).toLong()
             }
             for (e in sortedExact) {
                 if (seenWords.add(e.word)) {
@@ -1859,7 +1983,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
      * 1. 查詢完全相同鍵序的所有單字（涵蓋該鍵位上所有可能的拼音字，如 Key 6 包含 此、次、意、吃、一、衣、依、醫等）
      * 2. 依該字之注音查詢同音字（不同聲調）
      * 3. 納入前綴延伸單字
-     * 4. 排序：首位原字、使用者曾選字最優先 (getBoost > 0)、字典權重降序
+     * 4. 排序：首位原字，其餘依「字典權重 × 個人加分倍率」降序
      */
     /**
      * 取得當前組字文字指定字元索引對應的輸入音節 (帶聲調)
@@ -1916,7 +2040,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             }
         }
 
-        return results.sortedByDescending { it.weight + userDict.getBoost(it.word) }
+        return results.sortedByDescending { userDict.applyBoost(it.weight, it.word) }
     }
 
     /**
@@ -1924,7 +2048,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
      * 1. 若傳入 preferredZhuyin（使用者實際輸入的音節），優先以該音節排序，避免多音字卡在字典第一讀音
      * 2. 優先由 soundToCharMap 檢索標準同音字，以同聲調 > 字典權重 > 使用者個人化權重排序
      * 3. 納入前綴延伸單字
-     * 4. 排序：首位原字、使用者曾選字最優先 (getBoost > 0)、字典權重降序
+     * 4. 排序：首位原字，其餘依「字典權重 × 個人加分倍率」降序
      */
     fun getHomophonesForChar(ch: Char, preferredZhuyin: String? = null): List<DictEntry> {
         var zhuyins = charZhuyinMap[ch] ?: emptyList()
@@ -1950,7 +2074,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
                 val sorted = entries.sortedByDescending {
                     val isSameTone = if (toneChar != null) it.zhuyin.contains(toneChar) else !it.zhuyin.any { c -> c in "ˇˋˊ˙" }
                     val toneScore = if (isSameTone) 100_000_000L else 0L
-                    toneScore + it.weight + userDict.getBoost(it.word)
+                    toneScore + userDict.applyBoost(it.weight, it.word)
                 }
                 for (e in sorted) {
                     if (seen.add(e.word)) {
@@ -2015,9 +2139,8 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
             ?: exactKeyEntries.find { it.word == ch.toString() }
             ?: DictEntry(ch.toString(), zhuyins.firstOrNull() ?: "", 1000)
 
-        // 排序規則：使用者選過字最優先 (getBoost > 0)，其次同音字，再者同鍵其他字
-        val sortComparator = compareByDescending<DictEntry> { userDict.getBoost(it.word) > 0 }
-            .thenByDescending { it.weight + userDict.getBoost(it.word) }
+        // 排序規則：字典權重 × 個人加分倍率（個人加分有上限，不再「選過就先排」）
+        val sortComparator = compareByDescending<DictEntry> { userDict.applyBoost(it.weight, it.word) }
 
         val sortedSameZy = sameZhuyinEntries.filter { it.word != ch.toString() }.sortedWith(sortComparator)
         val sortedExactKey = exactKeyEntries.filter { it.word != ch.toString() }.sortedWith(sortComparator)
@@ -2062,7 +2185,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         }
 
         return results
-            .sortedByDescending { it.weight + userDict.getBoost(it.word) }
+            .sortedByDescending { userDict.applyBoost(it.weight, it.word) }
             .take(20)
     }
 
@@ -2104,7 +2227,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         if (word.isEmpty()) return emptyList()
 
         val rankList = { list: List<DictEntry> ->
-            list.sortedByDescending { it.weight + userDict.getBoost(it.word) }
+            list.sortedByDescending { userDict.applyBoost(it.weight, it.word) }
         }
 
         val resultList = mutableListOf<DictEntry>()
@@ -2162,8 +2285,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
         if (initials.isEmpty()) return emptyList()
         val list = initialMap[initials] ?: return emptyList()
         return list.sortedWith(
-            compareByDescending<DictEntry> { userDict.getBoost(it.word) > 0 }
-                .thenByDescending { it.weight + userDict.getBoost(it.word) }
+            compareByDescending<DictEntry> { userDict.applyBoost(it.weight, it.word) }
         ).take(80)
     }
 
@@ -2172,7 +2294,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
      */
     fun getExactZhuyinWords(cleanZhuyin: String): List<DictEntry> {
         val list = fullZhuyinWordMap[cleanZhuyin] ?: return emptyList()
-        return list.sortedByDescending { it.weight + userDict.getBoost(it.word) }
+        return list.sortedByDescending { userDict.applyBoost(it.weight, it.word) }
     }
 
     /**
@@ -2240,8 +2362,7 @@ class ZhuyinT9Engine(rawContext: Context? = null) {
                 if (!words.isNullOrEmpty()) {
                     for (entry in words) {
                         if (entry.word.length != len) continue
-                        val boost = userDict.getBoost(entry.word, entry.zhuyin)
-                        val effectiveWeight = entry.weight + boost
+                        val effectiveWeight = userDict.applyBoost(entry.weight, entry.word, entry.zhuyin)
                         val logProb = Math.log(maxOf(effectiveWeight.toDouble(), 1.0)) - logTotal
                         val bonus = (entry.word.length - 1) * wordBonus - (if (isInitialAbbrev) 1.5 else 0.0)
 

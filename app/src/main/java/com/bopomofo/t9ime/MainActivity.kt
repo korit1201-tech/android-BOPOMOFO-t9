@@ -119,6 +119,7 @@ class MainActivity : AppCompatActivity() {
 
         setupVibrationSettings()
         setupTolerantInputSettings()
+        setupSlipCorrectionSettings()
         setupThemeSettings()
         setupFullKeyboardSettings()
         setupThirdPartyNotices()
@@ -173,6 +174,40 @@ class MainActivity : AppCompatActivity() {
                 PreferencesRepository.setShowBottomPunctuation(this, isChecked)
                 val msg = if (isChecked) "✅ 已開啟底排標點鍵（，與。）" else "🔒 已隱藏底排標點（已大幅加寬空白鍵）"
                 Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun setupSlipCorrectionSettings() {
+        val group = findViewById<android.widget.RadioGroup>(R.id.radio_slip_correction)
+        if (group != null) {
+            val checked = when (PreferencesRepository.getSlipCorrectionLevel(this)) {
+                1 -> R.id.radio_slip_conservative
+                2 -> R.id.radio_slip_standard
+                else -> R.id.radio_slip_off
+            }
+            group.check(checked)
+            group.setOnCheckedChangeListener { _, id ->
+                val level = when (id) {
+                    R.id.radio_slip_conservative -> 1
+                    R.id.radio_slip_standard -> 2
+                    else -> 0
+                }
+                PreferencesRepository.setSlipCorrectionLevel(this, level)
+                val msg = when (level) {
+                    1 -> "✅ 按偏糾錯：保守（糾錯候選排在原首選之後）"
+                    2 -> "✅ 按偏糾錯：標準（明顯更合理時才排第一）"
+                    else -> "🔒 已關閉按偏糾錯"
+                }
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            }
+        }
+        val lock = findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switch_lock_order)
+        if (lock != null) {
+            lock.isChecked = PreferencesRepository.isCandidateOrderLocked(this)
+            lock.setOnCheckedChangeListener { _, isChecked ->
+                PreferencesRepository.setCandidateOrderLocked(this, isChecked)
+                Toast.makeText(this, if (isChecked) "🔒 詞序已鎖定，不再從新的選字學習" else "✅ 已恢復從選字學習", Toast.LENGTH_SHORT).show()
             }
         }
     }
